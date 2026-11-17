@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plugins.eve-cyno.dev/schemas/entry.v1.json",
+  "title": "EVE-Cyno plugin index entry v1",
+  "description": "Covers only this repository's own fields. The listing fields (id, type, name, author, summary, description, categories, source, and each version's version, released, changes, engines, permissions) are checked by the host's own listingProblem and parseCatalog (tools/lib/entries.mjs), never copied here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "type", "versions"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": true,
+    "type": true,
+    "name": true,
+    "author": true,
+    "summary": true,
+    "description": true,
+    "categories": true,
+    "source": true,
+    "firstParty": true,
+    "maintainers": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,39}$" }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo"],
+      "properties": {
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$" },
+        "workflow": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "versions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "url", "sha256", "size"],
+        "properties": {
+          "version": true,
+          "released": true,
+          "changes": true,
+          "engines": true,
+          "permissions": true,
+          "url": { "type": "string", "maxLength": 2048, "pattern": "^https://" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "size": { "type": "integer", "minimum": 1, "maximum": 33554432 }
+        }
+      }
+    }
+  },
+  "if": { "type": "object", "properties": { "type": { "const": "theme" } }, "required": ["type"] },
+  "then": {
+    "properties": {
+      "versions": {
+        "type": "array",
+        "items": { "type": "object", "not": { "anyOf": [{ "type": "object", "properties": { "engines": true }, "required": ["engines"] }, { "type": "object", "properties": { "permissions": true }, "required": ["permissions"] }] } }
+      }
+    }
+  }
+}
