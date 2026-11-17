@@ -1,0 +1,14 @@
+{
+  "name": "eve-cyno-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Public index of plugins and theme packages for the EVE-Cyno desktop Marketplace",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tools/test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "semver": "7.8.5"
+  }
+}

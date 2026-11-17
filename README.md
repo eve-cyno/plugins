@@ -1,0 +1,43 @@
+# EVE-Cyno plugin index
+
+The public list of plugins and theme packages that the EVE-Cyno desktop app can install from its Marketplace. The app installs a
+plugin only when the user allows the permissions it asks for, and it runs every plugin in its own sandbox.
+
+## Submitting
+
+Open a pull request that adds or changes one file in `entries/` (the file name is the plugin id). The archive must be a release you
+publish, linked by `https:` and named in the entry by its SHA-256 and size. See [CONTRIBUTING.md](CONTRIBUTING.md) for the steps and
+`POLICY.md` for the review policy (added in a later change).
+
+## Layout
+
+- `entries/<id>.json`: one entry per plugin or theme package.
+- `revoked.json`: the revocation list source (`[]` at first).
+- `flags.json`: reserved (`{}`).
+- `tools/`: the checks and the index build (added step by step).
+
+## Running the checks
+
+```sh
+npm ci
+npm test
+```
+
+## Private sources
+
+A user can add another index (for example an alliance's) in the app. Plugins from private sources are not reviewed by EVE-Cyno; the
+app names their source on every permission prompt.
+
+## Contact
+
+Feedback, support and reports: Discord <https://discord.gg/XZzkH38dt9>, or in game `eve:Bythlak`.
+
+## Licence
+
+Pending owner decision; see [LICENSE](LICENSE).
+
+## Notice
+
+(c) 2014 Fenris Creations hf. All rights reserved. "EVE", "EVE Online", "Fenris Creations", and all related logos and images are
+trademarks or registered trademarks of Fenris Creations hf. This material is used with limited permission of Fenris Creations. No
+official affiliation or endorsement by Fenris Creations is stated or implied. EVE-Cyno is not affiliated with Fenris Creations.
