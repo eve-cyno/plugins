@@ -1,0 +1,109 @@
+# Checks a pull request against the app's own rules (the plan's checks C1 to C17; docs/RUNBOOK.md).
+# - on: pull_request only, never pull_request_target, workflow_run or issue_comment: a pull request from a fork gets no secret and a
+#   read-only GITHUB_TOKEN. No environment and no secret here; every job reads only (contents: read).
+# - A pull request can change this workflow and the tools it runs, so a green check proves nothing about such a pull request: check
+#   C13 flags it (NEEDS REVIEW maintenance), the owner reviews and merges locally, and publish.yml runs every check again on main.
+# - A red review job is expected on a new plugin or an escalation: the owner's local merge after the review is the override.
+# - Values from the event reach the tools through env and arguments, never through an expression inside run.
+# - The base tree is the first parent of the merge commit GitHub made for the pull request (the checkout's default commit).
+# - tools/check.mjs comes with plan task 1.7; the calls below are its command line. tools/test/workflows.test.mjs checks the rules
+#   above on this file (C-WF1 to C-WF11).
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-vendor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the vendored host modules
+        run: node tools/vendor-host.mjs --verify
+
+  checks:
+    needs: verify-vendor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pull request and its base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Write the base tree
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || { echo "::error::the checked-out merge commit has no base parent"; exit 1; }
+          mkdir -m 700 "$RUNNER_TEMP/base"
+          git archive "$base" | tar -x -C "$RUNNER_TEMP/base"
+          echo "base $base, head $(git rev-parse HEAD)"
+
+      - name: Run the checks (C1 to C9, C12, C15 to C17)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/check.mjs refuse --base "$RUNNER_TEMP/base" --head . --summary "$GITHUB_STEP_SUMMARY"
+
+  review:
+    needs: verify-vendor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pull request and its base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Write the base tree
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || { echo "::error::the checked-out merge commit has no base parent"; exit 1; }
+          mkdir -m 700 "$RUNNER_TEMP/base"
+          git archive "$base" | tar -x -C "$RUNNER_TEMP/base"
+          echo "base $base, head $(git rev-parse HEAD)"
+
+      - name: Name the review classes (C3 first-party, C10, C11, C13, C14)
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node tools/check.mjs review --base "$RUNNER_TEMP/base" --head . --author "$PR_AUTHOR" --summary "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,410 @@
+# Re-signs the live plugin index before its head expires (docs/RUNBOOK.md, "Re-sign"). Same catalog, new generated time, 60 days.
+# - A weekly schedule only asks: check reads the live head and says whether a re-sign is needed (the head is 30 days old or more, or
+#   fewer than 30 days remain before it expires). The signature still needs the reviewer account's approval of index and of mirror,
+#   each after the runbook's "Before every index and mirror approval".
+# - resign.yml never repairs: head verifies the live head with the pinned keys first and fails with a pointer to recovery R2
+#   (publish.yml with repair) when it does not verify, or when there is none.
+# - Same rules as publish.yml: one commit per run (github.sha; head fails unless it is still the head of main), no re-runs (the
+#   first step of every job fails on any attempt but the first), workflow-level concurrency index-sign shared with publish.yml.
+# - sign is publish.yml's sign job, step for step (static test C-WF7): artifact in, signature out, only the public keys folder
+#   checked out, no repository code, no Node, npm or AWS CLI.
+# - upload (environment mirror) writes only the signature and the head, each with a compare-and-swap on the live ETag.
+# - tools/build-index.mjs comes with plan task 1.7, tools/publish/ with task 2.4; the calls below are their command lines.
+#   tools/test/workflows.test.mjs checks the rules above on this file (C-WF1 to C-WF11).
+name: resign
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: index-sign
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - name: Refuse a re-run
+        run: |
+          [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
+
+      - name: Check out the run's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the vendored host modules
+        run: node tools/vendor-host.mjs --verify
+
+      - name: Read the live head and compare the live catalog with main
+        id: check
+        run: node tools/build-index.mjs resign-check --outputs "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+  head:
+    needs: check
+    if: ${{ needs.check.outputs.needed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      head_sha256: ${{ steps.head.outputs.sha256 }}
+      head_comment: ${{ steps.head.outputs.comment }}
+    steps:
+      - name: Refuse a re-run
+        run: |
+          [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
+
+      - name: Check that the run is on the head of main
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [ "${GITHUB_REF:-}" = refs/heads/main ] || fail "this workflow runs only on main, not on ${GITHUB_REF:-no ref}"
+          [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "the run names no commit"
+          head=$(git ls-remote --exit-code "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" refs/heads/main | cut -f1) || fail "the head of main could not be read"
+          [ "$head" = "$GITHUB_SHA" ] || fail "the run's commit $GITHUB_SHA is no longer the head of main ($head): dispatch a new run"
+          echo "commit $GITHUB_SHA is the head of main"
+
+      - name: Check out the run's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the vendored host modules
+        run: node tools/vendor-host.mjs --verify
+
+      - name: Re-sign the verified live head (same catalog, new generated time, 60 days)
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/work"
+          node tools/build-index.mjs resign --out "$RUNNER_TEMP/work/index" --archives-json "$RUNNER_TEMP/work/archives.json" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Show the head and hand its SHA-256 to the sign job
+        id: head
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          fail() { echo "::error::$1"; exit 1; }
+          head="$RUNNER_TEMP/work/index/index.json"
+          [ -f "$head" ] && [ ! -L "$head" ] || fail "the build wrote no head"
+          size=$(stat -c %s "$head")
+          (( size >= 1 && size <= 16384 )) || fail "the head is $size bytes; it must be 1 to 16384"
+          sum=$(sha256sum "$head" | cut -d' ' -f1)
+          generated=$(jq -er .generated "$head") || fail "the head has no generated time"
+          [[ "$generated" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || fail "the head's generated time is not YYYY-MM-DDTHH:MM:SSZ"
+          catalog=$(jq -er '.catalog.url + " sha256 " + .catalog.sha256 + ", " + (.catalog.size | tostring) + " bytes"' "$head") || fail "the head names no catalog"
+          {
+            echo "## Head"
+            echo
+            echo "SHA-256 \`$sum\`, $size bytes, generated $generated; catalog $catalog. The exact bytes the sign job signs:"
+            echo
+            echo '```json'
+            cat "$head"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "sha256=$sum"
+            echo "comment=eve-cyno-index v1 $generated"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Keep the head (90 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: head
+          path: ${{ runner.temp }}/work/index/index.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Keep the catalog (90 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: catalog
+          path: ${{ runner.temp }}/work/index/catalog/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Keep the archive list (35 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archives.json
+          path: ${{ runner.temp }}/work/archives.json
+          if-no-files-found: error
+          retention-days: 35
+
+  sign:
+    needs: head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: index
+    permissions:
+      contents: read
+    env:
+      HEAD_SHA256: ${{ needs.head.outputs.head_sha256 }}
+      HEAD_COMMENT: ${{ needs.head.outputs.head_comment }}
+    steps:
+      - name: Refuse a re-run
+        run: |
+          [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
+
+      - name: Check out the pinned public keys only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: vendor/eve-cyno-host/host/src/keys
+          sparse-checkout-cone-mode: false
+
+      - name: Check that nothing but the public keys is checked out
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          keys=vendor/eve-cyno-host/host/src/keys
+          [ -f "$keys/index.pub" ] && [ ! -L "$keys/index.pub" ] || fail "$keys/index.pub is not in this commit"
+          other=$(find . -path ./.git -prune -o ! -type d -print | grep -v "^\./$keys/[^/]*\$" || true)
+          [ -z "$other" ] || fail "the checkout holds files outside $keys: $(head -n 3 <<< "$other" | tr '\n' ' ')"
+          echo "checked out: $(ls "$keys" | tr '\n' ' ')"
+
+      - name: Download the head
+        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          name: head
+          path: ${{ runner.temp }}/head
+
+      - name: Check the head
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          fail() { echo "::error::$1"; exit 1; }
+          head="$RUNNER_TEMP/head/index.json"
+          [ -f "$head" ] && [ ! -L "$head" ] || fail "the head artifact holds no index.json"
+          [ "$(find "$RUNNER_TEMP/head" -mindepth 1 | wc -l)" = 1 ] || fail "the head artifact holds more than index.json"
+          size=$(stat -c %s "$head")
+          (( size >= 1 && size <= 16384 )) || fail "the head is $size bytes; it must be 1 to 16384"
+          [[ "${HEAD_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail "the job that wrote the head gave no SHA-256"
+          sum=$(sha256sum "$head" | cut -d' ' -f1)
+          [ "$sum" = "$HEAD_SHA256" ] || fail "the head's SHA-256 is $sum, not $HEAD_SHA256, the one its job showed"
+          pattern='^eve-cyno-index v1 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$'
+          [[ "${HEAD_COMMENT:-}" =~ $pattern ]] || fail "the trusted comment is not one the app accepts for the index"
+          generated=${HEAD_COMMENT#eve-cyno-index v1 }
+          [ "$(jq -er .generated "$head")" = "$generated" ] || fail "the head's generated time is not the one in the trusted comment"
+          gen=$(date -u -d "$generated" +%s) || fail "generated $generated is not a time"
+          now=$(date -u +%s)
+          (( gen <= now + 300 )) || fail "the head was generated at $generated, more than 5 minutes ahead of now"
+          (( now - gen <= 604800 )) || fail "the head was generated at $generated, more than 7 days ago: dispatch a new run"
+          mkdir -m 700 "$RUNNER_TEMP/sign"
+          echo "head: $size bytes, sha256 $sum, generated $generated"
+
+      - name: Install minisign (Ubuntu's package)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends minisign > /dev/null
+
+      - name: Check that minisign is Ubuntu's
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$(command -v minisign)" = /usr/bin/minisign ] || fail "minisign is not /usr/bin/minisign"
+          [ "$(dpkg -S /usr/bin/minisign 2>/dev/null)" = "minisign: /usr/bin/minisign" ] || fail "/usr/bin/minisign is not from the minisign package"
+          ver=$(dpkg-query -W -f='${Version}' minisign 2>/dev/null) && [ -n "$ver" ] || fail "the minisign package is not installed"
+          [ -z "$(dpkg --verify minisign 2>&1)" ] || fail "the files of the minisign package were changed"
+          good() { [[ "$1" =~ ^https?://([a-z0-9-]+\.)?archive\.ubuntu\.com/ubuntu/?$ || "$1" =~ ^https?://security\.ubuntu\.com/ubuntu/?$ ]]; }
+          srcs=$(apt-cache policy minisign | awk -v v="$ver" '$1 == "***" { cur = ($2 == v); next } NF == 2 && $2 ~ /^[0-9]+$/ && $1 !~ /^[0-9]+$/ { cur = ($1 == v); next } cur && $1 ~ /^[0-9]+$/ && $2 != "/var/lib/dpkg/status" { print $2 }')
+          [ -n "$srcs" ] || fail "apt names no source for minisign $ver"
+          while read -r s; do
+            if [ "$s" = mirror+file:/etc/apt/apt-mirrors.txt ]; then
+              n=0
+              while read -r url _; do
+                if [ -z "$url" ] || [[ "$url" == \#* ]]; then continue; fi
+                good "$url" || fail "the runner's apt mirror list names $url, not the Ubuntu archive"
+                n=$((n + 1))
+              done < /etc/apt/apt-mirrors.txt
+              [ "$n" -gt 0 ] || fail "the runner's apt mirror list is empty"
+            else
+              good "$s" || fail "minisign $ver comes from $s, not the Ubuntu archive"
+            fi
+          done <<< "$srcs"
+          echo "minisign $ver ($(minisign -v)) from the Ubuntu archive: $(tr '\n' ' ' <<< "$srcs")"
+
+      - name: Sign with the index key
+        env:
+          KEY: ${{ secrets.MINISIGN_INDEX_KEY }}
+          PASSWORD: ${{ secrets.MINISIGN_INDEX_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          umask 077
+          [ -n "$KEY" ] && [ -n "$PASSWORD" ] || { echo "::error::a secret of the index key is not set in the environment index (docs/RUNBOOK.md, Secrets)"; exit 1; }
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/sign/key"
+          unset KEY
+          pass=$PASSWORD
+          unset PASSWORD
+          printf '%s\n' "$pass" | minisign -S -s "$RUNNER_TEMP/sign/key" -m "$RUNNER_TEMP/head/index.json" -x "$RUNNER_TEMP/sign/index.json.minisig" -c "signature from the eve-cyno/plugins signing workflow" -t "$HEAD_COMMENT" > /dev/null
+          unset pass
+
+      - name: Shred the secret key file
+        if: always()
+        run: |
+          if [ -e "$RUNNER_TEMP/sign/key" ]; then shred -u "$RUNNER_TEMP/sign/key"; fi
+          [ ! -e "$RUNNER_TEMP/sign/key" ]
+
+      - name: Verify against the pinned public key
+        run: |
+          set -euo pipefail
+          pub=vendor/eve-cyno-host/host/src/keys/index.pub
+          [ -f "$pub" ] || { echo "::error::$pub is not in this commit"; exit 1; }
+          trusted=$(minisign -V -Q -p "$pub" -m "$RUNNER_TEMP/head/index.json" -x "$RUNNER_TEMP/sign/index.json.minisig") || { echo "::error::the signature does not verify against $pub"; exit 1; }
+          [ "$trusted" = "$HEAD_COMMENT" ] || { echo "::error::the signed trusted comment is not the one asked for"; exit 1; }
+          alg=$(sed -n 2p "$RUNNER_TEMP/sign/index.json.minisig" | base64 -d | od -An -tx1 | tr -d ' \n' | cut -c1-4)
+          [ "$alg" = 4544 ] || { echo "::error::not a prehashed (ED) signature"; exit 1; }
+          echo "verified against $pub, key id $(head -n 1 "$pub" | awk '{print $NF}')"
+
+      - name: Keep the signature (90 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signature
+          path: ${{ runner.temp }}/sign/index.json.minisig
+          if-no-files-found: error
+          retention-days: 90
+
+  upload:
+    needs: [head, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: mirror
+    permissions:
+      contents: read
+    env:
+      HEAD_SHA256: ${{ needs.head.outputs.head_sha256 }}
+    steps:
+      - name: Refuse a re-run
+        run: |
+          [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
+
+      - name: Check out the run's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the vendored host modules
+        run: node tools/vendor-host.mjs --verify
+
+      - name: Download the head
+        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          name: head
+          path: ${{ runner.temp }}/in
+
+      - name: Download the signature
+        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          name: signature
+          path: ${{ runner.temp }}/in
+
+      - name: Download the catalog
+        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          name: catalog
+          path: ${{ runner.temp }}/in/catalog
+
+      - name: Download the archive list
+        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          name: archives.json
+          path: ${{ runner.temp }}/in
+
+      - name: Check the head again
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          fail() { echo "::error::$1"; exit 1; }
+          head="$RUNNER_TEMP/in/index.json"
+          [ -f "$head" ] && [ ! -L "$head" ] || fail "the head artifact holds no index.json"
+          [[ "${HEAD_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail "the job that wrote the head gave no SHA-256"
+          sum=$(sha256sum "$head" | cut -d' ' -f1)
+          [ "$sum" = "$HEAD_SHA256" ] || fail "the head's SHA-256 is $sum, not $HEAD_SHA256, the one its job showed"
+          generated=$(jq -er .generated "$head") || fail "the head has no generated time"
+          gen=$(date -u -d "$generated" +%s) || fail "generated $generated is not a time"
+          now=$(date -u +%s)
+          (( gen <= now + 300 )) || fail "the head was generated at $generated, more than 5 minutes ahead of now"
+          (( now - gen <= 604800 )) || fail "the head was generated at $generated, more than 7 days ago; a late mirror approval never uploads an old head: dispatch a new run"
+          echo "head: sha256 $sum, generated $generated"
+
+      - name: Upload the signature and the head (compare-and-swap on the live ETags)
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: node tools/publish/upload.mjs --resign --in "$RUNNER_TEMP/in" --summary "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: upload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse a re-run
+        run: |
+          [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
+
+      - name: Check out the run's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        with:
+          node-version: 24.15.0
+
+      - name: Install the pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the vendored host modules
+        run: node tools/vendor-host.mjs --verify
+
+      - name: Read the live index back (paced)
+        run: node tools/publish/verify-live.mjs --target production --in "$RUNNER_TEMP/in" --summary "$GITHUB_STEP_SUMMARY"
