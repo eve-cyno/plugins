@@ -1,0 +1,59 @@
+EVE-Cyno desktop
+Copyright (c) 2026 Bythlak
+
+EVE Online and all related materials are the property of Fenris Creations. EVE-Cyno is not affiliated with Fenris Creations.
+
+"EVE-Cyno" and the cyno mark are not licensed for reuse; see TRADEMARKS.md.
+
+Contact: Discord https://discord.gg/XZzkH38dt9 or in-game eve:Bythlak.
+
+Catppuccin palette (MIT), in the optional Catppuccin themes package.
+
+The hull silhouettes of the Fit manager (plugins/fitmanager/static/hulls) are traced from the Fenris Creations ship renders, through the ship images of eve-cyno-web, and compacted by plugins/fitmanager/scripts/gen-hulls.mjs (one path per hull, faction colours baked in); they are not the game's own files. The game render and the module icons shown by the Fit manager are loaded from the FC image server (images.evetech.net) and are not shipped.
+
+The Intel alarm sounds (plugins/intel/static/sounds) are CC0 recordings from Freesound, OpenGameArt and Kenney, cut and levelled; plugins/intel/README.md lists each one.
+
+The five ship renders embedded in cynod's SSO callback page (cynod/internal/vault/ships/*.webp) are Fenris Creations hf. material, used under the EVE Developer License Agreement. They are not covered by LICENSE. "EVE", "EVE Online", "Fenris Creations" and all related logos and images are trademarks or registered trademarks of Fenris Creations hf. This material is used with limited permission of Fenris Creations hf. (formerly CCP hf.). No official affiliation or endorsement by Fenris Creations is stated or implied.
+
+The look-alike table of the reserved plugin names (host/src/confusables.gen.ts) is derived from the Unicode confusables data
+(Unicode Security Mechanisms, UTS #39, Unicode 18.0.0) and is used under the Unicode License v3:
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2026 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.

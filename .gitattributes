@@ -1,0 +1,2 @@
+# The vendored host files are compared byte for byte with MANIFEST.json and the desktop build: never convert their line endings.
+vendor/eve-cyno-host/** -text

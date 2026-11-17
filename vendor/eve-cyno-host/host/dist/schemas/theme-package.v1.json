@@ -1,0 +1,104 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://eve-cyno.dev/schemas/theme-package.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["schema", "id", "name", "author", "version", "themes"],
+    "properties": {
+        "schema": { "const": 1 },
+        "id": { "type": "string", "maxLength": 100, "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$" },
+        "name": { "type": "string", "maxLength": 400 },
+        "author": { "type": "string", "maxLength": 400 },
+        "version": { "type": "string", "maxLength": 64 },
+        "license": { "type": "string", "pattern": "^[A-Za-z0-9.+-]{1,40}$" },
+        "themes": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/theme" } }
+    },
+    "$defs": {
+        "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "hexa": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$" },
+        "glow": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "radius": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "fontName": { "type": "string", "maxLength": 40 },
+        "roles": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "--c-void": { "$ref": "#/$defs/hex" },
+                "--c-void-2": { "$ref": "#/$defs/hex" },
+                "--c-nebula": { "$ref": "#/$defs/hex" },
+                "--c-nebula-2": { "$ref": "#/$defs/hex" },
+                "--c-line": { "$ref": "#/$defs/hex" },
+                "--c-line-soft": { "$ref": "#/$defs/hexa" },
+                "--c-fg": { "$ref": "#/$defs/hex" },
+                "--c-fg-muted": { "$ref": "#/$defs/hex" },
+                "--c-fg-dim": { "$ref": "#/$defs/hex" },
+                "--c-ice": { "$ref": "#/$defs/hex" },
+                "--c-ice-2": { "$ref": "#/$defs/hex" },
+                "--c-red": { "$ref": "#/$defs/hex" },
+                "--c-red-2": { "$ref": "#/$defs/hex" },
+                "--c-red-glow": { "$ref": "#/$defs/hexa" },
+                "--c-blue": { "$ref": "#/$defs/hex" },
+                "--c-blue-2": { "$ref": "#/$defs/hex" },
+                "--c-blue-glow": { "$ref": "#/$defs/hexa" },
+                "--c-green": { "$ref": "#/$defs/hex" },
+                "--c-green-glow": { "$ref": "#/$defs/hexa" },
+                "--c-white-hot": { "$ref": "#/$defs/hex" },
+                "--c-ok": { "$ref": "#/$defs/hex" },
+                "--c-warn": { "$ref": "#/$defs/hex" },
+                "--c-bad": { "$ref": "#/$defs/hex" },
+                "--c-focus": { "$ref": "#/$defs/hex" },
+                "--c-window": { "$ref": "#/$defs/hex" },
+                "--c-frame": { "$ref": "#/$defs/hex" },
+                "--c-map": { "$ref": "#/$defs/hex" },
+                "--c-stripe-a": { "$ref": "#/$defs/hex" },
+                "--c-stripe-b": { "$ref": "#/$defs/hex" },
+                "--c-glass": { "$ref": "#/$defs/hexa" },
+                "--c-glass-head": { "$ref": "#/$defs/hexa" },
+                "--c-glass-panel": { "$ref": "#/$defs/hexa" },
+                "--c-glass-chip": { "$ref": "#/$defs/hexa" },
+                "--c-well": { "$ref": "#/$defs/hexa" },
+                "--c-well-soft": { "$ref": "#/$defs/hexa" },
+                "--c-scrim": { "$ref": "#/$defs/hexa" },
+                "--c-scrim-strong": { "$ref": "#/$defs/hexa" },
+                "--c-scrim-soft": { "$ref": "#/$defs/hexa" },
+                "--c-shadow": { "$ref": "#/$defs/hexa" },
+                "--c-pal-blue": { "$ref": "#/$defs/hex" },
+                "--c-pal-orange": { "$ref": "#/$defs/hex" },
+                "--c-pal-green": { "$ref": "#/$defs/hex" },
+                "--c-pal-magenta": { "$ref": "#/$defs/hex" },
+                "--c-pal-lime": { "$ref": "#/$defs/hex" },
+                "--c-pal-violet": { "$ref": "#/$defs/hex" },
+                "--c-pal-rose": { "$ref": "#/$defs/hex" },
+                "--c-pal-gold": { "$ref": "#/$defs/hex" },
+                "--k-glow": { "$ref": "#/$defs/glow" }
+            }
+        },
+        "variant": { "type": "object", "$ref": "#/$defs/roles", "properties": { "--c-ice": { "$ref": "#/$defs/hex" } }, "required": ["--c-ice"] },
+        "theme": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "scheme"],
+            "properties": {
+                "id": { "type": "string", "maxLength": 100 },
+                "name": { "type": "string", "maxLength": 400 },
+                "scheme": { "enum": ["dark", "light"] },
+                "fonts": {
+                    "type": "object", "additionalProperties": false,
+                    "properties": { "display": { "$ref": "#/$defs/fontName" }, "body": { "$ref": "#/$defs/fontName" }, "mono": { "$ref": "#/$defs/fontName" } }
+                },
+                "radius": {
+                    "type": "object", "additionalProperties": false,
+                    "properties": { "base": { "$ref": "#/$defs/radius" }, "sm": { "$ref": "#/$defs/radius" }, "md": { "$ref": "#/$defs/radius" }, "lg": { "$ref": "#/$defs/radius" } }
+                },
+                "roles": { "$ref": "#/$defs/roles" },
+                "accents": {
+                    "type": "object", "additionalProperties": false, "required": ["default", "variants"],
+                    "properties": {
+                        "default": { "type": "string", "maxLength": 100 },
+                        "variants": { "type": "object", "minProperties": 1, "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/variant" } }
+                    }
+                }
+            }
+        }
+    }
+}
