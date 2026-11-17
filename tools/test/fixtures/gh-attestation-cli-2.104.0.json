@@ -1,0 +1,80 @@
+[
+  {
+    "attestation": {
+      "bundle": {
+        "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json"
+      }
+    },
+    "verificationResult": {
+      "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+      "signature": {
+        "certificate": {
+          "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+          "subjectAlternativeName": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "issuer": "https://token.actions.githubusercontent.com",
+          "githubWorkflowTrigger": "workflow_dispatch",
+          "githubWorkflowSHA": "3d5a9e355a837f2f5ee78d7484c118cc1342ad1a",
+          "githubWorkflowName": "Deployment",
+          "githubWorkflowRepository": "cli/cli",
+          "githubWorkflowRef": "refs/heads/trunk",
+          "buildSignerURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "buildSignerDigest": "3d5a9e355a837f2f5ee78d7484c118cc1342ad1a",
+          "runnerEnvironment": "github-hosted",
+          "sourceRepositoryURI": "https://github.com/cli/cli",
+          "sourceRepositoryDigest": "3d5a9e355a837f2f5ee78d7484c118cc1342ad1a",
+          "sourceRepositoryRef": "refs/heads/trunk",
+          "sourceRepositoryIdentifier": "212613049",
+          "sourceRepositoryOwnerURI": "https://github.com/cli",
+          "sourceRepositoryOwnerIdentifier": "59704711",
+          "buildConfigURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "buildConfigDigest": "3d5a9e355a837f2f5ee78d7484c118cc1342ad1a",
+          "buildTrigger": "workflow_dispatch",
+          "runInvocationURI": "https://github.com/cli/cli/actions/runs/43283669119/attempts/1",
+          "sourceRepositoryVisibilityAtSigning": "public"
+        }
+      },
+      "verifiedTimestamps": [
+        {
+          "type": "Tlog",
+          "uri": "https://rekor.sigstore.dev",
+          "timestamp": "2026-11-12T20:01:55+01:00"
+        }
+      ],
+      "verifiedIdentity": {
+        "subjectAlternativeName": {
+          "subjectAlternativeName": "",
+          "regexp": "(?i)^https://github\\.com/cli/cli/"
+        },
+        "issuer": {
+          "issuer": "",
+          "regexp": ".*"
+        },
+        "runnerEnvironment": "github-hosted"
+      },
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+          {
+            "name": "gh_2.104.0_linux_386.deb",
+            "digest": {
+              "sha256": "d3b90c66a71249ef1ff38450d1644708071d091388804411cd45ce66de2c5ed6"
+            }
+          },
+          {
+            "name": "gh_2.104.0_linux_386.rpm",
+            "digest": {
+              "sha256": "207f175dcf5318390560fbc0b9e501e81a60d03e93b6e56eed689dec424ce95c"
+            }
+          },
+          {
+            "name": "gh_2.104.0_linux_amd64.tar.gz",
+            "digest": {
+              "sha256": "98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e"
+            }
+          }
+        ],
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    }
+  }
+]
