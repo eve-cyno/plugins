@@ -7,7 +7,13 @@ plugin only when the user allows the permissions it asks for, and it runs every 
 
 Open a pull request that adds or changes one file in `entries/` (the file name is the plugin id). The archive must be a release you
 publish, linked by `https:` and named in the entry by its SHA-256 and size. See [CONTRIBUTING.md](CONTRIBUTING.md) for the steps and
-`POLICY.md` for the review policy (added in a later change).
+[POLICY.md](POLICY.md) for the review policy.
+
+## Review
+
+A maintainer reviews every new plugin and every version that asks for more permissions. Revoked versions are listed in
+`revoked.json`. The index keeps no accounts, install counts or ratings, and listed archives are mirrored unchanged to
+`plugins.eve-cyno.dev`. The full text is in [POLICY.md](POLICY.md).
 
 ## Layout
 
