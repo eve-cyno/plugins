@@ -82,6 +82,11 @@ describe('engines reach (C17)', () => {
     assert.equal(enginesReach('^2.0.0', '1.27.0'), false);
     assert.deepEqual(checkEntry(entry([ver('1.1.0', {}, { engines: '^2.0.0' }), ver('1.0.0')]), entry([ver('1.0.0')]), { prAuthor: 'alice' }).flags, ['engines']);
   });
+  test('DF-engines-theme: a theme version has no engines and is never flagged engines', () => {
+    const tv = (version) => ({ version });
+    assert.deepEqual(checkEntry(entry([tv('2.1.0'), tv('2.0.0')], { type: 'theme' }), entry([tv('2.0.0')], { type: 'theme' }), { prAuthor: 'alice' }).flags, []);
+    assert.deepEqual(checkEntry(entry([tv('2.0.0')], { type: 'theme' }), null).flags, ['new']);
+  });
   test('DF-engines-garbage: a range that does not parse admits nothing', () => {
     assert.equal(enginesReach('not a range', '1.27.0'), false);
     assert.equal(enginesReach(undefined, '1.27.0'), false);

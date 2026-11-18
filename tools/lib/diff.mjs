@@ -73,7 +73,7 @@ export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
   const all = [...(base?.versions ?? []), ...head.versions.filter((v) => !known.has(v.version))];
   for (const v of head.versions) {
     if (known.has(v.version)) continue;
-    if (!enginesReach(v.engines)) flags.add('engines');
+    if (head.type !== 'theme' && !enginesReach(v.engines)) flags.add('engines');
     const prev = previousOf(v, all);
     if (prev === null) continue;
     const d = permissionsDiff(prev, v);
