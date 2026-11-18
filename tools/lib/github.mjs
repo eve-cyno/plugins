@@ -13,14 +13,17 @@ const HEADERS = ['-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Ap
 export const oneLine = (s) => String(s).replace(/[^\x20-\x7e]+/g, ' ').trim().slice(0, 300);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** Runs gh without a shell. Resolves to { code, stdout, stderr } or { error }; never rejects. */
-export function runGh(args, { env = process.env, timeoutMs = TIMEOUT_MS } = {}) {
+/**
+ * Runs gh without a shell. Resolves to { code, stdout, stderr } or { error }; never rejects. `encoding: 'buffer'` keeps stdout and
+ * stderr as bytes (an artifact's zip).
+ */
+export function runGh(args, { env = process.env, timeoutMs = TIMEOUT_MS, encoding = 'utf8' } = {}) {
   const childEnv = { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_PAGER: 'cat', NO_COLOR: '1' };
   for (const k of ['GH_HOST', 'GH_REPO', 'GH_FORCE_TTY', 'GH_DEBUG', 'DEBUG']) delete childEnv[k];
   return new Promise((resolve) => {
     let child;
     try {
-      child = execFile('gh', args, { env: childEnv, encoding: 'utf8', maxBuffer: MAX_OUTPUT, timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true },
+      child = execFile('gh', args, { env: childEnv, encoding, maxBuffer: MAX_OUTPUT, timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true },
         (err, stdout, stderr) => {
           if (!err) return resolve({ code: 0, stdout, stderr });
           if (err.code === 'ENOENT') return resolve({ error: 'gh not found on PATH' });
@@ -42,6 +45,17 @@ export async function getJson(endpoint, opts) {
   if (r.error) return { error: `${endpoint}: ${r.error}` };
   if (r.code !== 0) return { error: `${endpoint}: gh api exited ${r.code}: ${oneLine(r.stderr)}` };
   try { return { value: JSON.parse(r.stdout) }; } catch { return { error: `${endpoint}: the answer is not one JSON value` }; }
+}
+
+/**
+ * GET one endpoint's raw answer: { bytes } or { error }. gh follows a redirect, as the download of an artifact's zip
+ * (`actions/artifacts/<id>/zip`) answers one.
+ */
+export async function getBytes(endpoint, opts) {
+  const r = await runGh(['api', `--hostname=${HOST}`, '--method=GET', ...HEADERS, endpoint], { ...opts, encoding: 'buffer' });
+  if (r.error) return { error: `${endpoint}: ${r.error}` };
+  if (r.code !== 0) return { error: `${endpoint}: gh api exited ${r.code}: ${oneLine(r.stderr)}` };
+  return { bytes: r.stdout };
 }
 
 /**

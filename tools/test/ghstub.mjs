@@ -1,6 +1,7 @@
 // A stub `gh` for the tests of tools/check-envs.mjs, tools/approved-base.mjs and tools/lib/reviewer.mjs. It is written into a temp
 // folder that is the only entry of PATH the tools see, so the real gh is never found: no network, no token. It answers
-// `<method> <endpoint>` (the last argument) from a routes file (STUB_ROUTES) and appends its arguments to a log (STUB_LOG). The real
+// `<method> <endpoint>` (the last argument) from a routes file (STUB_ROUTES) and appends its arguments to a log (STUB_LOG). A route
+// answers with `stdout` (text, or a JSON value), or with `b64` (raw bytes, as gh writes an artifact's zip). The real
 // git is linked beside it, because check-envs.mjs reads the run's commit with git to look for the reviewer's login and id.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,6 +23,7 @@ const routes = JSON.parse(fs.readFileSync(e.STUB_ROUTES, 'utf8'));
 const r = routes[key];
 if (!r) { process.stderr.write('stub: no route for ' + key + '\\n'); process.exit(97); }
 if (r.stdout !== undefined) process.stdout.write(typeof r.stdout === 'string' ? r.stdout : JSON.stringify(r.stdout));
+if (r.b64 !== undefined) process.stdout.write(Buffer.from(r.b64, 'base64'));
 if (r.stderr) process.stderr.write(r.stderr);
 process.exitCode = r.exit === undefined ? 0 : r.exit;
 `, { mode: 0o755 });

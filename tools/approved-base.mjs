@@ -23,25 +23,61 @@ const R = `repos/${REPO}`;
 const WORKFLOWS = ['publish.yml', 'resign.yml'];
 const SHA_RE = /^[0-9a-f]{40}$/;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const wfOf = (run) => (isObj(run) && typeof run.path === 'string' ? WORKFLOWS.find((w) => run.path === `.github/workflows/${w}`) : undefined);
-const label = (run) => `run ${run.id} (${wfOf(run)}, created ${oneLine(run.created_at)})`;
+/** The workflow file (publish.yml or resign.yml) of a run, or undefined. */
+export const wfOf = (run) => (isObj(run) && typeof run.path === 'string' ? WORKFLOWS.find((w) => run.path === `.github/workflows/${w}`) : undefined);
+export const label = (run) => `run ${run.id} (${wfOf(run)}, created ${oneLine(run.created_at)})`;
 
-/** Why a run does not count as approved, signed and uploaded ('' when it counts). Throws { error } on a failed request. */
-async function whyNot(run, id, opts) {
+/**
+ * Every run of publish.yml and resign.yml, newest first (by created_at, then id). Throws { error } on a failed request, a list that
+ * did not come back whole, or a run without an id or created_at.
+ */
+export async function listRuns(opts) {
+  const runs = [];
+  for (const wf of WORKFLOWS) {
+    const list = await getAll(`${R}/actions/workflows/${wf}/runs?per_page=100`, 'workflow_runs', opts);
+    if (list.error) throw list;
+    runs.push(...list.items);
+  }
+  for (const r of runs) {
+    if (!isObj(r) || !Number.isSafeInteger(r.id) || typeof r.created_at !== 'string') throw { error: 'a listed run has no id or created_at' };
+  }
+  return runs.sort((x, y) => (x.created_at === y.created_at ? y.id - x.id : x.created_at < y.created_at ? 1 : -1));
+}
+
+/** Why a listed run is not a run of main with a commit, as a skip line's reason ('' when it is one). */
+export function notOnMain(run) {
+  if (!wfOf(run)) return `a run of ${oneLine(run.path)}`;
+  if (run.head_branch !== 'main') return `on ${oneLine(run.head_branch)}, not on main`;
+  if (typeof run.head_sha !== 'string' || !SHA_RE.test(run.head_sha)) return 'names no commit';
+  return '';
+}
+
+/**
+ * A run's review state: { why } when it has no approval of environment index by the user `id` (the environment's reviewer), else
+ * { why: '', sign, upload }, each '' when the run has exactly one job of that name and it concluded success, or why not. Throws
+ * { error } on a failed request.
+ */
+export async function reviewRun(run, id, opts) {
   const ap = await getJson(`${R}/actions/runs/${run.id}/approvals`, opts);
   if (ap.error) throw ap;
   if (!Array.isArray(ap.value)) throw { error: `${R}/actions/runs/${run.id}/approvals: the answer is not a list` };
   const approved = ap.value.some((a) => isObj(a) && a.state === 'approved' && isObj(a.user) && a.user.id === id
     && Array.isArray(a.environments) && a.environments.some((e) => isObj(e) && e.name === 'index'));
-  if (!approved) return "no approval of index by the environment's reviewer";
+  if (!approved) return { why: "no approval of index by the environment's reviewer" };
   const jobs = await getAll(`${R}/actions/runs/${run.id}/jobs?per_page=100`, 'jobs', opts);
   if (jobs.error) throw jobs;
-  for (const name of ['sign', 'upload']) {
+  const job = (name) => {
     const js = jobs.items.filter((j) => isObj(j) && j.name === name);
     if (js.length !== 1) return `${js.length} jobs named ${name}`;
-    if (js[0].conclusion !== 'success') return `job ${name} concluded ${oneLine(js[0].conclusion ?? 'nothing yet')}`;
-  }
-  return '';
+    return js[0].conclusion === 'success' ? '' : `job ${name} concluded ${oneLine(js[0].conclusion ?? 'nothing yet')}`;
+  };
+  return { why: '', sign: job('sign'), upload: job('upload') };
+}
+
+/** Why a run does not count as approved, signed and uploaded ('' when it counts). Throws { error } on a failed request. */
+async function whyNot(run, id, opts) {
+  const s = await reviewRun(run, id, opts);
+  return s.why || s.sign || s.upload;
 }
 
 /** Finds <A> for run `runId`. `env` is the environment gh runs with. */
@@ -64,22 +100,11 @@ export async function approvedBase({ runId, env }) {
     if (reviewer.error) return done(1, `ERROR: ${oneLine(reviewer.error)}`);
     lines.push("reviewer: the only required reviewer of environment index, read now (login and id not printed)");
 
-    const runs = [];
-    for (const wf of WORKFLOWS) {
-      const list = await getAll(`${R}/actions/workflows/${wf}/runs?per_page=100`, 'workflow_runs', opts);
-      if (list.error) throw list;
-      runs.push(...list.items);
-    }
-    for (const r of runs) {
-      if (!isObj(r) || !Number.isSafeInteger(r.id) || typeof r.created_at !== 'string') return done(1, 'ERROR: a listed run has no id or created_at');
-    }
-    runs.sort((x, y) => (x.created_at === y.created_at ? y.id - x.id : x.created_at < y.created_at ? 1 : -1));
-
+    const runs = await listRuns(opts);
     for (const run of runs) {
       if (run.id === runId) { lines.push(`skip ${label(run)}: the run under review`); continue; }
-      if (!wfOf(run)) { lines.push(`skip run ${run.id}: a run of ${oneLine(run.path)}`); continue; }
-      if (run.head_branch !== 'main') { lines.push(`skip ${label(run)}: on ${oneLine(run.head_branch)}, not on main`); continue; }
-      if (typeof run.head_sha !== 'string' || !SHA_RE.test(run.head_sha)) { lines.push(`skip ${label(run)}: names no commit`); continue; }
+      const off = notOnMain(run);
+      if (off) { lines.push(`skip ${wfOf(run) ? label(run) : `run ${run.id}`}: ${off}`); continue; }
       const why = await whyNot(run, reviewer.id, opts);
       if (why) { lines.push(`skip ${label(run)}: ${why}`); continue; }
 
