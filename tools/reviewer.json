@@ -1,0 +1,4 @@
+{
+  "reviewerId": 0,
+  "placeholder": "PLACEHOLDER, not an id: the owner replaces this whole file with {\"reviewerId\": <the reviewer account's numeric GitHub user id>} (docs/RUNBOOK.md, The reviewer account). Every tool refuses this placeholder."
+}

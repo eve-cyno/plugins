@@ -4,6 +4,7 @@
 // files only; they run nothing.
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseReviewer } from './reviewer.mjs';
 import { parseYaml } from './yamlsub.mjs';
 
 /** The three workflows and their only triggers (C-WF1). */
@@ -379,6 +380,67 @@ function cwf10(ws) {
   return p;
 }
 
+/** The tool sources C-WF11 reads: every file under tools/ except the tests, with its path relative to the root. */
+function toolSources(root) {
+  const out = [];
+  const walk = (rel) => {
+    let ents;
+    try { ents = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of ents.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const r = `${rel}/${e.name}`;
+      if (e.isDirectory()) { if (r !== 'tools/test' && e.name !== 'node_modules') walk(r); continue; }
+      if (e.isFile() && /\.(?:mjs|cjs|js|json|sh)$/.test(e.name)) out.push({ rel: r, text: fs.readFileSync(path.join(root, r), 'utf8') });
+    }
+  };
+  walk('tools');
+  return out;
+}
+
+const REVIEWER_FILE_PATH = 'tools/reviewer.json';
+/** The only files that may name the reviewer file or its key: the reader, and this rule. */
+const REVIEWER_READERS = new Set(['tools/lib/reviewer.mjs', 'tools/lib/wfrules.mjs']);
+const ARG_OR_ENV_RES = [/--reviewer/i, /REVIEWER/, /(?:process\.env|\benv)\s*(?:\?\.|\.|\[\s*['"`])\s*[A-Za-z0-9_]*reviewer/i];
+/** A YAML line without its comment (a `#` at the start or after whitespace). */
+const uncommented = (line) => line.replace(/(^|\s)#.*$/, '');
+
+/**
+ * C-WF11: the reviewer account's id comes only from tools/reviewer.json, read by tools/lib/reviewer.mjs. No workflow names a
+ * reviewer outside a comment (no input, variable or secret); no other tool names the file or its key, or takes a reviewer argument
+ * or environment variable; reviewer.mjs reads neither process.env nor process.argv; the id itself appears in no workflow and no
+ * other tool; the file is the committed placeholder or exactly {"reviewerId": <positive integer>}.
+ */
+function cwf11(ws) {
+  const p = [...ws.errors];
+  for (const f of ws.files) {
+    const w = ws.wf[f];
+    if (!w) continue;
+    w.text.split('\n').forEach((l, i) => { if (/reviewer/i.test(uncommented(l))) p.push(`${f}: names a reviewer outside a comment (line ${i + 1})`); });
+  }
+  const tools = toolSources(ws.root);
+  for (const { rel, text } of tools) {
+    if (rel === REVIEWER_FILE_PATH || rel.startsWith('tools/test/')) continue;
+    if (!REVIEWER_READERS.has(rel)) {
+      if (/reviewer\.json|reviewerId/.test(text)) p.push(`${rel}: names the reviewer file or its key (only tools/lib/reviewer.mjs reads it)`);
+      if (ARG_OR_ENV_RES.some((re) => re.test(text))) p.push(`${rel}: a reviewer argument or environment variable`);
+    }
+    if (rel === 'tools/lib/reviewer.mjs' && /process\s*\.\s*(?:env|argv)|process\s*\[/.test(text)) p.push(`${rel}: reads process.env or process.argv`);
+  }
+  if (!tools.some((t) => t.rel === 'tools/lib/reviewer.mjs')) p.push('tools/lib/reviewer.mjs: missing');
+  const file = tools.find((t) => t.rel === REVIEWER_FILE_PATH);
+  if (!file) return [...p, `${REVIEWER_FILE_PATH}: missing`];
+  let v;
+  try { v = JSON.parse(file.text); } catch { return [...p, `${REVIEWER_FILE_PATH}: not JSON`]; }
+  const isPlaceholder = isMap(v) && same(sorted(keys(v)), ['placeholder', 'reviewerId']) && v.reviewerId === 0 && typeof v.placeholder === 'string'
+    && v.placeholder.startsWith('PLACEHOLDER');
+  if (isPlaceholder) return p;
+  const r = parseReviewer(file.text);
+  if (r.error) return [...p, `${REVIEWER_FILE_PATH}: neither the placeholder nor a reviewer id: ${r.error}`];
+  const idRe = new RegExp(`(?<![0-9])${r.id}(?![0-9])`);
+  for (const f of ws.files) if (ws.wf[f] && idRe.test(ws.wf[f].text)) p.push(`${f}: holds the reviewer id ${r.id}`);
+  for (const { rel, text } of tools) if (rel !== REVIEWER_FILE_PATH && idRe.test(text)) p.push(`${rel}: holds the reviewer id ${r.id}`);
+  return p;
+}
+
 export const RULES = Object.freeze({
   'C-WF1': cwf1,
   'C-WF2': cwf2,
@@ -390,4 +452,5 @@ export const RULES = Object.freeze({
   'C-WF8': cwf8,
   'C-WF9': cwf9,
   'C-WF10': cwf10,
+  'C-WF11': cwf11,
 });
