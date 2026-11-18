@@ -10,7 +10,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { throwawaySigner } from '../lib/throwaway.mjs';
-import { HEAD_MAX_AGE_MS, LIFETIME_MS, headBoundsProblem } from '../lib/indexbuild.mjs';
+import { HEAD_MAX_AGE_MS, LIFETIME_MS, headBoundsProblem, obtainArchive } from '../lib/indexbuild.mjs';
 import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 
 const require = createRequire(import.meta.url);
@@ -20,7 +20,7 @@ const DAY = 86_400_000;
 const today = new Date().toISOString().slice(0, 10);
 const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-let T, P, server, servedRoot = null;
+let T, P, server, servedRoot = null, n = 0;
 const signer = throwawaySigner();
 let PUB;
 
@@ -322,6 +322,121 @@ describe('E2E check.mjs', () => {
     const g = await check('publish', path.join(T, 'base'), gone, ['--target', 'production']);
     assert.equal(g.code, 1, g.stdout + g.stderr);
     assert.match(g.stdout, /^FAIL C8 dev\.example\.intel: a merged entry is never removed/m);
+  });
+
+  test('E2E-check-mirror: a live version comes from the mirror, hash-checked, never from its author (whose URL may be gone)', async () => {
+    servedRoot = path.join(T, 'index'); // archives/ holds intel 1.1.0 and the theme; intel 1.0.0 is revoked, so not mirrored
+    const fresh = () => { const c = path.join(T, `mirror-cache-${n++}`); fs.mkdirSync(c); return c; };
+    const run2 = (mode, cache, extra) => run('tools/check.mjs', [mode, '--base', path.join(T, 'tree'), '--head', path.join(T, 'tree'), '--archive-cache', cache, ...extra]);
+    const cache = fresh();
+    const r = await run2('refuse', cache, ['--mirror-url', P]);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^NOTE archives: the cache, then the mirror ${P.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}archives/<sha256>\\.zip`, 'm'));
+    assert.match(r.stdout, /^PASS C16 .*\(2 archives\)/m);
+    assert.deepEqual(fs.readdirSync(cache).sort(), [`${sha(A110)}.zip`, `${sha(DUSK)}.zip`].sort(), 'kept in the cache');
+    const none = await run2('refuse', fresh(), ['--mirror-url', 'none']);
+    assert.equal(none.code, 1, 'without the mirror the author URLs (127.0.0.1, refused by C4) are all there is');
+    assert.match(none.stdout, /^FAIL C16 .*C4 /m);
+    assert.match(none.stdout, /^NOTE archives: the cache, then the author's URL \(no mirror\)/m);
+
+    // Other bytes under the name on the mirror do not count: the author's URL is tried, and refused here.
+    const swapped = path.join(T, 'swapped');
+    fs.cpSync(path.join(T, 'index'), swapped, { recursive: true });
+    const other = Buffer.from(A110);
+    other[other.length - 1] ^= 1; // the pinned size, other bytes
+    fs.writeFileSync(path.join(swapped, 'archives', `${sha(A110)}.zip`), other);
+    servedRoot = swapped;
+    const x = await run2('refuse', fresh(), ['--mirror-url', P]);
+    assert.equal(x.code, 1, x.stdout + x.stderr);
+    assert.match(x.stdout, /^FAIL C16 .*dev\.example\.intel 1\.1\.0: C4 .*the mirror copy is not the pinned size and SHA-256/m);
+    fs.writeFileSync(path.join(swapped, 'archives', `${sha(A110)}.zip`), Buffer.concat([A110, Buffer.from([0])]));
+    const big = await run2('refuse', fresh(), ['--mirror-url', P]);
+    assert.match(big.stdout, new RegExp(`^FAIL C16 .*dev\\.example\\.intel 1\\.1\\.0: C4 .*the mirror: more than ${A110.length} bytes`, 'm'), 'read up to the pinned size only');
+    servedRoot = path.join(T, 'index');
+
+    // An added version comes from its author's URL (C4) even when the mirror holds its bytes.
+    const added = await run('tools/check.mjs', ['refuse', '--base', emptyTree(), '--head', path.join(T, 'tree'), '--archive-cache', fresh(), '--mirror-url', P]);
+    assert.equal(added.code, 1, added.stdout + added.stderr);
+    assert.match(added.stdout, /^FAIL C4 dev\.example\.intel 1\.1\.0: /m);
+    assert.doesNotMatch(added.stdout, /^FAIL .*the mirror/m);
+  });
+
+  test('E2E-mirror-pins: the mirror is read only for a pinned size the app reads, up to it, at the given pace', async () => {
+    servedRoot = path.join(T, 'index');
+    const dir = path.join(T, 'mirror-unit');
+    fs.mkdirSync(dir);
+    const down = async () => ({ ok: false, error: 'http_status', why: 'the author URL is gone' });
+    let paced = 0;
+    const pace = async () => { paced++; };
+    const ok = await obtainArchive({ url: 'https://127.0.0.1/x.zip', sha256: sha(A110), size: A110.length }, { cache: dir, mirror: P, download: down, pace });
+    assert.equal(ok.ok, true);
+    assert.equal(paced, 1);
+    assert.deepEqual(fs.readFileSync(path.join(dir, `${sha(A110)}.zip`)), A110, 'kept in the cache');
+    for (const size of [undefined, 0, 1.5, '12']) {
+      const r = await obtainArchive({ url: 'https://127.0.0.1/x.zip', sha256: sha(DUSK), size }, { cache: dir, mirror: P, download: down, pace });
+      assert.deepEqual([r.ok, r.why], [false, 'the author URL is gone; the mirror: the entry pins no size the app reads'], String(size));
+    }
+    assert.equal(paced, 1, 'no request without a pinned size');
+  });
+
+  test('E2E-check-mirror-default: the default mirror is the production prefix; a bad --mirror-url is a usage error', async () => {
+    const r = await check('refuse', path.join(T, 'tree'), path.join(T, 'tree'));
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^NOTE archives: the cache, then the mirror https:\/\/plugins\.eve-cyno\.dev\/v1\/archives\/<sha256>\.zip/m);
+    const t = await check('publish', path.join(T, 'tree'), path.join(T, 'tree'), ['--target', 'test']);
+    assert.match(t.stdout, /^NOTE archives: the cache, then the mirror https:\/\/plugins\.eve-cyno\.dev\/test\/v1\/archives\//m, 'the test target reads its own mirror');
+    for (const bad of ['http://example.com/v1/', 'https://plugins.eve-cyno.dev/v1', 'ftp://x/']) {
+      assert.equal((await check('refuse', path.join(T, 'tree'), path.join(T, 'tree'), ['--mirror-url', bad])).code, 2, bad);
+    }
+  });
+
+  test('E2E-review-mirror: C10 reads the version before an added one from the mirror', async () => {
+    servedRoot = path.join(T, 'index');
+    const A120 = pluginZip(manifest({ version: '1.2.0' }));
+    const cacheOf = (name) => { const c = path.join(T, name); cacheArchive(c, A120); return c; }; // the added version is cached; 1.1.0 (live) is not
+    const head = writeTree(path.join(T, 'tree-120'), { entries: [pluginEntry([version('1.2.0', A120), version('1.1.0', A110), version('1.0.0', A100)]), ENTRIES[1]], revoked: REVOKED });
+    const args = (m, cache) => ['review', '--base', path.join(T, 'tree'), '--head', head, '--archive-cache', cache, '--author', 'example-login', '--mirror-url', m];
+    const cache = cacheOf('review-mirror-cache');
+    const r = await run('tools/check.mjs', args(P, cache));
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED');
+    assert.ok(fs.existsSync(path.join(cache, `${sha(A110)}.zip`)), 'read from the mirror');
+    const none = await run('tools/check.mjs', args('none', cacheOf('review-nomirror-cache')));
+    assert.match(none.stdout, /^FLAG escalation C10 dev\.example\.intel 1\.1\.0: its plugin\.json could not be read/m);
+
+    // The added version is read from its author's URL even when the mirror holds it; a base version the head drops, from the mirror.
+    const withNew = path.join(T, 'index-with-120');
+    fs.cpSync(path.join(T, 'index'), withNew, { recursive: true });
+    fs.writeFileSync(path.join(withNew, 'archives', `${sha(A120)}.zip`), A120);
+    servedRoot = withNew;
+    const empty = path.join(T, 'review-empty-cache');
+    const fresh = await run('tools/check.mjs', args(P, empty));
+    assert.match(fresh.stdout, /^FLAG escalation C10 dev\.example\.intel 1\.2\.0: its plugin\.json could not be read/m);
+    assert.doesNotMatch(fresh.stdout, /1\.1\.0: its plugin\.json could not be read/);
+    const dropped = writeTree(path.join(T, 'tree-120-dropped'), { entries: [pluginEntry([version('1.2.0', A120), version('1.0.0', A100)]), ENTRIES[1]], revoked: REVOKED });
+    const d = await run('tools/check.mjs', ['review', '--base', path.join(T, 'tree'), '--head', dropped, '--archive-cache', cacheOf('review-dropped-cache'), '--author', 'example-login', '--mirror-url', P]);
+    assert.doesNotMatch(d.stdout, /could not be read/, d.stdout);
+    servedRoot = path.join(T, 'index');
+  });
+
+  test('E2E-build-mirror: build-index.mjs build reads live archives from the mirror (default: its --prefix)', async () => {
+    servedRoot = path.join(T, 'index');
+    const cache = path.join(T, 'build-mirror-cache');
+    fs.mkdirSync(cache);
+    const list = path.join(T, 'build-mirror-archives.json');
+    const b = await run('tools/build-index.mjs', ['build', '--prefix', P, '--tree', path.join(T, 'tree'), '--out', path.join(T, 'index-mirror'), '--archive-cache', cache, '--archives-json', list]);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.ok(b.stdout.includes(`NOTE archives: the cache, then the mirror ${P}archives/<sha256>.zip`), b.stdout);
+    assert.deepEqual(fs.readdirSync(cache).sort(), [`${sha(A110)}.zip`, `${sha(DUSK)}.zip`].sort(), 'kept in the cache');
+    assert.ok(JSON.parse(fs.readFileSync(list, 'utf8')).every(a => a.url.startsWith('https://127.0.0.1/releases/')), 'archives.json still names the author URL');
+    const none = await run('tools/build-index.mjs', ['build', '--prefix', P, '--tree', path.join(T, 'tree'), '--out', path.join(T, 'index-nomirror'), '--archive-cache', path.join(T, 'build-nomirror-cache'), '--mirror-url', 'none']);
+    assert.equal(none.code, 1, none.stdout + none.stderr);
+    assert.match(none.stderr, /^REFUSED: .*C4 /m);
+    assert.match(none.stdout, /^NOTE archives: the cache, then the author's URL \(no mirror\)/m);
+    assert.doesNotMatch(none.stderr, /the mirror/);
+    const bad = await run('tools/build-index.mjs', ['build', '--prefix', P, '--tree', path.join(T, 'tree'), '--out', path.join(T, 'index-badmirror'), '--mirror-url', 'http://example.com/v1/']);
+    assert.equal(bad.code, 2, bad.stdout + bad.stderr);
+    assert.equal((await run('tools/build-index.mjs', ['base', '--target', 'test', '--repair', 'false', '--out', path.join(T, 'base-mirror'), '--mirror-url', P])).code, 2, 'build only');
   });
 
   test('E2E-check-refuses: a wrong pinned hash fails C5, and C16 does not run', async () => {

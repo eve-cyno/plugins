@@ -26,7 +26,8 @@ real-money trading); plugins whose name or author reads as EVE-Cyno.
 
 By submitting an entry you allow EVE-Cyno to copy each listed archive, unchanged, to `plugins.eve-cyno.dev` and to serve it from there
 to users of the app, for as long as the version is listed or installed. The app downloads archives only from that copy, never from
-your server.
+your server. The checks read a version already published from that copy too (against its SHA-256 and size); your link is needed while
+a version is added.
 
 ## Revocation
 

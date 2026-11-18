@@ -57,12 +57,29 @@ export function runVendored(script, args, { timeoutMs = 1_800_000 } = {}) {
 export const refusalLines = (r, max = 20) => `${r.stderr}\n${r.stdout}`.split('\n').map(l => l.trim())
   .filter(l => /^(REFUSED|FAIL|INDEX VERIFY FAILED|usage|--)/.test(l)).slice(0, max);
 
+/** Every mirror read of this process shares one pace (plan 6.2: at most 50 requests per 10 s). */
+let mirrorPace = null;
+
 /**
- * The archive of an entry version {url, sha256}: the cached copy `<cache>/<sha256>.zip` when there is one, else downloaded from its
- * author's URL (C4) and kept in the cache under the hash of what arrived. Resolves {ok: true, bytes, file} or {ok: false, check: 'C4',
- * error, why}. The caller checks the size and SHA-256 (C5): a cached copy is never trusted to match its name.
+ * The mirror's copy of `v`: `<mirror>archives/<sha256>.zip`, at most the pinned size, used only when it is the pinned size and SHA-256.
+ * Resolves {ok: true, bytes} or {ok: false, why}.
  */
-export async function obtainArchive(v, { cache, download = downloadArchive }) {
+async function fromMirror(v, mirror, pace) {
+  if (!Number.isSafeInteger(v.size) || v.size < 1 || v.size > I.MAX_ARCHIVE_BYTES) return { ok: false, why: 'the entry pins no size the app reads' };
+  const r = await getLive(`${mirror}archives/${v.sha256}.zip`, v.size, pace, 600_000);
+  if (!r.ok) return { ok: false, why: r.why };
+  if (sha256(r.bytes) !== v.sha256) return { ok: false, why: 'the mirror copy is not the pinned size and SHA-256' }; // at most v.size bytes arrived
+  return { ok: true, bytes: r.bytes };
+}
+
+/**
+ * The archive of an entry version {url, sha256, size}: the cached copy `<cache>/<sha256>.zip` when there is one; else, with `mirror` (a
+ * prefix such as the production one), the mirror's `archives/<sha256>.zip` when it is the pinned size and SHA-256, so a version already
+ * live never depends on its author's URL; else downloaded from its author's URL (C4). What arrives is kept in the cache under its own
+ * hash. Resolves {ok: true, bytes, file} or {ok: false, check: 'C4', error, why}. The caller checks the size and SHA-256 (C5): a cached
+ * copy is never trusted to match its name.
+ */
+export async function obtainArchive(v, { cache, download = downloadArchive, mirror = null, pace = null }) {
   if (typeof v?.sha256 !== 'string' || !SHA_RE.test(v.sha256)) return { ok: false, check: 'C4', error: 'bad_entry', why: 'the entry names no SHA-256' };
   const f = path.join(cache, `${v.sha256}.zip`);
   let st = null;
@@ -71,13 +88,22 @@ export async function obtainArchive(v, { cache, download = downloadArchive }) {
     if (!st.isFile() || st.size > I.MAX_ARCHIVE_BYTES) return { ok: false, check: 'C4', error: 'cache', why: `the cached copy is not a regular file of at most ${I.MAX_ARCHIVE_BYTES} bytes` };
     return { ok: true, bytes: fs.readFileSync(f), file: f };
   }
-  const d = await download(v.url);
-  if (!d.ok) return { ok: false, check: 'C4', error: d.error, why: d.why };
-  const g = path.join(cache, `${d.sha256}.zip`);
-  try { fs.writeFileSync(g, d.bytes, { flag: 'wx' }); } catch (e) {
-    if (e?.code !== 'EEXIST') return { ok: false, check: 'C4', error: 'disk', why: `the download could not be kept (${e?.code ?? 'error'})` };
+  const keep = (bytes, hash) => {
+    const g = path.join(cache, `${hash}.zip`);
+    try { fs.writeFileSync(g, bytes, { flag: 'wx' }); } catch (e) {
+      if (e?.code !== 'EEXIST') return { ok: false, check: 'C4', error: 'disk', why: `the archive could not be kept (${e?.code ?? 'error'})` };
+    }
+    return { ok: true, bytes, file: g };
+  };
+  let missed = '';
+  if (mirror) {
+    const m = await fromMirror(v, mirror, pace ?? (mirrorPace ??= pacer()));
+    if (m.ok) return keep(m.bytes, v.sha256);
+    missed = `; the mirror: ${m.why}`;
   }
-  return { ok: true, bytes: d.bytes, file: g };
+  const d = await download(v.url);
+  if (!d.ok) return { ok: false, check: 'C4', error: d.error, why: `${d.why}${missed}` };
+  return keep(d.bytes, d.sha256);
 }
 
 /** The JSON file `name` of `dir`: {value}, {missing: true} or {why}. */
@@ -92,10 +118,11 @@ export function readJson(dir, name) {
 /**
  * Builds the index of the tree `tree` (entries/, revoked.json, flags.json) into the new folder `out`, every URL under `prefix`:
  * archives/, catalog/<sha256>.json and the unsigned head index.json. `cache`: a folder of archives by SHA-256 (read, and filled with
- * downloads); without it a temp folder. `archivesJson`: a new file listing each archive {name, sha256, size, url} (the author's URL).
+ * downloads); without it a temp folder. `mirror`: the prefix whose archives/ is read before an author's URL (obtainArchive), or null.
+ * `archivesJson`: a new file listing each archive {name, sha256, size, url} (the author's URL).
  * Resolves {ok: true, headBytes, head, catalogName, catalogBytes, archives} or {ok: false, why}; on a refusal nothing of `out` is kept.
  */
-export async function buildIndex({ tree, prefix, out, cache, archivesJson, download }) {
+export async function buildIndex({ tree, prefix, out, cache, archivesJson, download, mirror = null }) {
   const refuse = (why) => ({ ok: false, why });
   if (prefixProblem(prefix)) return refuse(`prefix ${prefix}: ${prefixProblem(prefix)}`);
   if (fs.existsSync(out)) return refuse('the output folder exists: build into a new folder');
@@ -121,7 +148,7 @@ export async function buildIndex({ tree, prefix, out, cache, archivesJson, downl
     });
     const archives = new Map();
     for (const { id, v } of kept) {
-      const got = await obtainArchive(v, { cache: store, download });
+      const got = await obtainArchive(v, { cache: store, download, mirror });
       if (!got.ok) return refuse(`${id} ${v.version}: C4 ${got.why}`);
       if (got.bytes.length !== v.size || sha256(got.bytes) !== v.sha256) return refuse(`${id} ${v.version}: C5 the archive's size or SHA-256 is not the one the entry pins`);
       if (!archives.has(v.sha256)) archives.set(v.sha256, { name: `archives/${v.sha256}.zip`, sha256: v.sha256, size: v.size, url: v.url });

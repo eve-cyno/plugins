@@ -3,8 +3,10 @@
 // (vendor/eve-cyno-host/scripts/index-build.mjs and index-verify.mjs). It never signs, never uploads and reads no credential.
 //
 //   build  (--target production|test | --prefix <URL>) --out <new folder> [--tree <dir>] [--archives-json <new file>] [--archive-cache <dir>]
+//          [--mirror-url <prefix>|none]
 //     The tree's entries and revoked.json (default: this repository) into archives/, catalog/<sha256>.json and the UNSIGNED head
-//     index.json, every URL under the target's prefix: each archive fetched (the cache first, then the author's URL: C4) and checked
+//     index.json, every URL under the target's prefix: each archive fetched (the cache first, then the mirror's archives/<sha256>.zip
+//     when it is the pinned size and SHA-256, default the prefix built for, then the author's URL: C4) and checked
 //     against the entry (C5); the catalog written by index-build.mjs, the head by index-build.mjs --head-from. The lifetime is the
 //     vendored default, 60 days (D36); there is no option for it. A head more than 7 days old or 5 minutes ahead is refused.
 //   base   --target production|test --repair true|false --out <new folder> [--summary <file>] [--prefix <URL>] [--key <pub>...]
@@ -48,14 +50,14 @@ const RESIGN_AT_MS = 30 * DAY;
 const R2 = 'recovery R2 (docs/RUNBOOK.md): the coordinator confirms it with index-verify.mjs --live --archives, then publish.yml with repair';
 
 const USAGE = [
-  'usage: node tools/build-index.mjs build (--target production|test | --prefix <URL>) --out <new folder> [--tree <dir>] [--archives-json <file>] [--archive-cache <dir>]',
+  'usage: node tools/build-index.mjs build (--target production|test | --prefix <URL>) --out <new folder> [--tree <dir>] [--archives-json <file>] [--archive-cache <dir>] [--mirror-url <prefix>|none]',
   '       node tools/build-index.mjs base --target production|test --repair true|false --out <new folder> [--summary <file>] [--prefix <URL>] [--key <pub>...]',
   '       node tools/build-index.mjs --compare-live --base <folder> --index <folder> --lift <file> --repair true|false [--summary <file>]',
   '       node tools/build-index.mjs resign-check --outputs <file> [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]',
   '       node tools/build-index.mjs resign --out <new folder> [--archives-json <file>] [--summary <file>] [--prefix <URL>] [--key <pub>...]',
 ].join('\n');
 const ALLOWED = {
-  build: ['target', 'prefix', 'out', 'tree', 'archives-json', 'archive-cache'],
+  build: ['target', 'prefix', 'out', 'tree', 'archives-json', 'archive-cache', 'mirror-url'],
   base: ['target', 'repair', 'out', 'summary', 'prefix', 'key'],
   '--compare-live': ['compare-live', 'base', 'index', 'lift', 'repair', 'summary'],
   'resign-check': ['outputs', 'summary', 'tree', 'prefix', 'key'],
@@ -81,6 +83,7 @@ if (a.target !== undefined && !Object.hasOwn(PREFIXES, a.target)) usage('--targe
 if (a.repair !== undefined && a.repair !== 'true' && a.repair !== 'false') usage('--repair: true or false');
 if (a.prefix !== undefined && prefixProblem(a.prefix)) usage(`--prefix: ${prefixProblem(a.prefix)}`);
 if (cmd === 'build' && (a.target === undefined) === (a.prefix === undefined)) usage('build: --target or --prefix, one of them');
+if (a['mirror-url'] !== undefined && a['mirror-url'] !== 'none' && prefixProblem(a['mirror-url'])) usage(`--mirror-url: ${prefixProblem(a['mirror-url'])}`);
 
 const R = createReport();
 const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -111,8 +114,10 @@ const newFolder = (dir) => {
 // ---- build ------------------------------------------------------------------------------------------------------------------------------
 async function stepBuild() {
   const prefix = a.prefix ?? PREFIXES[a.target];
+  const mirror = a['mirror-url'] === 'none' ? null : (a['mirror-url'] ?? prefix);
+  R.note(`archives: the cache, then ${mirror ? `the mirror ${mirror}archives/<sha256>.zip (the pinned size and SHA-256 only), then the author's URL` : "the author's URL (no mirror)"}`);
   const r = await buildIndex({
-    tree: path.resolve(a.tree ?? ROOT), prefix, out: path.resolve(a.out),
+    tree: path.resolve(a.tree ?? ROOT), prefix, out: path.resolve(a.out), mirror,
     cache: a['archive-cache'] ? path.resolve(a['archive-cache']) : undefined, archivesJson: a['archives-json'] ? path.resolve(a['archives-json']) : undefined,
   });
   if (!r.ok) refuse(r.why);

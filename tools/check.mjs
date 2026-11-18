@@ -17,7 +17,10 @@
 //     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
 //     classes are printed as information.
 // A base folder is a tree (entries/, revoked.json) or a base written by build-index.mjs base (catalog.json). Archives come from
-// --archive-cache (<sha256>.zip; checked like a download, C5) or from the author's URL (C4), and are kept there.
+// --archive-cache (<sha256>.zip; checked like a download, C5) or from the author's URL (C4), and are kept there. A version on the base
+// (C16's whole index, C10's version before an added one) is read from the mirror first: --mirror-url <prefix> (default the production
+// prefix, the test one for publish --target test; `none` for no mirror) archives/<sha256>.zip, used only when it is the pinned size and
+// SHA-256, so a broken author link holds up no other pull request. An added version always comes from its author's URL (C4).
 // Lines: PASS / FAIL / FLAG / NOTE (tools/lib/summary.mjs); the last line is CHECKS PASSED, CHECKS FAILED <n>, NEEDS REVIEW <classes>
 // or NO REVIEW NEEDED. Exit 0 passed, 1 refused, 2 usage, 3 needs review.
 import crypto from 'node:crypto';
@@ -32,18 +35,18 @@ import { MARKET_URL_PREFIX, checkCatalogMirrors, checkEntry as entryProblems, ch
 import { checkArchiveBytes } from './lib/archives.mjs';
 import { checkEntry as diffEntry, checkNames } from './lib/diff.mjs';
 import { checkProvenance } from './lib/provenance.mjs';
-import { ROOT, buildIndex, obtainArchive, readJson, refusalLines, revKey, runVendored } from './lib/indexbuild.mjs';
+import { PREFIXES, ROOT, buildIndex, obtainArchive, prefixProblem, readJson, refusalLines, revKey, runVendored } from './lib/indexbuild.mjs';
 import { createReport } from './lib/summary.mjs';
 import { throwawaySigner } from './lib/throwaway.mjs';
 
 const require = createRequire(import.meta.url);
 const I = require(path.join(ROOT, 'vendor', 'eve-cyno-host', 'host', 'dist', 'market', 'indexformat.js'));
-const USAGE = 'usage: node tools/check.mjs refuse|review|publish --base <dir> --head <dir> [--author <login>] [--target production|test] [--summary <file>] [--archive-cache <dir>]';
+const USAGE = 'usage: node tools/check.mjs refuse|review|publish --base <dir> --head <dir> [--author <login>] [--target production|test] [--summary <file>] [--archive-cache <dir>] [--mirror-url <prefix>|none]';
 const usage = (why) => { if (why) console.error(why); console.error(USAGE); process.exit(2); };
 
 let a, mode;
 try {
-  const p = parseArgs({ args: process.argv.slice(2), strict: true, allowPositionals: true, options: Object.fromEntries(['base', 'head', 'author', 'target', 'summary', 'archive-cache'].map(k => [k, { type: 'string' }])) });
+  const p = parseArgs({ args: process.argv.slice(2), strict: true, allowPositionals: true, options: Object.fromEntries(['base', 'head', 'author', 'target', 'summary', 'archive-cache', 'mirror-url'].map(k => [k, { type: 'string' }])) });
   a = p.values;
   mode = p.positionals[0];
   if (p.positionals.length !== 1 || !['refuse', 'review', 'publish'].includes(mode)) usage();
@@ -51,6 +54,8 @@ try {
 if (!a.base || !a.head) usage('--base and --head are needed');
 if (a.author !== undefined && (mode !== 'review' || !/^[A-Za-z0-9-]{1,39}(\[bot\])?$/.test(a.author))) usage('--author: a GitHub login, review only');
 if ((a.target !== undefined) !== (mode === 'publish') || (a.target !== undefined && !['production', 'test'].includes(a.target))) usage('--target production|test goes with publish only');
+const mirror = a['mirror-url'] === 'none' ? null : (a['mirror-url'] ?? PREFIXES[a.target ?? 'production']);
+if (mirror !== null && prefixProblem(mirror)) usage(`--mirror-url: ${prefixProblem(mirror)}`);
 
 const R = createReport();
 const isObj = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -202,7 +207,7 @@ function revocationFlags(head, base) {
 // ---- C16, C9 ----------------------------------------------------------------------------------------------------------------------------
 async function checkWholeIndex() {
   const out = path.join(work, 'c16', 'index');
-  const b = await buildIndex({ tree: headDir, prefix: MARKET_URL_PREFIX, out, cache });
+  const b = await buildIndex({ tree: headDir, prefix: MARKET_URL_PREFIX, out, cache, mirror });
   if (!b.ok) { R.fail('C16', `the index does not build: ${b.why}`); return; }
   const signer = throwawaySigner();
   const pub = path.join(work, 'c16', 'throwaway.pub');
@@ -217,12 +222,15 @@ async function checkWholeIndex() {
 }
 
 // ---- review classes ---------------------------------------------------------------------------------------------------------------------
-/** The background flag and optional permissions of a version's plugin.json, read from its archive after the C5-C7 checks, or null. */
-async function manifestOf(entry, v) {
+/**
+ * The background flag and optional permissions of a version's plugin.json, read from its archive after the C5-C7 checks, or null.
+ * `live`: the version is on the base, so the mirror is read before its author's URL.
+ */
+async function manifestOf(entry, v, live) {
   const l = hostListing(entry);
   const lv = l?.versions.find(x => x.version === v.version);
   if (!lv || typeof v.url !== 'string') return null;
-  const got = await obtainArchive(v, { cache });
+  const got = await obtainArchive(v, { cache, mirror: live ? mirror : null });
   if (!got.ok) return null;
   const c = checkArchiveBytes(got.bytes, l, lv, { tmpdir: work });
   return c.ok ? c.manifest : null;
@@ -246,7 +254,7 @@ async function entryFlags(head, base) {
       const read = new Map();
       for (const ver of need) {
         const hv = e.versions.find(x => x.version === ver);
-        const m = hv ? await manifestOf(e, hv) : (b && base.kind === 'tree' ? await manifestOf(b, b.versions.find(x => x.version === ver)) : null);
+        const m = hv ? await manifestOf(e, hv, onBase(b, ver)) : (b && base.kind === 'tree' ? await manifestOf(b, b.versions.find(x => x.version === ver), true) : null);
         if (m === null) R.flag('escalation', 'C10', `${e.id} ${ver}: its plugin.json could not be read to compare background and optional permissions`);
         read.set(ver, m);
       }
@@ -312,6 +320,7 @@ function scopeFlag() {
 // ---- run --------------------------------------------------------------------------------------------------------------------------------
 let code = 0, verdict;
 try {
+  R.note(`archives: the cache, then ${mirror ? `the mirror ${mirror}archives/<sha256>.zip for a version on the base (the pinned size and SHA-256 only), then the author's URL` : "the author's URL (no mirror)"}`);
   const head = readHead(headDir);
   const base = readBase(baseDir);
   if (base) {

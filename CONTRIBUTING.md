@@ -2,7 +2,9 @@
 
 ## Add or update a plugin
 
-1. Publish a release archive (`.zip`) at an `https:` URL you control. Note its SHA-256 and size in bytes.
+1. Publish a release archive (`.zip`) at an `https:` URL you control. Note its SHA-256 and size in bytes. The checks download it
+   from that URL until the version is published; after that they read the mirror's copy of a listed version (checked against the
+   same SHA-256 and size), so a link that breaks later does not hold up other pull requests.
 2. Add or edit `entries/<id>.json`, where `<id>` is the plugin id. Add a new version at the top of `versions`; never change the
    `url`, `sha256` or `size` of a version that is already merged.
 3. Never remove a merged version, and never remove a merged entry. To take a version out of the Marketplace, add `"unlisted": true`
