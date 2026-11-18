@@ -147,6 +147,23 @@ For a `target: test` run, this is the first and only reading.
 
 ## Owner steps before the first production publish
 
+Three steps are the owner's alone and come first; each is repeated in the list below.
+
+- **O1, the reviewer account.** Create the second GitHub account that approves the environments `index` and `mirror`: 2FA on, and no
+  login, token or ssh key of it on the agents' workstation (the owner confirms this in writing, "The reviewer account" above). Set it
+  as the required reviewer of both environments, with "Prevent self-review" on and "Allow administrators to bypass" off. Commit its
+  numeric id in `tools/reviewer.json` through a pull request.
+- **O2, the agents' token (T1).** Create the agents' new fine-grained token on `eve-cyno/plugins` only, **without Administration and
+  without Actions write**. The tools need these permissions and no others: Contents read and write (the lane pushes its branch),
+  Workflows write (the lane pushes workflow files), Metadata read (always on), Pull requests read and write (only if agents open or
+  read pull requests; otherwise leave it off). Nothing else; in particular no Administration and no Actions. Then record the two probes in the table
+  above: the agents' token must answer 403 on the Administration probe (`GET repos/eve-cyno/plugins/keys`) and 403 on the
+  Actions-write probe (`DELETE .../actions/artifacts/1`); the everyday token must answer 404 on the Actions-write probe (it can
+  delete).
+- **O3, the index key.** The owner pastes the index key into the `index` environment secrets `MINISIGN_INDEX_KEY` and
+  `MINISIGN_INDEX_PASSWORD` in the GitHub UI (Settings, Environments, `index`), never through an agent shell, a file an agent
+  writes or a message.
+
 1. The environments exist with the settings above; the reviewer account exists; the written confirmation above is filled in.
 2. `tools/reviewer.json` holds the reviewer account's real id (merged through a pull request; never the placeholder).
 3. The token decision is made. Under T1: the token is swapped, `tools/check-envs.mjs` passes, and the probe table above is filled in.
@@ -161,8 +178,8 @@ For a `target: test` run, this is the first and only reading.
    owner first; the owner looks at the bucket's R2 metrics once a month.
 8. **Q10, no empty head.** The first production head goes out with the first approved entry, never empty: any verified head shows the
    Marketplace to every product build.
-9. **The coordinator's OK for the schedule** of `resign.yml` on this public repository. If refused, `resign.yml` keeps only
-   `workflow_dispatch`, and the uptime alarm plus a monthly item of this runbook replace the schedule.
+9. **The schedule** of `resign.yml` on this public repository is approved (owner, 2026-11-18). If it is ever withdrawn, `resign.yml`
+   keeps only `workflow_dispatch`, and the uptime alarm plus a monthly item of this runbook replace the schedule.
 
 ## First test publish (Phase 2 proof)
 
@@ -184,7 +201,8 @@ even its failed jobs: the first step of every job fails on any attempt but the f
 
 ## Re-sign
 
-- `resign.yml` runs every Monday at 06:17 UTC and can be dispatched. Its `check` job reads the live head and ends the run (green, no
+- `resign.yml` runs every Monday at 06:17 UTC and can be dispatched. The schedule is an exception to the EVE-Cyno rule that workflows
+  are manual-only, for `eve-cyno/plugins` only, approved by the owner on 2026-11-18. Its `check` job reads the live head and ends the run (green, no
   approval asked) unless the head is 30 days old or more, or fewer than 30 days remain before it expires. Otherwise `head` makes a new
   head with the same catalog and a new `generated` (60 days), and `sign` and `upload` need the reviewer's approvals of `index` and
   `mirror`, each after the steps above.

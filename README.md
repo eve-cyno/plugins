@@ -25,6 +25,12 @@ A maintainer reviews every new plugin and every version that asks for more permi
   checks run. Never edited by hand; `node tools/vendor-host.mjs --verify` holds it to its `MANIFEST.json`. These files keep the app's
   licence (`vendor/eve-cyno-host/LICENSE`).
 
+## Workflows
+
+Workflows run on manual dispatch, with one exception: a weekly scheduled re-sign (`resign.yml`) runs when the live head is older than
+30 days. This is an exception to the EVE-Cyno project rule that workflows are manual-only, for `eve-cyno/plugins` only, approved by the
+owner on 2026-11-18. The signature still needs the reviewer account's approvals (see [docs/RUNBOOK.md](docs/RUNBOOK.md)).
+
 ## Running the checks
 
 ```sh
@@ -43,7 +49,8 @@ Feedback, support and reports: Discord <https://discord.gg/XZzkH38dt9>, or in ga
 
 ## Licence
 
-Pending owner decision; see [LICENSE](LICENSE).
+The index repository and its tools are under the MIT License. The vendored desktop modules under `vendor/eve-cyno-host/**` keep
+their own licence, PolyForm Strict 1.0.0 (`vendor/eve-cyno-host/LICENSE`). See [LICENSE](LICENSE).
 
 ## Notice
 
