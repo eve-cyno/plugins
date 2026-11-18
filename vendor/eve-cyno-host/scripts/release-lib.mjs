@@ -2,8 +2,9 @@
 // Nothing here signs, uploads or holds a secret key.
 // - The manifest rules, the minisign verifier and the pinned keys come from the host's own build (host/dist), so the scripts check exactly
 //   what the app checks. `npm --prefix host run build` (or build:test) makes it.
-// - Signing happens in the signing workflow of eve-cyno/desktop (scripts/release-sign.sh asks it; docs/release-checklist.md): the secret
-//   keys are Actions secrets plus an encrypted backup, never a file here. `refuseSecretKeys` stops a script when a minisign secret key
+// - Signing happens in workflows (docs/release-checklist.md): a release in the signing workflow of eve-cyno/desktop (scripts/release-sign.sh
+//   asks it), the plugin index in the publishing workflows of eve-cyno/plugins (release-sign.sh with purpose index stays the manual
+//   fallback). The secret keys are Actions secrets plus an encrypted backup, never a file here. `refuseSecretKeys` stops a script when a minisign secret key
 //   sits where it must never be: in this repository, git-ignored files included (the committed test keys excepted), in a release folder,
 //   in minisign's default key folder or in ~/eve-cyno-keys (the folder of the dropped offline key session) on this machine.
 // - Messages name files relative to the repository or the release folder, never by an absolute path.
@@ -35,8 +36,8 @@ export function loadHost() {
 }
 
 /**
- * The host modules index-verify.mjs reads archives with (host/dist): the zip reader, theme packages, the listing admission, the
- * installer's staged checks (the plugin manifest included).
+ * The host modules index-verify.mjs reads archives with (host/dist): the zip reader, theme packages, the listing admission (market/admit.js:
+ * the app's own rule without the client's wiring in market/wire.js, DP3 M4), the installer's staged checks (the plugin manifest included).
  */
 export function loadHostMarket() {
   const dist = path.join(ROOT, 'host', 'dist');
@@ -44,7 +45,7 @@ export function loadHostMarket() {
     return {
       zipread: require(path.join(dist, 'market', 'zipread.js')),
       themePackage: require(path.join(dist, 'themes', 'package.js')),
-      wire: require(path.join(dist, 'market', 'wire.js')),
+      admit: require(path.join(dist, 'market', 'admit.js')),
       stagecheck: require(path.join(dist, 'market', 'stagecheck.js')),
     };
   } catch {
@@ -102,6 +103,94 @@ export const TEST_RELEASE_PUB = path.join(ROOT, 'host', 'test', 'keys', 'test-re
  * release-sign.sh refuses to have a head in a folder holding it (any entry of this name, in any case) signed with the product index keys.
  */
 export const TEST_KEY_MARKER = 'TEST-KEY-ONLY.txt';
+/**
+ * The file index-build.mjs writes into a folder it builds, re-signs or writes a head for with --key, and index-verify.mjs into a folder
+ * it verifies with --key (DP3 1.D). That folder's index was made for, or checked against, a key that is not the product's (a test
+ * location or a private source), so release-sign.sh refuses to have its head signed (any entry of this name, in any case; with or
+ * without --test-key).
+ */
+export const CUSTOM_KEY_MARKER = 'CUSTOM-KEY-ONLY.txt';
+/** --key takes at most this many public keys: a primary and a standby, like the product's. */
+export const MAX_CUSTOM_KEYS = 2;
+
+/** True when `dir` holds an entry named `name` in any case (a folder that cannot be listed counts as holding it). */
+export function holdsName(dir, name) {
+  try { return fs.readdirSync(dir).some(n => n.toLowerCase() === name.toLowerCase()); } catch { return true; }
+}
+/**
+ * Writes CUSTOM_KEY_MARKER into the folder `dir` (`how`: the command that marks it) unless an entry of that name is there in any case
+ * already. Throws when it cannot be written.
+ */
+export function writeCustomKeyMarker(dir, how) {
+  if (holdsName(dir, CUSTOM_KEY_MARKER)) return;
+  fs.writeFileSync(path.join(dir, CUSTOM_KEY_MARKER), [
+    `This folder was ${how}.`,
+    'Its index was made for, or checked against, a key that is not the product index key (a test location or a private source).',
+    'scripts/release-sign.sh therefore refuses to have its index.json signed, with or without --test-key. To sign the published index,',
+    'build or re-sign it without --key (docs/release-checklist.md, "The plugin index").', ''].join('\n'), { flag: 'wx' });
+}
+
+/**
+ * Why `p` is not a URL prefix the index tools take with --prefix, or null: a canonical folder URL (ending in /; no user, query or
+ * fragment) over https, or over http on 127.0.0.1 only (a local test server). The app itself reads only MARKET_URL_PREFIX.
+ */
+export function prefixProblem(p) {
+  let u;
+  try { u = new URL(p); } catch { return 'not a URL'; }
+  if (u.href !== p) return `not written canonically (${u.href})`;
+  if (u.username || u.password || u.search || u.hash || p.includes('?') || p.includes('#')) return 'a prefix has no user, query or fragment';
+  if (!u.pathname.endsWith('/')) return 'a folder URL ends with /';
+  if (u.protocol === 'https:' || (u.protocol === 'http:' && u.hostname === '127.0.0.1')) return null;
+  return 'https, or http on 127.0.0.1 only (a local test server)';
+}
+
+/**
+ * The public keys of --key `files` (at most MAX_CUSTOM_KEYS minisign .pub files, no key twice, never a release key: an index never
+ * verifies with one), as {keys} or {why} for a usage error. `S` and `T` are the host's minisign and trustkeys modules.
+ */
+export function customKeys(files, S, T) {
+  if (files.length > MAX_CUSTOM_KEYS) return { why: `--key: at most ${MAX_CUSTOM_KEYS} public keys (a primary and a standby)` };
+  const same = (a, b) => a.keyId === b.keyId && a.publicKey.equals(b.publicKey);
+  const release = T.trustedKeys('release', false).slice();
+  try { release.push(S.parsePublicKey(fs.readFileSync(TEST_RELEASE_PUB, 'utf8'))); } catch { /* no test key in this checkout */ }
+  const keys = [];
+  for (const f of files) {
+    let text, k;
+    try { text = fs.readFileSync(f, 'utf8'); } catch { return { why: `--key ${shown(f)}: cannot be read` }; }
+    try { k = S.parsePublicKey(text); } catch { return { why: `--key ${shown(f)}: not a minisign public key` }; }
+    if (release.some(r => same(r, k))) return { why: `--key ${shown(f)}: a release key (${k.keyId}); an index is verified with index keys only` };
+    if (keys.some(x => same(x, k))) return { why: `--key ${shown(f)}: the key ${k.keyId} is given twice` };
+    keys.push(k);
+  }
+  return { keys };
+}
+
+/**
+ * index-verify.mjs check 4 and index-build.mjs --head-from: what a published index must not rely on in a catalog (`catBytes`, matched to
+ * its head and parsed into `cat` without `admit`), as messages: listings the parser drops, types it ignores, categories it removes (the app
+ * is lenient there), and listings the app's admission drops (market/admit.ts listingAdmit). `I` is market/indexformat, `M` loadHostMarket().
+ */
+export function catalogProblems(I, M, catBytes, cat, prefix) {
+  const out = [];
+  const raw = JSON.parse(catBytes.toString('utf8')).plugins; // parsed once already: it is JSON with a plugins list
+  const idOf = (l, i) => (typeof l?.id === 'string' && /^[a-z0-9.-]{1,100}$/.test(l.id) ? l.id : `plugins[${i}]`);
+  const isObj = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (cat.dropped > 0) {
+    const named = raw.map((l, i) => [l, i]).filter(([l]) => I.listingProblem(l, prefix) !== null).map(([l, i]) => `${idOf(l, i)} (${I.listingProblem(l, prefix)})`);
+    out.push(`the app drops ${cat.dropped} listing${cat.dropped === 1 ? '' : 's'}: ${named.join(', ')}`);
+  }
+  for (const [i, l] of raw.entries()) {
+    if (!isObj(l) || typeof l.type !== 'string') continue;
+    if (l.type !== 'plugin' && l.type !== 'theme') out.push(`the app ignores the listing ${idOf(l, i)} (its type is not plugin or theme)`);
+    else if (I.listingProblem(l, prefix) === null && l.categories.some(c => !I.CATEGORIES.includes(c))) out.push(`the app removes a category it does not know from the listing ${idOf(l, i)}`);
+  }
+  // The app's admission of a listing (the same function the app passes to parseCatalog as `admit`).
+  for (const l of cat.plugins) {
+    if (M.admit.listingAdmit(l)) continue;
+    out.push(`the app drops the listing ${l.id} (${M.zipread.isDeviceNameId(l.id) ? 'its id starts with a Windows device name' : 'its name or author reads as the host\'s'})`);
+  }
+  return out;
+}
 
 /** SHA-256 (lower hex) and size of a file, streamed. */
 export function hashFile(file) {
@@ -217,8 +306,9 @@ const listDir = (dir) => {
  * - every folder in `dirs` outside the repository (a release folder elsewhere, on Windows also on another drive);
  * - minisign's default key folder (~/.minisign, or $MINISIGN_CONFIG_DIR) and ~/eve-cyno-keys (the dropped offline session's folder).
  * A link counts as the file it names. Limits: files over SECRET_SCAN_MAX_BYTES are not read, and outside the repository the scan goes
- * SECRET_SCAN_DEPTH folders deep and follows no link to a folder. Release and index secret keys live only in the Actions secrets of
- * eve-cyno/desktop and the encrypted backup. A finding names where it is (a location and a relative path), never the file's content.
+ * SECRET_SCAN_DEPTH folders deep and follows no link to a folder. The release secret keys live only in the Actions secrets of
+ * eve-cyno/desktop, the index secret key in those of eve-cyno/plugins (environment `index`), and both in the encrypted backup (DP3 M7). A
+ * finding names where it is (a location and a relative path), never the file's content.
  */
 export function refuseSecretKeys(dirs = []) {
   const found = [];
@@ -243,7 +333,8 @@ export function refuseSecretKeys(dirs = []) {
   if (found.length === 0) return;
   console.error('REFUSED: a minisign secret key is on this machine, where the release tooling runs:');
   for (const f of [...new Set(found)]) console.error(`  ${f}`);
-  console.error('Release and index secret keys live only in the Actions secrets of eve-cyno/desktop and the encrypted backup (docs/release-checklist.md).');
+  console.error('The release secret keys live only in the Actions secrets of eve-cyno/desktop, the index secret key in those of eve-cyno/plugins (environment');
+  console.error('"index"), and both in the encrypted backup (docs/release-checklist.md, "The signing keys").');
   console.error('Move the key off this machine (if it is a release or index key, treat it as exposed: follow "Key compromise and rotation" in the checklist).');
   process.exit(1);
 }

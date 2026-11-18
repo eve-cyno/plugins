@@ -3,6 +3,13 @@
 //   node scripts/index-verify.mjs <index folder> [--test-key] [--archives]   the folder index-build.mjs wrote, with index.json.minisig from release-sign.sh
 //   node scripts/index-verify.mjs --live [--test-key] [--archives]           what https://plugins.eve-cyno.dev/v1/ serves now (reads only)
 //   node scripts/index-verify.mjs <index folder> --live [--test-key] [--archives]   the folder, then the folder against what is served now (check 7)
+// Each form also takes --prefix <canonical folder URL> and --key <pub file> (DP3 1.D: a test location or a private source; the app reads
+// only the product prefix with the product keys):
+// - --prefix: every URL of the index is under that folder instead of https://plugins.eve-cyno.dev/v1/, and --live reads from it
+//   (https; http only on 127.0.0.1, a local test server).
+// - --key (once or twice: a primary and a standby): the head verifies with those public keys only, never the product's or a release
+//   key; not with --test-key. A folder verified with --key gets CUSTOM-KEY-ONLY.txt first (release-lib.mjs CUSTOM_KEY_MARKER), so
+//   release-sign.sh refuses to have its head signed.
 // The checks, in the app's own order and with the app's own code (host/dist, market/indexformat.js):
 //  1. index.json and index.json.minisig within their caps (16 KiB each);
 //  2. the head's minisign signature with the INDEX keys only, never a release key: the product's keys pinned in trustkeys.ts, or with
@@ -12,8 +19,8 @@
 //     Date header: a future head would hold every later one back as a rollback in the app), and the head has not expired;
 //  4. the catalog it names: its size and SHA-256 against the head before it is parsed, the catalog parser, and no listing dropped, no
 //     type ignored and no category removed (the app is lenient there; a published index never relies on it); no listing the app's
-//     admission drops (market/wire.ts listingAdmit, the catalog parser's `admit`: an id that starts with a Windows device name, a name or
-//     author that reads as the host's unless the listing is first-party);
+//     admission drops (market/admit.ts listingAdmit, the catalog parser's `admit`: an id that starts with a Windows device name, a name or
+//     author that reads as the host's unless the listing is first-party; release-lib.mjs catalogProblems);
 //  5. each archive a listing names: its size and SHA-256 (the copy in archives/; with --live the published bytes, streamed and hashed,
 //     never saved), each archive read once and dropped before the next (release-lib.mjs verifyArchives); with --archives also its
 //     contents, read as the app reads them (the zip reader, R25): a plugin's archive goes through the installer's own staged checks
@@ -35,23 +42,32 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ROOT, fetchCapped, hashFile, loadHost, loadHostMarket, noCache, refuseSecretKeys, verifyArchives } from './release-lib.mjs';
+import { CUSTOM_KEY_MARKER, ROOT, catalogProblems, customKeys, fetchCapped, hashFile, loadHost, loadHostMarket, noCache, prefixProblem, refuseSecretKeys, shown,
+  verifyArchives, writeCustomKeyMarker } from './release-lib.mjs';
 
 const usage = (why) => {
   if (why) console.error(why);
-  console.error('usage: node scripts/index-verify.mjs <index folder> [--test-key] [--archives]\n       node scripts/index-verify.mjs <index folder> --live [--test-key] [--archives]   (also compares with the published index)\n       node scripts/index-verify.mjs --live [--test-key] [--archives]');
+  console.error('usage: node scripts/index-verify.mjs <index folder> [--test-key | --key <pub file>...] [--prefix <URL>] [--archives]\n       node scripts/index-verify.mjs <index folder> --live [--test-key | --key <pub file>...] [--prefix <URL>] [--archives]   (also compares with the published index)\n       node scripts/index-verify.mjs --live [--test-key | --key <pub file>...] [--prefix <URL>] [--archives]');
   process.exit(2);
 };
 const args = process.argv.slice(2);
-let testKey = false, live = false, archives = false, dirArg = null;
-for (const a of args) {
+let testKey = false, live = false, archives = false, dirArg = null, prefixArg = null;
+const keyFiles = [];
+/** The value of the option at args[i] (the next word; never another option). */
+const valueOf = (i) => (i + 1 < args.length && !args[i + 1].startsWith('--') ? args[i + 1] : usage(`${args[i]} needs a value`));
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
   if (a === '--test-key') { if (testKey) usage(); testKey = true; }
   else if (a === '--archives') { if (archives) usage(); archives = true; }
   else if (a === '--live') { if (live) usage(); live = true; }
+  else if (a === '--prefix') { if (prefixArg !== null) usage('--prefix is given once'); prefixArg = valueOf(i++); }
+  else if (a === '--key') keyFiles.push(path.resolve(valueOf(i++)));
   else if (a.startsWith('--') || dirArg !== null) usage();
   else dirArg = a;
 }
 if (!live && dirArg === null) usage();
+if (testKey && keyFiles.length > 0) usage('--test-key and --key: one or the other (--test-key is the committed TEST index key)');
+if (prefixArg !== null && prefixProblem(prefixArg)) usage(`--prefix ${prefixArg}: ${prefixProblem(prefixArg)}`);
 // `<folder> --live` verifies the folder and compares it with the published index; `--live` alone verifies the published files.
 const compare = live && dirArg !== null;
 const liveSrc = live && !compare;
@@ -67,6 +83,8 @@ if (testBase !== undefined) {
 
 const { indexformat: I, minisign: S, trustkeys: T } = loadHost();
 const M = loadHostMarket();
+const custom = keyFiles.length > 0 ? customKeys(keyFiles, S, T) : null;
+if (custom?.why) usage(custom.why);
 const dir = dirArg !== null ? path.resolve(dirArg) : null;
 refuseSecretKeys(dir !== null ? [dir] : []);
 
@@ -82,13 +100,22 @@ let keys;
 if (testKey) {
   keys = [S.parsePublicKey(fs.readFileSync(path.join(ROOT, 'host', 'test', 'keys', 'test-index.pub'), 'utf8'))];
   console.log(`NOTE --test-key: verifying with the committed TEST index key ${keys[0].keyId} only; no product build trusts it`);
+} else if (custom) {
+  keys = custom.keys;
+  console.log(`NOTE --key: verifying with ${keys.map((k, i) => `${k.keyId} (${shown(keyFiles[i])})`).join(' and ')} only; the app trusts the product index keys alone`);
+  // The folder is marked before any check (a failing one too): release-sign.sh never signs a head from it.
+  if (dir !== null && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+    try { writeCustomKeyMarker(dir, `verified by scripts/index-verify.mjs --key (${keys.map(k => k.keyId).join(', ')})`); console.log(`NOTE ${CUSTOM_KEY_MARKER} is in the folder: release-sign.sh refuses its head`); }
+    catch (e) { bad(CUSTOM_KEY_MARKER, `cannot be written into the folder (${e?.code ?? 'error'}): release-sign.sh would not know it was verified with --key`); }
+  }
 } else {
   keys = T.trustedKeys('index', false);
   if (keys.length === 0) { bad('index keys', 'no index key is pinned in this build (PRODUCT_KEYS.index in host/src/trustkeys.ts is empty)'); finish(); }
 }
 
 // ---- reading: the local folder, or the published files ----------------------------------------------------------------------------------
-const P = I.MARKET_URL_PREFIX;
+const P = prefixArg ?? I.MARKET_URL_PREFIX;
+if (prefixArg !== null && prefixArg !== I.MARKET_URL_PREFIX) console.log(`NOTE --prefix: every URL of the index is under ${P}; the app reads only ${I.MARKET_URL_PREFIX}`);
 const toServer = (url) => (testBase !== undefined ? testBase + url.slice(P.length) : url);
 const get = (url, max, onChunk, timeoutMs) => fetchCapped(toServer(url), max, onChunk, timeoutMs, 'EVE-Cyno-index-verify');
 /** A file of the index by its path under the prefix (`index.json`, `catalog/<sha>.json`): its bytes, at most `max`, or null (FAIL printed). */
@@ -212,24 +239,9 @@ if (!I.catalogMatches(catBytes, head)) { bad(catName, 'its size or SHA-256 does 
 let cat;
 try { cat = I.parseCatalog(catBytes, head, { prefix: P }); } catch (e) { bad(catName, `the app refuses it (${e?.message ?? 'bad_index'})`); finish(); }
 // A published index relies on none of the parser's lenient rules: no listing dropped, no type ignored, no category removed.
-const raw = JSON.parse(catBytes.toString('utf8')).plugins; // parsed once already: it is JSON with a plugins list
-const idOf = (l, i) => (typeof l?.id === 'string' && /^[a-z0-9.-]{1,100}$/.test(l.id) ? l.id : `plugins[${i}]`);
-const isObj = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+// The app's admission of a listing too (the same function the app passes to parseCatalog as `admit`).
 const before = failed;
-if (cat.dropped > 0) {
-  const named = raw.map((l, i) => [l, i]).filter(([l]) => I.listingProblem(l, P) !== null).map(([l, i]) => `${idOf(l, i)} (${I.listingProblem(l, P)})`);
-  bad(catName, `the app drops ${cat.dropped} listing${cat.dropped === 1 ? '' : 's'}: ${named.join(', ')}`);
-}
-for (const [i, l] of raw.entries()) {
-  if (!isObj(l) || typeof l.type !== 'string') continue;
-  if (l.type !== 'plugin' && l.type !== 'theme') bad(catName, `the app ignores the listing ${idOf(l, i)} (its type is not plugin or theme)`);
-  else if (I.listingProblem(l, P) === null && l.categories.some(c => !I.CATEGORIES.includes(c))) bad(catName, `the app removes a category it does not know from the listing ${idOf(l, i)}`);
-}
-// The app's admission of a listing (the same function the app passes to parseCatalog as `admit`).
-for (const l of cat.plugins) {
-  if (M.wire.listingAdmit(l)) continue;
-  bad(catName, `the app drops the listing ${l.id} (${M.zipread.isDeviceNameId(l.id) ? 'its id starts with a Windows device name' : 'its name or author reads as the host\'s'})`);
-}
+for (const why of catalogProblems(I, M, catBytes, cat, P)) bad(catName, why);
 if (failed === before) pass(`${catName} (${cat.plugins.length} listings, ${cat.revoked.length} revocations; none dropped, ignored or changed)`);
 
 // ---- 5: the archives the kept listings name ---------------------------------------------------------------------------------------------

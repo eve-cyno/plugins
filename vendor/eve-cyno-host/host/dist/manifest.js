@@ -57,7 +57,7 @@ const manifest_v1_json_1 = __importDefault(require("./schemas/manifest.v1.json")
 const esi_scopes_json_1 = __importDefault(require("./schemas/esi-scopes.json"));
 const errors_1 = require("./errors");
 const dataallow_1 = require("./dataallow");
-exports.HOST_API = { version: '1.27.0', majors: [1] };
+exports.HOST_API = { version: '1.28.0', majors: [1] };
 exports.ACTIVATION = ['onStartup', 'onCommand:', 'onService:'];
 exports.SHARED_HOSTS = [
     'discord.com', 'discordapp.com', 'hooks.slack.com', 'api.telegram.org', 'webhook.site', 'pastebin.com', 'gist.github.com', 'api.github.com',

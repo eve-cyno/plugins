@@ -2,10 +2,10 @@
   "schema": 1,
   "generator": "tools/vendor-host.mjs",
   "desktop": {
-    "commit": "ff0180a001f450623c42c5008f03146f4eb6cd98"
+    "commit": "ef949cc52b10fe405de8e7858af683b6e481d66a"
   },
   "build": "npm --prefix host run build (product: no test key)",
-  "hostApi": "1.27.0",
+  "hostApi": "1.28.0",
   "dependencies": {
     "ajv": {
       "version": "8.20.0",
@@ -18,10 +18,10 @@
   },
   "roots": [
     "host/dist/grants.js",
+    "host/dist/market/admit.js",
     "host/dist/market/indexformat.js",
     "host/dist/market/names.js",
     "host/dist/market/stagecheck.js",
-    "host/dist/market/wire.js",
     "host/dist/market/zipread.js",
     "host/dist/minisign.js",
     "host/dist/themes/package.js",
@@ -29,16 +29,9 @@
     "host/dist/updater/manifest.js"
   ],
   "builtins": [
-    "node:child_process",
     "node:crypto",
-    "node:dns",
-    "node:events",
     "node:fs",
-    "node:http",
-    "node:https",
-    "node:net",
     "node:path",
-    "node:readline",
     "node:zlib"
   ],
   "files": {
@@ -51,16 +44,6 @@
       "sha256": "9893cf0276c6b87038bcbde2dffacc7b933cb613c1b98032f7d5bac3282a461c",
       "size": 3747,
       "origin": "tree"
-    },
-    "host/dist/ai/localaddr.js": {
-      "sha256": "b6c3c4bc8e4977f15f3f8b1f3f8acace8a2f0fb8e6bbd85be39db42c387bb1bf",
-      "size": 5512,
-      "origin": "build"
-    },
-    "host/dist/appearance.js": {
-      "sha256": "2031926e7e28d0ae223d415b899687dc4873d4d86b7d9d407811e5f43dcfe7a1",
-      "size": 2246,
-      "origin": "build"
     },
     "host/dist/atomicfile.js": {
       "sha256": "8bf4be0b223cf1618310e445215e7b9380dd1fe7943edc7f842b809507afe861",
@@ -82,19 +65,9 @@
       "size": 17071,
       "origin": "build"
     },
-    "host/dist/cynod.js": {
-      "sha256": "75433498734c81eecb35ae3d270305bb710f750ce73f104165c2d1e6b974978a",
-      "size": 11809,
-      "origin": "build"
-    },
     "host/dist/dataallow.js": {
       "sha256": "950b207294a83a50976a75012148a8b5f28266999657cd74b0fff39fd0d12bf2",
       "size": 1291,
-      "origin": "build"
-    },
-    "host/dist/desktopentry.js": {
-      "sha256": "a397576fafef97510ff220f87a51a2a5b1238ce048815554119b35abf140b740",
-      "size": 12174,
       "origin": "build"
     },
     "host/dist/errors.js": {
@@ -102,24 +75,9 @@
       "size": 651,
       "origin": "build"
     },
-    "host/dist/fetchbounded.js": {
-      "sha256": "c6243757b5b55e5e9866d5e0a2a03b06c45471c191b14b10988728689ab3e01f",
-      "size": 23636,
-      "origin": "build"
-    },
     "host/dist/grants.js": {
       "sha256": "f89b7e15c432396ccd0cd1e3aca3c1fdf1760476eccb21fbb3ff44595677d3c4",
       "size": 66891,
-      "origin": "build"
-    },
-    "host/dist/hostnotices.js": {
-      "sha256": "a1597cd269c115f5f8f6c68be65358e724a100baa396e1e7143146192bd581e9",
-      "size": 12015,
-      "origin": "build"
-    },
-    "host/dist/hostui/home.js": {
-      "sha256": "31f0a1270d94dafd87d233d927bb83593f289fbcf73227f172368ea4e868dc25",
-      "size": 11477,
       "origin": "build"
     },
     "host/dist/loader.js": {
@@ -128,13 +86,13 @@
       "origin": "build"
     },
     "host/dist/manifest.js": {
-      "sha256": "831cd87fa7ea007622ebdd1f7ad78936fa1f31a3f606fa4f8dff12c33d412a55",
+      "sha256": "0d6b95725d2f3740a66eb1b48fbc7f65f69a33c632372519d0d1d2cdacc256bb",
       "size": 39643,
       "origin": "build"
     },
-    "host/dist/market/client.js": {
-      "sha256": "1a4e5342e2f7045f3097f39df72a4bf56cbf5c03bb88b5b7c8e5b9ece1f88984",
-      "size": 35023,
+    "host/dist/market/admit.js": {
+      "sha256": "c41e5b3a7b4ecdf7dfb880c65aa95b914607a0e3c6ab9efc173819eecc8af07c",
+      "size": 658,
       "origin": "build"
     },
     "host/dist/market/indexformat.js": {
@@ -142,44 +100,14 @@
       "size": 25945,
       "origin": "build"
     },
-    "host/dist/market/installer.js": {
-      "sha256": "1ab7e0fd671ceb2a5de12d35943e233f71ed908f894f0dcd7af206fd85f68f3f",
-      "size": 31663,
-      "origin": "build"
-    },
     "host/dist/market/names.js": {
       "sha256": "65910c9d71d8eea0a8ad6567b6e71e9a0ee930f3809a254d700274628c46def4",
       "size": 4979,
       "origin": "build"
     },
-    "host/dist/market/records.js": {
-      "sha256": "76d53456cf298235cd2ec5b5acba4cc0f01aed4333ae9e0137ec18ace81570e2",
-      "size": 7831,
-      "origin": "build"
-    },
-    "host/dist/market/revocation.js": {
-      "sha256": "74032772c17766422e04ffb73808abaacda7a105ca0577fe54c6be867aad1661",
-      "size": 14609,
-      "origin": "build"
-    },
     "host/dist/market/stagecheck.js": {
       "sha256": "f1a540b969178911a0b738d90fd2352cc86c457511f823bca31c753b95e80231",
       "size": 4929,
-      "origin": "build"
-    },
-    "host/dist/market/swap.js": {
-      "sha256": "bc7b26999f9fd2cf5b45da861d44098e2177c8c5961779cd9aca175311520b6f",
-      "size": 14867,
-      "origin": "build"
-    },
-    "host/dist/market/updates.js": {
-      "sha256": "ce5ed8550a0d15057e05d35d09b6fad3f8b8dda41fccf611034eec23213ebc38",
-      "size": 60227,
-      "origin": "build"
-    },
-    "host/dist/market/wire.js": {
-      "sha256": "d3635748f7a3a0098b8d5b269b7b006e73cc8ca37d9c2ccb9c464249b2e4a5b0",
-      "size": 15242,
       "origin": "build"
     },
     "host/dist/market/zipread.js": {
@@ -192,39 +120,9 @@
       "size": 5328,
       "origin": "build"
     },
-    "host/dist/numfmt.gen.js": {
-      "sha256": "bceb5b3c9a37568c1641c1c3b533385770073601828f915ee34d8d8d574ea8ca",
-      "size": 584,
-      "origin": "build"
-    },
     "host/dist/optional.js": {
       "sha256": "eac55a4e2a928e02b0ac0a18c9a5fc11acf578f94ccb7967283a0e79a93cd4e9",
       "size": 7593,
-      "origin": "build"
-    },
-    "host/dist/permtext.js": {
-      "sha256": "3c072f7c6a510af3e01974377ce24bb2be8785efcbd32aaeb16fa4bb17a27315",
-      "size": 25183,
-      "origin": "build"
-    },
-    "host/dist/presence.js": {
-      "sha256": "934c07be442c478c10f07deb3cc8b8a30667f651131ce2b1a3b4c0b6e52eec70",
-      "size": 27830,
-      "origin": "build"
-    },
-    "host/dist/presencefile.js": {
-      "sha256": "23ba7703ec57214cc8f7eceaefa4285ae4365c42c2a2892673a027150cd0eec5",
-      "size": 3139,
-      "origin": "build"
-    },
-    "host/dist/presencefmt.js": {
-      "sha256": "f855c5347e2953672d54939b1d66563103949c8df1390687f8ce3cc2fd79bbcd",
-      "size": 7255,
-      "origin": "build"
-    },
-    "host/dist/presencesnap.js": {
-      "sha256": "23c0713001bde6b243cec06f56d1edae74a39d0f8be0a0c63720742fe20ff0db",
-      "size": 5642,
       "origin": "build"
     },
     "host/dist/reset.js": {
@@ -242,16 +140,6 @@
       "size": 7947,
       "origin": "build"
     },
-    "host/dist/schemas/scope-labels.json": {
-      "sha256": "cb86405a919eb814e7e9dcaa1abc04c0c30ec57013898309994d4d20529ebf37",
-      "size": 4552,
-      "origin": "build"
-    },
-    "host/dist/schemas/service-labels.json": {
-      "sha256": "824bf5df945ea62839220a12510abb4a249c8f84afec2e19a01ae8dec54a0076",
-      "size": 682,
-      "origin": "build"
-    },
     "host/dist/schemas/theme-package.v1.json": {
       "sha256": "2d0ba22a1f94c5edb11743552898ecba275218d6cd4cae313ae1d6354861d736",
       "size": 5684,
@@ -260,11 +148,6 @@
     "host/dist/servebudget.js": {
       "sha256": "f1777673a31a91ea3deae66f913ba2526e20676d868b8e0d87e8094e40436822",
       "size": 1828,
-      "origin": "build"
-    },
-    "host/dist/sidecarenv.js": {
-      "sha256": "67cc01d8783d86affcf41b7925b7b679ddaf1054754231435b0ca8d27f6f902f",
-      "size": 2126,
       "origin": "build"
     },
     "host/dist/themes/contrast.js": {
@@ -287,24 +170,9 @@
       "size": 1867,
       "origin": "build"
     },
-    "host/dist/updater/apply.js": {
-      "sha256": "42161bc73233cb38195d1f0913b60554f3ace5846bfe8831d4a525027fe6fb2b",
-      "size": 9706,
-      "origin": "build"
-    },
     "host/dist/updater/manifest.js": {
       "sha256": "7349d62436290afa6b5a4c23a71086f9e81427c0134cb37a49c5a0994a8b7f1b",
       "size": 6711,
-      "origin": "build"
-    },
-    "host/dist/updater/updater.js": {
-      "sha256": "09f0649b0de7ac2268b9e600c8cf78b64f2c2ab6a8aa323f800c4bb9c28edb99",
-      "size": 43905,
-      "origin": "build"
-    },
-    "host/dist/updater/wire.js": {
-      "sha256": "69c0584f0f89d9755ecdce4dfd432bacfc61a929bdb24ef46853bbb5172cc36b",
-      "size": 10024,
       "origin": "build"
     },
     "host/dist/windowsview.js": {
@@ -328,18 +196,18 @@
       "origin": "tree"
     },
     "scripts/index-build.mjs": {
-      "sha256": "320347a39f51417c2d05b1075f44c9e6a1ff9d5d75664c007b47937f184819f8",
-      "size": 20916,
+      "sha256": "b122f6deba58c6f43aac0a72170f8c940081b8e602bf63fda39d0983e1f98575",
+      "size": 30200,
       "origin": "tree"
     },
     "scripts/index-verify.mjs": {
-      "sha256": "9bf22b742437f3a0dc083b65de8516733287ad4cba0e4e26b08c9aabcf110069",
-      "size": 20091,
+      "sha256": "8a4f78d66b99bd58b772304dec30edbb413bf99963547e0f63f2ed4c48f49c57",
+      "size": 21630,
       "origin": "tree"
     },
     "scripts/release-lib.mjs": {
-      "sha256": "f3dadbdf58d4f71549d3871d5cf92c9faf1307423009444232bf40be997af587",
-      "size": 15140,
+      "sha256": "d24f748ea2ea26b8f8744be1d93c56912b33647f1f4f3b7fc94542c129af5b10",
+      "size": 21279,
       "origin": "tree"
     }
   }

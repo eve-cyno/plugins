@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'eve-cyno-host', 'host', 'dist');
 const { requested, delta, isEmpty } = require(path.join(DIST, 'grants.js'));
 const { foldName } = require(path.join(DIST, 'market', 'names.js'));
-const { listingAdmit } = require(path.join(DIST, 'market', 'wire.js'));
+const { listingAdmit } = require(path.join(DIST, 'market', 'admit.js'));
 const { HOST_API } = require(path.join(DIST, 'manifest.js'));
 
 /** What C10 reads of one version: the permissions of the entry's copy, plus `background` when the caller read it from the archive. */

@@ -1,5 +1,0 @@
-{
-    "assets.owned@dev.evecyno.assets": "This plugin can ask {provider} how many of each item your characters own and what they are worth, for the characters it may see. It never learns where things are.",
-    "evecyno.aichat@dev.evecyno.aichat": "This plugin can ask {provider} to answer a request about the fits you pick, in the background. {provider} sends the request and what it reads to your AI provider.",
-    "evecyno.fit@dev.evecyno.fitmanager": "This plugin can read your fit library from {provider} and have it compute fits. A character's skills, implants and in-game fits are used only after you share that character in {provider}, and only until {provider} closes."
-}

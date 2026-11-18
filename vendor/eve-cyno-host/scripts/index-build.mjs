@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Builds a plugin index folder (R20-R23):
-//   node scripts/index-build.mjs <src.json> <out-dir> [--lifetime-days <n>]
-//   node scripts/index-build.mjs --resign <signed index folder> <out-dir> [--lifetime-days <n>] [--test-key]
+//   node scripts/index-build.mjs <src.json> <out-dir> [--lifetime-days <n>] [--prefix <URL>] [--key <pub file>...]
+//   node scripts/index-build.mjs --resign <signed index folder> <out-dir> [--lifetime-days <n>] [--test-key | --key <pub file>...] [--prefix <URL>]
+//   node scripts/index-build.mjs --head-from <unsigned folder> [--lifetime-days <n>] [--prefix <URL>] [--key <pub file>...]
 // Build:
 // - <src.json> holds {plugins: [...], revoked: [...], flags?: {...}} (docs/release-checklist.md, "The plugin index"). Each listing
 //   version names its archive as a local .zip file, relative to the folder of <src.json>. Only the known fields are taken over.
@@ -23,19 +24,35 @@
 // - With --test-key, <out-dir> also gets TEST-KEY-ONLY.txt (TEST_KEY_MARKER, written first): its catalog and archives were checked
 //   against a head signed with the TEST key only (its secret is public), so release-sign.sh refuses to have that folder's head signed
 //   with the product keys, and the signing and verify commands printed for it carry --test-key.
-// Both print the signing command (scripts/release-sign.sh with purpose index: the signing workflow of eve-cyno/desktop), the verify
-// command and the upload commands in their order, each path relative to the repository root and quoted for the shell. It never signs
-// and never uploads; it reads no credential.
+// Head from (DP3 1.D; the publishing workflow of eve-cyno/plugins, whose build-index.mjs writes the catalog):
+// - <unsigned folder> holds catalog/<sha256>.json, its only catalog file, named by its SHA-256 (archives/ is optional: it is not read).
+//   It gets index.json, in place: generated now, expires --lifetime-days later, naming that catalog by URL, size and SHA-256, no
+//   flags. Nothing else in the folder changes.
+// - It refuses (nothing written) a folder that holds a signature (*.minisig) or a head already, a catalog the app would refuse, drop a
+//   listing of, ignore a listing of, change a listing of or drop by its admission (index-verify.mjs check 4, release-lib.mjs
+//   catalogProblems), and a catalog generated after now (the app refuses a catalog newer than its head).
+// Every form also takes (DP3 1.D: a test location or a private source; the app reads only the product prefix with the product keys):
+// - --prefix <canonical folder URL>: every URL of the index is under that folder instead of MARKET_URL_PREFIX (https; http only on
+//   127.0.0.1, a local test server); the upload keys follow its path.
+// - --key <pub file> (once or twice: a primary and a standby; never a release key): the index is for those keys. --resign verifies the
+//   signed head with them (not with --test-key). The folder written gets CUSTOM-KEY-ONLY.txt first (release-lib.mjs
+//   CUSTOM_KEY_MARKER), so release-sign.sh refuses to have its head signed.
+// Each form prints the signing step (for the product prefix and keys the release-sign.sh command with purpose index, the manual fallback
+// of the publishing workflow of eve-cyno/plugins; otherwise the trusted comment to sign with that key), the verify command and the
+// upload commands in their order, each path relative to the repository root and quoted for the shell. It never signs and never
+// uploads; it reads no credential.
 // Refuses (exit 1, nothing kept): an existing <out-dir>, one on another drive than this repository (Windows), a source the app would
 // read otherwise, a missing or oversized archive, a signed folder that does not verify, a minisign secret key in the repository, the
 // folders it reads or writes or this machine's minisign folders. Usage: exit 2.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, TEST_KEY_MARKER, hashFile, loadHost, refuseSecretKeys, relToRoot, shown, shq } from './release-lib.mjs';
+import { CUSTOM_KEY_MARKER, ROOT, TEST_KEY_MARKER, catalogProblems, customKeys, hashFile, loadHost, loadHostMarket, prefixProblem, refuseSecretKeys, relToRoot,
+  shown, shq, writeCustomKeyMarker } from './release-lib.mjs';
 
-const USAGE = 'usage: node scripts/index-build.mjs <src.json> <out-dir> [--lifetime-days <1-90>]\n'
-  + '       node scripts/index-build.mjs --resign <signed index folder> <out-dir> [--lifetime-days <1-90>] [--test-key]';
+const USAGE = 'usage: node scripts/index-build.mjs <src.json> <out-dir> [--lifetime-days <1-90>] [--prefix <URL>] [--key <pub file>...]\n'
+  + '       node scripts/index-build.mjs --resign <signed index folder> <out-dir> [--lifetime-days <1-90>] [--test-key | --key <pub file>...] [--prefix <URL>]\n'
+  + '       node scripts/index-build.mjs --head-from <unsigned folder> [--lifetime-days <1-90>] [--prefix <URL>] [--key <pub file>...]';
 const usage = (why) => {
   if (why) console.error(why);
   console.error(USAGE);
@@ -43,30 +60,53 @@ const usage = (why) => {
 };
 const args = process.argv.slice(2);
 const pos = [];
-let daysArg = null, resign = false, testKey = false;
+let daysArg = null, resign = false, testKey = false, headFrom = false, prefixArg = null;
+const keyArgs = [];
+/** The value of the option at args[i] (the next word; never another option). */
+const valueOf = (i) => (i + 1 < args.length && !args[i + 1].startsWith('--') ? args[i + 1] : usage(`${args[i]} needs a value`));
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--lifetime-days') { if (daysArg !== null || i + 1 >= args.length) usage(); daysArg = args[++i]; }
   else if (a === '--resign') { if (resign) usage(); resign = true; }
   else if (a === '--test-key') { if (testKey) usage(); testKey = true; }
+  else if (a === '--head-from') { if (headFrom) usage(); headFrom = true; }
+  else if (a === '--prefix') { if (prefixArg !== null) usage('--prefix is given once'); prefixArg = valueOf(i++); }
+  else if (a === '--key') keyArgs.push(path.resolve(valueOf(i++)));
   else if (a.startsWith('--')) usage();
   else pos.push(a);
 }
-if (pos.length !== 2) usage();
+if (resign && headFrom) usage('--resign and --head-from: one or the other');
+if (pos.length !== (headFrom ? 1 : 2)) usage();
 if (testKey && !resign) usage('--test-key goes with --resign only (it verifies the signed head with the committed TEST index key)');
+if (testKey && keyArgs.length > 0) usage('--test-key and --key: one or the other (--test-key is the committed TEST index key)');
+if (prefixArg !== null && prefixProblem(prefixArg)) usage(`--prefix ${prefixArg}: ${prefixProblem(prefixArg)}`);
 const { indexformat: I, minisign: S, trustkeys: T } = loadHost();
+const custom = keyArgs.length > 0 ? customKeys(keyArgs, S, T) : null;
+if (custom?.why) usage(custom.why);
 const DAY_MS = 86_400_000, MAX_DAYS = I.MAX_INDEX_LIFETIME_MS / DAY_MS;
 const days = daysArg === null ? I.DEFAULT_INDEX_LIFETIME_DAYS : /^[1-9][0-9]?$/.test(daysArg) ? Number(daysArg) : NaN;
 if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) usage(`--lifetime-days: a whole number of days from 1 to ${MAX_DAYS} (the app accepts at most ${MAX_DAYS})`);
 
 const fail = (msg) => { console.error(`REFUSED: ${msg}`); process.exit(1); };
-const input = path.resolve(pos[0]), out = path.resolve(pos[1]);
+const input = path.resolve(pos[0]), out = headFrom ? input : path.resolve(pos[1]);
 const outRel = relToRoot(out);
 if (outRel === null) fail(`${shown(out)}: the index folder must be on the drive of this repository (the printed commands name it from the repository root)`);
+const keyRels = keyArgs.map(k => relToRoot(k));
+for (const [i, r] of keyRels.entries()) if (r === null) fail(`--key ${shown(keyArgs[i])}: the key file must be on the drive of this repository (the printed commands name it from the repository root)`);
 refuseSecretKeys([out, ...(resign ? [input] : [])]);
-if (fs.existsSync(out)) fail(`${shown(out)} exists: build into a new folder (a signature in it would no longer match)`);
+if (headFrom) {
+  let st = null;
+  try { st = fs.lstatSync(out); } catch { /* refused below */ }
+  if (!st?.isDirectory()) fail(`${shown(out)}: not a folder (--head-from writes the head into the folder that holds the catalog)`);
+} else if (fs.existsSync(out)) fail(`${shown(out)} exists: build into a new folder (a signature in it would no longer match)`);
 
-const P = I.MARKET_URL_PREFIX;
+const P = prefixArg ?? I.MARKET_URL_PREFIX;
+const ids = custom ? custom.keys.map(k => k.keyId).join(' and ') : '';
+if (P !== I.MARKET_URL_PREFIX) console.log(`NOTE --prefix: every URL of the index is under ${P}; the app reads only ${I.MARKET_URL_PREFIX}`);
+if (custom) {
+  console.log(`NOTE --key: this index is for the key${custom.keys.length > 1 ? 's' : ''} ${ids} only; the app trusts the product index keys alone.`);
+  console.log(`  The folder gets ${CUSTOM_KEY_MARKER}: release-sign.sh refuses to have its head signed.`);
+}
 const J = JSON.stringify;
 const isObj = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 /** JSON with sorted keys: the read-back compares content, not key order. */
@@ -151,7 +191,7 @@ async function planResign() {
   const dir = input;
   const headBytes0 = readCapped(path.join(dir, 'index.json'), I.MAX_HEAD_BYTES, 'index.json');
   const sigText = readCapped(path.join(dir, 'index.json.minisig'), I.MAX_INDEX_SIG_BYTES, 'index.json.minisig').toString('utf8');
-  const keys = testKey ? [S.parsePublicKey(fs.readFileSync(path.join(ROOT, 'host', 'test', 'keys', 'test-index.pub'), 'utf8'))] : T.trustedKeys('index', false);
+  const keys = testKey ? [S.parsePublicKey(fs.readFileSync(path.join(ROOT, 'host', 'test', 'keys', 'test-index.pub'), 'utf8'))] : custom ? custom.keys : T.trustedKeys('index', false);
   if (testKey) {
     console.log(`NOTE --test-key: the signed head is verified with the committed TEST index key ${keys[0].keyId} only; no product build trusts it.`);
     console.log(`  The new folder gets ${TEST_KEY_MARKER}: release-sign.sh signs its head only with --test-key, never with the product keys.`);
@@ -191,38 +231,92 @@ async function planResign() {
   return { generated, expires, headBytes, catBytes, catName, archives, listings: cat.plugins.length, revocations: cat.revoked.length, from: old.generated };
 }
 
-const plan = resign ? await planResign() : await planBuild();
+/** From an unsigned folder (--head-from): a head built now for the one catalog the folder holds. */
+async function planHeadFrom() {
+  const dir = input;
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { fail(`${shown(dir)} cannot be listed (${e?.code ?? 'error'})`); }
+  const sig = names.find(n => n.toLowerCase().endsWith('.minisig'));
+  if (sig !== undefined) fail(`${shown(dir)} holds a signature (${sig}): --head-from writes the head of an unsigned folder only`);
+  const had = names.find(n => n.toLowerCase() === 'index.json');
+  if (had !== undefined) fail(`${shown(dir)}: ${had} exists: --head-from writes the head of a folder that has none`);
+  const catDir = path.join(dir, 'catalog');
+  let cats = [];
+  try { if (fs.lstatSync(catDir).isDirectory()) cats = fs.readdirSync(catDir); } catch { /* none */ }
+  if (cats.length === 0) fail(`${shown(dir)} holds no catalog file (catalog/<sha256>.json)`);
+  if (cats.length > 1) fail(`${shown(dir)} holds ${cats.length} catalog files: the head names one, catalog/<sha256>.json`);
+  const m = /^([0-9a-f]{64})\.json$/.exec(cats[0]);
+  if (!m) fail(`catalog/${cats[0]}: not named <sha256>.json`);
+  const catName = `catalog/${cats[0]}`;
+  const catBytes = readCapped(path.join(catDir, cats[0]), I.MAX_CATALOG_BYTES, catName);
+  if (sha256(catBytes) !== m[1]) fail(`${catName}: its SHA-256 does not match its name`);
+  const generated = stamp(Date.now());
+  // A catalog newer than the head is refused by the app (R23): said here before the parser's own refusal.
+  let raw = null;
+  try { raw = JSON.parse(catBytes.toString('utf8')); } catch { /* the parser refuses it below */ }
+  if (isObj(raw) && typeof raw.generated === 'string' && Date.parse(raw.generated) > Date.parse(generated)) {
+    fail(`${catName}: the catalog was generated ${raw.generated}, after now (${generated}) by this machine's clock: check the clock, or build the catalog again`);
+  }
+  const expires = stamp(Date.parse(generated) + days * DAY_MS);
+  const headBytes = Buffer.from(J({ schema: 1, generated, expires, catalog: { url: `${P}${catName}`, sha256: m[1], size: catBytes.length } }, null, 2) + '\n', 'utf8');
+  let head, cat;
+  try { head = I.parseIndexHead(headBytes, P); } catch (e) { fail(`the app would not accept this head (${e?.message ?? 'bad_index'})`); }
+  try { cat = I.parseCatalog(catBytes, head, { prefix: P }); } catch (e) { fail(`${catName}: the app refuses the catalog (${e?.message ?? 'bad_index'})`); }
+  const problems = catalogProblems(I, loadHostMarket(), catBytes, cat, P);
+  if (problems.length > 0) fail(`${catName}: ${problems.join('; ')}`);
+  return { generated, expires, headBytes, catBytes, catName, archives: new Map(), listings: cat.plugins.length, revocations: cat.revoked.length, from: null };
+}
 
-// ---- write: the folder is new; anything that fails from here on removes it ----------------------------------------------------------------
-try { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.mkdirSync(out); } catch (e) { fail(`${shown(out)} cannot be made (${e?.code ?? 'error'})`); }
-try {
-  // The marker first: no head of a --test-key run is ever in this folder without it (a failed write removes the whole folder below).
-  if (testKey) {
-    fs.writeFileSync(path.join(out, TEST_KEY_MARKER), [
-      'This folder was made by scripts/index-build.mjs --resign --test-key.',
-      'Its catalog and archives were checked only against a head signed with the committed TEST index key, whose secret is public.',
-      'scripts/release-sign.sh therefore refuses to have its index.json signed with the product index keys (purpose index without',
-      '--test-key). To re-sign the published index, run index-build.mjs --resign without --test-key on the published folder.', ''].join('\n'), { flag: 'wx' });
+const plan = resign ? await planResign() : headFrom ? await planHeadFrom() : await planBuild();
+const marked = `${resign ? 'made by scripts/index-build.mjs --resign' : headFrom ? 'given its head by scripts/index-build.mjs --head-from' : 'made by scripts/index-build.mjs'} --key (${ids})`;
+
+if (headFrom) {
+  // ---- write, in place: the marker first, then the head (a head that fails to write is removed; the marker stays) ------------------------
+  let started = false;
+  try {
+    if (custom) writeCustomKeyMarker(out, marked);
+    started = true;
+    fs.writeFileSync(path.join(out, 'index.json'), plan.headBytes, { flag: 'wx' });
+  } catch (e) {
+    // a head this run began to write goes (one that appeared meanwhile, EEXIST, is not this run's and stays)
+    if (started && e?.code !== 'EEXIST') { try { fs.rmSync(path.join(out, 'index.json'), { force: true }); } catch { /* the message below still says it */ } }
+    fail(`${shown(out)}: the head could not be written (${e?.code ?? 'error'}); the folder holds no head from this run`);
   }
-  fs.mkdirSync(path.join(out, 'archives'));
-  fs.mkdirSync(path.join(out, 'catalog'));
-  for (const [name, a] of plan.archives) {
-    const dest = path.join(out, ...name.split('/'));
-    fs.copyFileSync(a.file, dest, fs.constants.COPYFILE_EXCL);
-    const copy = await hashFile(dest); // the copy is what gets uploaded
-    if (copy.sha256 !== a.sha256 || copy.size !== a.size) throw Object.assign(new Error('changed'), { changed: a.where });
+} else {
+  // ---- write: the folder is new; anything that fails from here on removes it --------------------------------------------------------------
+  try { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.mkdirSync(out); } catch (e) { fail(`${shown(out)} cannot be made (${e?.code ?? 'error'})`); }
+  try {
+    // The markers first: no head of a --test-key or --key run is ever in this folder without its marker (a failed write removes the whole
+    // folder below).
+    if (custom) writeCustomKeyMarker(out, marked);
+    if (testKey) {
+      fs.writeFileSync(path.join(out, TEST_KEY_MARKER), [
+        'This folder was made by scripts/index-build.mjs --resign --test-key.',
+        'Its catalog and archives were checked only against a head signed with the committed TEST index key, whose secret is public.',
+        'scripts/release-sign.sh therefore refuses to have its index.json signed with the product index keys (purpose index without',
+        '--test-key). To re-sign the published index, run index-build.mjs --resign without --test-key on the published folder.', ''].join('\n'), { flag: 'wx' });
+    }
+    fs.mkdirSync(path.join(out, 'archives'));
+    fs.mkdirSync(path.join(out, 'catalog'));
+    for (const [name, a] of plan.archives) {
+      const dest = path.join(out, ...name.split('/'));
+      fs.copyFileSync(a.file, dest, fs.constants.COPYFILE_EXCL);
+      const copy = await hashFile(dest); // the copy is what gets uploaded
+      if (copy.sha256 !== a.sha256 || copy.size !== a.size) throw Object.assign(new Error('changed'), { changed: a.where });
+    }
+    fs.writeFileSync(path.join(out, ...plan.catName.split('/')), plan.catBytes, { flag: 'wx' });
+    fs.writeFileSync(path.join(out, 'index.json'), plan.headBytes, { flag: 'wx' });
+  } catch (e) {
+    try { fs.rmSync(out, { recursive: true, force: true }); } catch { /* the message below still says it */ }
+    fail(e?.changed ? `${e.changed} changed while the index was built; nothing was kept` : `${shown(out)} could not be written (${e?.code ?? 'error'}); nothing was kept`);
   }
-  fs.writeFileSync(path.join(out, ...plan.catName.split('/')), plan.catBytes, { flag: 'wx' });
-  fs.writeFileSync(path.join(out, 'index.json'), plan.headBytes, { flag: 'wx' });
-} catch (e) {
-  try { fs.rmSync(out, { recursive: true, force: true }); } catch { /* the message below still says it */ }
-  fail(e?.changed ? `${e.changed} changed while the index was built; nothing was kept` : `${shown(out)} could not be written (${e?.code ?? 'error'}); nothing was kept`);
 }
 
 // ---- the next steps (run from the repository root: every path in them is relative to it and quoted for the shell) ------------------------
 const rel = (name) => shq(name ? (outRel === '.' ? name : `${outRel}/${name}`) : outRel);
 const o = (s = '') => console.log(s);
 if (plan.from) o(`RE-SIGNED index ${plan.generated} in ${shown(out)} (the signed head it replaces was generated ${plan.from})`);
+else if (headFrom) o(`HEAD index ${plan.generated} for ${plan.catName} in ${shown(out)}`);
 else o(`BUILT index ${plan.generated} in ${shown(out)}`);
 o(`  index.json  generated ${plan.generated}, expires ${plan.expires} (${days} days)`);
 o(`  ${plan.catName}  ${plan.catBytes.length} bytes, ${plan.listings} listings, ${plan.revocations} revocations${plan.from ? ' (the same catalog)' : ''}`);
@@ -230,26 +324,39 @@ for (const [name, a] of plan.archives) o(`  ${name}  ${a.size} bytes`);
 o();
 o('Run the commands below from the repository root.');
 o();
-o('SIGN through the signing workflow (docs/release-checklist.md, "The plugin index"): read index.json first, then, within 24 hours');
-o('of this build (release-sign.sh refuses an older head),');
 // --test-key: the commands of the TEST key only (release-sign.sh refuses this folder's head without it: TEST_KEY_MARKER).
 const tk = testKey ? ' --test-key' : '';
-o(`  scripts/release-sign.sh ${rel('index.json')} index "${I.indexComment(plan.generated)}"${tk}`);
-o('It writes index.json.minisig next to index.json once the signature verifies (nothing in the folder may change any more).');
+// --prefix and --key: carried by every verify command (release-sign.sh signs only for the product prefix with the product keys).
+const product = custom === null && P === I.MARKET_URL_PREFIX;
+const ex = `${P !== I.MARKET_URL_PREFIX ? ` --prefix ${shq(P)}` : ''}${keyRels.map(k => ` --key ${shq(k)}`).join('')}`;
+if (product) {
+  o('SIGN through the signing workflow (docs/release-checklist.md, "The plugin index"): read index.json first, then, within 24 hours');
+  o('of this build (release-sign.sh refuses an older head),');
+  o(`  scripts/release-sign.sh ${rel('index.json')} index "${I.indexComment(plan.generated)}"${tk}`);
+  o('It writes index.json.minisig next to index.json once the signature verifies (nothing in the folder may change any more).');
+} else {
+  o(`SIGN index.json with ${custom ? `the secret key of ${ids}` : `the index key of ${P}`} (minisign, prehashed: never -l), with exactly this trusted comment:`);
+  o(`  ${I.indexComment(plan.generated)}`);
+  o(`and write the signature as index.json.minisig next to index.json (nothing in the folder may change any more). release-sign.sh signs only for`);
+  o(`${I.MARKET_URL_PREFIX} with the product index keys${custom ? `, and refuses a folder that holds ${CUSTOM_KEY_MARKER}` : ''}.`);
+}
 o();
 o('VERIFY before any upload');
-o(`  node scripts/index-verify.mjs ${rel('')}${tk} --archives`);
+o(`  node scripts/index-verify.mjs ${rel('')}${ex}${tk} --archives`);
 o('and compare it with the index that is published now (reads only): it fails when this index is older than the published one (a stale folder is a');
 o('rollback for every app that holds the published one) and warns for each published revocation this one lacks');
-o(`  node scripts/index-verify.mjs ${rel('')}${tk} --live`);
+o(`  node scripts/index-verify.mjs ${rel('')}${ex}${tk} --live`);
 o();
 const IMMUTABLE = '--cache-control="public, max-age=31536000, immutable"';
-const put = (name, type, cache) => o(`  npx wrangler r2 object put "$EVECYNO_INDEX_BUCKET/v1/${name}" --file=${rel(name)} --content-type=${type} ${cache} --remote`);
+const keyBase = new URL(P).pathname.slice(1); // v1/ for the product prefix: the bucket's keys follow the prefix's path
+const put = (name, type, cache) => o(`  npx wrangler r2 object put "$EVECYNO_INDEX_BUCKET/${keyBase}${name}" --file=${rel(name)} --content-type=${type} ${cache} --remote`);
+const bucket = P === I.MARKET_URL_PREFIX ? 'the plugins bucket' : `the bucket that serves ${P}`;
 if (plan.from) {
-  o('UPLOAD the signature, then the head (nothing here uploads; needs `npx wrangler login` and EVECYNO_INDEX_BUCKET set to the plugins');
-  o('bucket). The catalog and the archives it names are published already and do not change:');
+  o(`UPLOAD the signature, then the head (nothing here uploads; needs \`npx wrangler login\` and EVECYNO_INDEX_BUCKET set to ${bucket}).`);
+  o('The catalog and the archives it names are published already and do not change:');
 } else {
-  o('UPLOAD in this order (nothing here uploads; needs `npx wrangler login` and EVECYNO_INDEX_BUCKET set to the plugins bucket):');
+  o(`UPLOAD in this order (nothing here uploads; needs \`npx wrangler login\` and EVECYNO_INDEX_BUCKET set to ${bucket}):`);
+  if (headFrom) o('  (first the archives the catalog names, archives/<sha256>.zip, from where they are kept: this folder need not hold them)');
   for (const [name] of plan.archives) put(name, 'application/zip', IMMUTABLE);
   put(plan.catName, 'application/json', IMMUTABLE);
 }
@@ -264,4 +371,4 @@ o('10 minutes later, then every 4 hours. If the second upload fails, a signature
 o('The files are never in a state where the head names a file that is not there yet.');
 o();
 o('THEN, straight away');
-o('  node scripts/index-verify.mjs --live --archives');
+o(`  node scripts/index-verify.mjs --live${ex} --archives`);
