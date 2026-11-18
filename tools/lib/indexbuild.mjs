@@ -180,22 +180,23 @@ async function getLive(url, max, pace, timeoutMs = I.INDEX_TIMEOUT_MS) {
 
 /**
  * The index served under `prefix` now, read as the app reads it: {status: 'missing'} (the head answers 404), {status: 'unreadable',
- * why} (the head cannot be read), {status: 'unverified', why} (anything the keys or the app's parsers refuse, the catalog included),
- * or {status: 'ok', headBytes, sigBytes, head, catalogName, catalogBytes, catalog}.
+ * why} (the head cannot be read), {status: 'unverified', headBytes, why} (anything the keys or the app's parsers refuse, the catalog
+ * included; headBytes: the head as served, unverified, for recovery R2's floor only), or {status: 'ok', headBytes, sigBytes, head,
+ * catalogName, catalogBytes, catalog}.
  */
 export async function readLive({ prefix, keys, pace = pacer() }) {
   const h = await getLive(`${prefix}index.json`, I.MAX_HEAD_BYTES, pace);
   if (!h.ok) return h.why === 'HTTP 404' ? { status: 'missing' } : { status: 'unreadable', why: `index.json: ${h.why}` };
   const s = await getLive(`${prefix}index.json.minisig`, I.MAX_INDEX_SIG_BYTES, pace);
-  if (!s.ok) return { status: 'unverified', why: `index.json.minisig: ${s.why}` };
+  if (!s.ok) return { status: 'unverified', headBytes: h.bytes, why: `index.json.minisig: ${s.why}` };
   const v = I.verifyIndexHead(h.bytes, s.bytes.toString('utf8'), keys, prefix);
-  if (!v.ok) return { status: 'unverified', why: `the live head does not verify with the index keys (${v.reason})` };
+  if (!v.ok) return { status: 'unverified', headBytes: h.bytes, why: `the live head does not verify with the index keys (${v.reason})` };
   const catalogName = v.head.catalog.url.slice(prefix.length);
   const c = await getLive(v.head.catalog.url, v.head.catalog.size, pace);
-  if (!c.ok) return { status: 'unverified', why: `${catalogName}: ${c.why}` };
-  if (!I.catalogMatches(c.bytes, v.head)) return { status: 'unverified', why: `${catalogName}: its size or SHA-256 is not the one the live head names` };
+  if (!c.ok) return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: ${c.why}` };
+  if (!I.catalogMatches(c.bytes, v.head)) return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: its size or SHA-256 is not the one the live head names` };
   let catalog;
-  try { catalog = I.parseCatalog(c.bytes, v.head, { prefix }); } catch (e) { return { status: 'unverified', why: `${catalogName}: the app refuses it (${e?.message ?? 'bad_index'})` }; }
+  try { catalog = I.parseCatalog(c.bytes, v.head, { prefix }); } catch (e) { return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: the app refuses it (${e?.message ?? 'bad_index'})` }; }
   return { status: 'ok', headBytes: h.bytes, sigBytes: s.bytes, head: v.head, catalogName, catalogBytes: c.bytes, catalog };
 }
 

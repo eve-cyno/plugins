@@ -11,11 +11,16 @@
 //     The base of a publish: the live index, verified with the pinned index keys (catalog.json, index.json, index.json.minisig and
 //     BASE.json). target test: no live compare (plan 4.2), an empty base. A live head that answers 404 is a first publish only when
 //     GitHub shows no run with an approved index and successful sign and upload (tools/approved-base.mjs; fail closed); otherwise,
-//     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED. --repair true (recovery R2) is refused: not built.
+//     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED.
+//     --repair true (recovery R2, target production only): refused with NOT BROKEN when the live index verifies. Otherwise the base is
+//     the newest verified candidate run's head, signature and catalog from GitHub's artifacts (tools/lib/repairbase.mjs; the live
+//     index never is), with the union of the verified candidates' revocations and the floor in BASE.json (kind repair). A missing
+//     artifact of a candidate, or no verified candidate, refuses the run (the owner's manual path).
 //   --compare-live --base <folder from base> --index <folder from build> --lift <file> --repair true|false [--summary <file>]
 //     The new index against the base: not older (head and catalog), every live revocation kept unless the lift file names it exactly
 //     (`<id> <versions>`, one per line, as index-verify.mjs prints them), and every lift line removes a live revocation. Prints the
-//     listings added, changed and removed and the revocations added and lifted.
+//     listings added, changed and removed and the revocations added and lifted. With --repair true (a repair base only, and a repair
+//     base only with it) the head must be newer than the floor, and the revocations kept or lifted are those of the union.
 //   resign-check --outputs <file> [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]
 //     Writes needed=true when the verified live head is 30 days old or more, or fewer than 30 days remain before it expires; a live
 //     index that does not verify fails (resign never repairs: recovery R2). Notes where main differs from the live catalog.
@@ -122,12 +127,40 @@ function writeEmptyBase(out, kind, prefix) {
   fs.writeFileSync(path.join(out, 'revoked.json'), '[]\n');
   fs.writeFileSync(path.join(out, 'BASE.json'), `${JSON.stringify({ schema: 1, kind, prefix }, null, 2)}\n`);
 }
+/** Recovery R2's base (plan 4.2): never the live index; the newest verified candidate run's artifacts, the union and the floor. */
+async function stepRepairBase(out, prefix) {
+  const keys = keysOrUsage();
+  const live = await readLive({ prefix, keys });
+  if (live.status === 'ok') {
+    refuse(`NOT BROKEN: the live index verifies with the index keys (generated ${live.head.generated}); repair (recovery R2) is only for a live index that does not verify: dispatch publish.yml without repair`);
+  }
+  if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to repair against; dispatch again later`);
+  const runId = process.env.GITHUB_RUN_ID ?? '';
+  if (!/^[1-9][0-9]{0,15}$/.test(runId)) refuse('REPAIR: no run id (GITHUB_RUN_ID) is set to find the candidate runs (fail closed)');
+  R.note(`REPAIR: the live index ${live.status === 'missing' ? 'answers HTTP 404 (a deleted head)' : `does not verify (${live.why})`}; the base comes from the candidate runs' artifacts`);
+  const { repairBase } = await import('./lib/repairbase.mjs');
+  const rb = await repairBase({ runId: Number(runId), env: process.env, keys, prefix, liveHead: live.headBytes ?? null });
+  for (const l of rb.lines) R.note(`repair: ${l}`);
+  if (!rb.ok) refuse(rb.why);
+  const b = rb.base;
+  newFolder(out);
+  fs.writeFileSync(path.join(out, 'index.json'), b.headBytes);
+  fs.writeFileSync(path.join(out, 'index.json.minisig'), b.sigBytes);
+  fs.writeFileSync(path.join(out, 'catalog.json'), b.catalogBytes);
+  fs.writeFileSync(path.join(out, 'BASE.json'), `${JSON.stringify({
+    schema: 1, kind: 'repair', prefix, generated: b.head.generated, catalogGenerated: b.catalog.generated, headSha256: sha256(b.headBytes), catalogName: b.catalogName,
+    baseRun: b.run, floor: rb.floor.generated, floorSource: rb.floor.source, union: rb.union, candidates: rb.candidates,
+  }, null, 2)}\n`);
+  R.pass('base', `REPAIR: run ${b.run}'s verified head (generated ${b.head.generated}); ${b.catalogName}: ${b.catalog.plugins.length} listings; ${rb.union.length} revocations in the union of ${rb.candidates.filter(c => c.verified).length} verified candidates`);
+  end(0, `BASE REPAIR run ${b.run} generated ${b.head.generated}; floor ${rb.floor.generated} from ${rb.floor.source}`);
+}
+
 async function stepBase() {
   const out = path.resolve(a.out);
   const prefix = a.prefix ?? PREFIXES[a.target];
   if (a.repair === 'true') {
-    refuse(a.target === 'test' ? 'repair is for target production only'
-      : `--repair true: ${R2.split(':')[0]} is not built into this tool yet (plan task 2.4); nothing was read. Follow the runbook's manual path`);
+    if (a.target === 'test') refuse('repair is for target production only');
+    return stepRepairBase(out, prefix);
   }
   if (a.target === 'test') {
     newFolder(out);
@@ -165,10 +198,18 @@ async function stepBase() {
 // ---- --compare-live ---------------------------------------------------------------------------------------------------------------------
 const listingKey = (l) => JSON.stringify([l.name, l.author, l.firstParty, l.summary, l.description, l.categories, l.source, l.type, l.versions.map(v => [v.version, v.archive.sha256])]);
 async function stepCompare() {
-  if (a.repair === 'true') refuse(`--repair true: ${R2.split(':')[0]} is not built into this tool yet (plan task 2.4)`);
   const baseDir = path.resolve(a.base), dir = path.resolve(a.index);
   const meta = readJson(baseDir, 'BASE.json').value;
-  if (!meta || meta.schema !== 1 || !['live', 'test', 'first-publish'].includes(meta.kind) || prefixProblem(meta.prefix ?? '')) refuse('the base folder holds no BASE.json written by build-index.mjs base');
+  if (!meta || meta.schema !== 1 || !['live', 'test', 'first-publish', 'repair'].includes(meta.kind) || prefixProblem(meta.prefix ?? '')) refuse('the base folder holds no BASE.json written by build-index.mjs base');
+  const repair = meta.kind === 'repair';
+  if (a.repair === 'true' && !repair) refuse(`--repair true needs the base that build-index.mjs base --repair true wrote, not a ${meta.kind} base`);
+  if (a.repair !== 'true' && repair) refuse('a repair base is compared only with --repair true');
+  let union = [];
+  if (repair) {
+    if (!Array.isArray(meta.union) || !meta.union.every(r => r && typeof r.id === 'string' && (r.versions === '*' || Array.isArray(r.versions)))
+      || typeof meta.floor !== 'string' || !Number.isFinite(Date.parse(meta.floor))) refuse('the repair base names no union of revocations or no floor');
+    union = meta.union;
+  }
   const P = meta.prefix;
   let head, cat;
   try {
@@ -181,22 +222,26 @@ async function stepCompare() {
   try { liftText = fs.readFileSync(path.resolve(a.lift), 'utf8'); } catch { refuse('the lift file cannot be read'); }
   const lifts = [...new Set(liftText.split(/\r?\n/).map(l => l.trim()).filter(Boolean))];
   let base = { plugins: [], revoked: [] };
-  if (meta.kind === 'live') {
+  if (meta.kind === 'live' || repair) {
     try {
       const bh = I.parseIndexHead(fs.readFileSync(path.join(baseDir, 'index.json')), P);
       base = I.parseCatalog(fs.readFileSync(path.join(baseDir, 'catalog.json')), bh, { prefix: P });
-      if (Date.parse(head.generated) <= Date.parse(bh.generated)) R.fail('rollback', `the new head (${head.generated}) is not newer than the live head (${bh.generated}): build again`);
-      if (Date.parse(cat.generated) < Date.parse(base.generated)) R.fail('rollback', `the new catalog (${cat.generated}) is older than the live catalog (${base.generated})`);
+      if (repair) {
+        R.note(`REPAIR: the base is run ${meta.baseRun}'s verified head (generated ${bh.generated}); the floor ${meta.floor} comes from ${meta.floorSource}; lifts count against the union of ${union.length} revocations`);
+        if (Date.parse(head.generated) <= Date.parse(meta.floor)) R.fail('rollback', `the new head (${head.generated}) is not newer than the repair floor (${meta.floor}, from ${meta.floorSource}): build again`);
+      } else if (Date.parse(head.generated) <= Date.parse(bh.generated)) R.fail('rollback', `the new head (${head.generated}) is not newer than the live head (${bh.generated}): build again`);
+      if (Date.parse(cat.generated) < Date.parse(base.generated)) R.fail('rollback', `the new catalog (${cat.generated}) is older than the ${repair ? 'base' : 'live'} catalog (${base.generated})`);
     } catch (e) { refuse(`the base cannot be read (${e?.message ?? 'error'})`); }
   } else R.note(`base ${meta.kind}: nothing published to compare with; every listing and revocation is new`);
+  const baseRevoked = repair ? union : base.revoked;
   const have = new Set(cat.revoked.map(revKey));
-  const was = new Set(base.revoked.map(revKey));
-  const lifted = base.revoked.map(revKey).filter(k => !have.has(k));
+  const was = new Set(baseRevoked.map(revKey));
+  const lifted = [...was].filter(k => !have.has(k));
   for (const k of lifted) {
     if (lifts.includes(k)) R.note(`revocation lifted: ${k} (named in lift)`);
-    else R.fail('lift', `the live index revokes ${k}; this one does not: a lift needs that exact line in the lift input`);
+    else R.fail('lift', `the ${repair ? 'union of the verified candidates' : 'live index'} revokes ${k}; this one does not: a lift needs that exact line in the lift input`);
   }
-  for (const l of lifts) if (!lifted.includes(l)) R.fail('lift', `the lift input names ${l}, which is not a live revocation this index removes`);
+  for (const l of lifts) if (!lifted.includes(l)) R.fail('lift', `the lift input names ${l}, which is not a ${repair ? 'revocation of the union' : 'live revocation'} this index removes`);
   for (const k of cat.revoked.map(revKey).filter(k => !was.has(k))) R.note(`revocation added: ${k}`);
   const old = new Map(base.plugins.map(l => [l.id, l]));
   const now = new Map(cat.plugins.map(l => [l.id, l]));
@@ -205,7 +250,8 @@ async function stepCompare() {
     else if (listingKey(old.get(id)) !== listingKey(l)) R.note(`listing changed: ${id} ${l.versions.map(v => v.version).join(', ')}`);
   }
   for (const id of old.keys()) if (!now.has(id)) R.note(`listing removed: ${id}`);
-  end(R.failed ? 1 : 0, R.failed ? `COMPARE FAILED ${R.failed}` : `COMPARE OK against ${meta.kind === 'live' ? `the live index ${meta.generated}` : `a ${meta.kind} base`}`);
+  const against = meta.kind === 'live' ? `the live index ${meta.generated}` : repair ? `the repair base ${meta.generated} (REPAIR, floor ${meta.floor})` : `a ${meta.kind} base`;
+  end(R.failed ? 1 : 0, R.failed ? `COMPARE FAILED ${R.failed}` : `COMPARE OK against ${against}`);
 }
 
 // ---- resign-check -----------------------------------------------------------------------------------------------------------------------

@@ -13,7 +13,7 @@
 //     base entry), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes> when any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
-//     publish), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
+//     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
 //     classes are printed as information.
 // A base folder is a tree (entries/, revoked.json) or a base written by build-index.mjs base (catalog.json). Archives come from
 // --archive-cache (<sha256>.zip; checked like a download, C5) or from the author's URL (C4), and are kept there.
@@ -102,8 +102,12 @@ function readBase(dir) {
       id: l.id, type: l.type, name: l.name, author: l.author, firstParty: l.firstParty === true, maintainers: [],
       versions: l.versions.map(v => ({ version: v.version, sha256: v.archive?.sha256, size: v.archive?.size, engines: v.engines, permissions: v.permissions })),
     }));
-    R.note(`base: the live catalog${meta.value?.generated ? ` of the head generated ${meta.value.generated}` : ''} (${entries.length} listings)`);
-    return { kind: 'catalog', entries: new Map(entries.map(e => [e.id, e])), revoked: cat.value.revoked };
+    // A repair base (build-index.mjs base --repair true, recovery R2) is a verified candidate run's catalog, not the live one; its lifts
+    // count against the union of every verified candidate's revocations, as the compare step counts them.
+    const repair = meta.value?.kind === 'repair';
+    if (repair && !Array.isArray(meta.value.union)) { R.fail('base', 'the repair base names no union of revocations'); return null; }
+    R.note(`base: ${repair ? `the repair base (run ${meta.value.baseRun}'s verified catalog; its revocations: the union of ${meta.value.union.length})` : 'the live catalog'}${meta.value?.generated ? ` of the head generated ${meta.value.generated}` : ''} (${entries.length} listings)`);
+    return { kind: 'catalog', entries: new Map(entries.map(e => [e.id, e])), revoked: repair ? meta.value.union : cat.value.revoked };
   }
   let st = null;
   try { st = fs.lstatSync(path.join(dir, 'entries')); } catch { /* checked below */ }

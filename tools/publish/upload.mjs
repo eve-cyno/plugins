@@ -9,8 +9,8 @@
 //
 // <folder> holds the run's artifacts: index.json, index.json.minisig, catalog/<sha256>.json, archives.json and, for target test, the
 // run's throwaway public key test.pub. Steps, in this order:
-//  1. The R2 values and GH_TOKEN are taken out of the environment (tools/lib/r2.mjs); --repair true (recovery R2) is refused, nothing
-//     read: it is not built yet, and tools/build-index.mjs refuses it first.
+//  1. The R2 values and GH_TOKEN are taken out of the environment (tools/lib/r2.mjs); --repair true (recovery R2) is for target
+//     production only.
 //  2. The inputs: the head's SHA-256 is HEAD_SHA256 (the one the build job showed), the head is at most 7 days old, at most 5 minutes
 //     ahead and lives 60 days; the signature verifies it (the pinned index keys; target test: test.pub only); the catalog and the
 //     archive list are exactly the ones it names.
@@ -18,16 +18,21 @@
 //  4. The live pair (head and signature, at most 16,384 bytes each, with their ETags), read before any write and kept. Production and
 //     resign: it must verify with the pinned keys and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). A
 //     missing head is a first publish only when GitHub shows no run with an approved index and successful sign and upload
-//     (tools/approved-base.mjs, fail closed; never for resign). Target test: the earlier test pair is not checked.
+//     (tools/approved-base.mjs, fail closed; never for resign). Target test: the earlier test pair is not checked. --repair true
+//     (recovery R2, plan 4.2): a live pair that verifies is refused (NOT BROKEN); else the base is computed again from the candidate
+//     runs' artifacts (tools/lib/repairbase.mjs, GH_TOKEN with actions: read; a missing artifact or no verified candidate stops the
+//     run), the new head must be newer than the floor and its catalog not older than the base's, and every revocation of the union
+//     that the new catalog drops is a WARN note (the build job's compare required its lift line). R1 never restores in a repair.
 //  5. Each archive from the mirror when it is there (its SHA-256 checked: other bytes under its name stop the run), else the cache,
 //     else its author's URL (C4, C5). The vendored index-verify.mjs checks the whole folder with --archives and, for production and
-//     resign, with --live (rollback and lifts against what is served: three reads).
+//     resign but not a repair, with --live (rollback and lifts against what is served: three reads).
 //  6. publish only: the archives, then the catalog, create-only (If-None-Match: *; a 412 is "already mirrored", the mirror's copy
 //     read back when it was not read in step 5); Cache-Control immutable.
 //  7. The signature with If-Match on the live signature's ETag (If-None-Match: * when there is none), then the head with If-Match on
 //     the live head's ETag (If-None-Match: * on a first publish); Cache-Control no-cache. Recovery R1 (plan 4.2): a write that fails
 //     after its one retry, or answers 412, is followed by a re-read of that object before anything else; a head that did not land
-//     puts the old signature back with If-Match on the new one's ETag (production and resign only, never on a first publish).
+//     puts the old signature back with If-Match on the new one's ETag (production and resign only, never on a first publish or a
+//     repair: their old pair never verified).
 //  8. Every exit after step 7 began re-reads both objects and verifies the pair: PUBLISHED (exit 0), else UNCHANGED, FIRST-PUBLISH
 //     ORPHAN, TEST NOT PUBLISHED, REPLAYED or HALF-PUBLISHED (exit 1; docs/RUNBOOK.md, "When a run is red").
 // Exit 0 published, 1 refused or not published, 2 usage.
@@ -37,7 +42,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from '../lib/summary.mjs';
-import { PREFIXES, ROOT, headBoundsProblem, indexKeys, obtainArchive, prefixProblem, refusalLines, runVendored, sha256 } from '../lib/indexbuild.mjs';
+import { PREFIXES, ROOT, headBoundsProblem, indexKeys, obtainArchive, prefixProblem, refusalLines, revKey, runVendored, sha256 } from '../lib/indexbuild.mjs';
 import { IMMUTABLE, NO_CACHE, r2Client, takeCredentials } from '../lib/r2.mjs';
 
 // Step 1: nothing below, and no child, sees the mirror's values or the GitHub token in the environment.
@@ -93,10 +98,8 @@ function refuse(why, wrote = false) {
   end(1, `REFUSED: the head and its signature were not written${wrote ? ' (content-addressed files may have been)' : ''}`);
 }
 
-if (a.repair === 'true') {
-  refuse(target === 'test' ? 'repair is for target production only'
-    : `--repair true: ${R2.split(':')[0]} is not built into the upload step yet, and tools/build-index.mjs refuses it before this job; nothing was read or written. Follow the runbook's manual path`);
-}
+const repair = a.repair === 'true';
+if (repair && target === 'test') refuse('repair is for target production only');
 
 // ---- 2: the inputs -----------------------------------------------------------------------------------------------------------------------
 /** A regular file of the input folder at the path `rel`, at most `max` bytes: its bytes, or the run is refused. */
@@ -163,6 +166,27 @@ if (oldHead.status === 'error') refuse(`the live head cannot be read (${oldHead.
 if (oldSig.status === 'error') refuse(`the live signature cannot be read (${oldSig.why}): nothing was written; dispatch again later`);
 if (target === 'test') {
   R.note(`target test: the live test pair is ${oldHead.status === 'missing' ? 'missing (a first test publish)' : 'not checked (an earlier run\'s throwaway key) and is replaced on its ETags'}`);
+} else if (repair) {
+  if (oldHead.status === 'ok' && oldSig.status === 'ok' && verifies(oldHead.bytes, oldSig.bytes)) {
+    refuse(`NOT BROKEN: the live head and signature verify with ${keyText}; repair (recovery R2) is only for a live index that does not verify: dispatch publish.yml without repair`);
+  }
+  const runId = process.env.GITHUB_RUN_ID ?? '';
+  if (!/^[1-9][0-9]{0,15}$/.test(runId)) refuse('REPAIR: no run id (GITHUB_RUN_ID) is set to find the candidate runs (fail closed)');
+  R.note(`REPAIR: the live head ${oldHead.status === 'missing' ? 'is missing' : 'and signature do not verify'}; the base comes from the candidate runs' artifacts, computed again here`);
+  const { repairBase } = await import('../lib/repairbase.mjs');
+  const rb = await repairBase({ runId: Number(runId), env: { ...process.env, ...(ghToken ? { GH_TOKEN: ghToken } : {}) }, keys, prefix: P,
+    liveHead: oldHead.status === 'ok' ? oldHead.bytes : null });
+  for (const l of rb.lines) R.note(`repair: ${l}`);
+  if (!rb.ok) refuse(rb.why);
+  if (Date.parse(head.generated) <= Date.parse(rb.floor.generated)) {
+    refuse(`the new head (${head.generated}) is not newer than the repair floor (${rb.floor.generated}, from ${rb.floor.source}): a rollback; dispatch a new repair run`);
+  }
+  if (Date.parse(cat.generated) < Date.parse(rb.base.catalog.generated)) {
+    refuse(`the new catalog (${cat.generated}) is older than the base catalog (${rb.base.catalog.generated}, run ${rb.base.run}): a rollback`);
+  }
+  const have = new Set(cat.revoked.map(revKey));
+  for (const r of rb.union) if (!have.has(revKey(r))) R.note(`WARN uploading it lifts the revocation ${revKey(r)} (the build job's compare let it through: the lift input named it)`);
+  R.pass('live', `REPAIR: the base is run ${rb.base.run}'s verified head (generated ${rb.base.head.generated}); the new head is newer than the floor ${rb.floor.generated}; it replaces the live pair on its ETags`);
 } else if (oldHead.status === 'missing') {
   if (resign) refuse(`the live head is missing: resign never makes a first publish or repairs (publish.yml, or ${R2})`);
   const runId = process.env.GITHUB_RUN_ID ?? '';
@@ -211,11 +235,13 @@ for (const x of list) {
   fs.writeFileSync(staged(x.name), got.bytes);
 }
 R.note(`${readInMirror.size} of ${list.length} archives read from the mirror, the others from the cache or their author's URL`);
-const verifyArgs = [stage, '--archives', '--prefix', P, ...keyFiles.flatMap(k => ['--key', k]), ...(target === 'production' ? ['--live'] : [])];
+// Repair: no --live, which would compare with the live index that does not verify (the floor and the union were checked in step 4).
+const againstLive = target === 'production' && !repair;
+const verifyArgs = [stage, '--archives', '--prefix', P, ...keyFiles.flatMap(k => ['--key', k]), ...(againstLive ? ['--live'] : [])];
 const v = await runVendored('index-verify.mjs', verifyArgs);
 for (const l of v.stdout.split('\n')) if (l.startsWith('WARN ')) R.note(`index-verify: ${l}`);
-if (v.code !== 0) refuse(`index-verify.mjs ${target === 'production' ? '--archives --live' : '--archives'} refused the index: ${refusalLines(v).join(' | ') || `exit ${v.code}: ${v.stderr.split('\n').find(Boolean) ?? 'no output'}`}`);
-R.pass('index-verify', `the whole index verifies with ${keyText}${target === 'production' ? ', and against the live index (not a rollback)' : ''}`);
+if (v.code !== 0) refuse(`index-verify.mjs ${againstLive ? '--archives --live' : '--archives'} refused the index: ${refusalLines(v).join(' | ') || `exit ${v.code}: ${v.stderr.split('\n').find(Boolean) ?? 'no output'}`}`);
+R.pass('index-verify', `the whole index verifies with ${keyText}${againstLive ? ', and against the live index (not a rollback)' : ''}`);
 
 // ---- 6: the content-addressed files, create-only -------------------------------------------------------------------------------------------
 if (!resign) {
@@ -264,6 +290,7 @@ casFailed('index.json', h);
 if (!unchanged(hb, oldHead)) await finish('the live head is neither the old nor the new one; nothing more is written');
 if (target === 'test') await finish('the head was not written; target test restores nothing');
 if (firstPublish) await finish('the head was not written; a first publish has no old signature to put back');
+if (repair) await finish('the head was not written; the old pair never verified, so nothing is put back');
 if (newSigEtag === null) {
   const sb = await r2.get(SIG_KEY, I.MAX_INDEX_SIG_BYTES);
   if (!holds(sb, sigBytes)) await finish('the head was not written, and the live signature is not the new one: nothing is put back');
@@ -288,12 +315,16 @@ async function finish(step) {
     red('TEST NOT PUBLISHED: the new test pair is not live; dispatch a new test run', 'the final re-read does not show the new test pair');
   }
   if (fh.status === 'error' || fsig.status === 'error') red('HALF-PUBLISHED: the final re-read failed; recovery R2 or the owner\'s manual path', `the final re-read failed (${fh.why ?? fsig.why})`);
+  if (repair) {
+    if (isNew && pairOk) end(0, `PUBLISHED ${P} generated ${head.generated}: the new head and signature are live and verify (REPAIR, recovery R2)`);
+    if (unchanged(fh, oldHead) && unchanged(fsig, oldSig)) red('UNCHANGED: the live index still does not verify; nothing was published; dispatch a new repair run', 'the broken pair is still live');
+  }
   if (firstPublish && fh.status === 'missing') {
     if (fsig.status === 'missing') red('UNCHANGED: nothing was published (a first publish; both objects are still missing); dispatch a new run', 'nothing was published');
     red('FIRST-PUBLISH ORPHAN: a signature with no head; apps read the missing head as unavailable and the next run overwrites it', 'a first publish left its signature without a head');
   }
   if (!pairOk) red('HALF-PUBLISHED: the live head and signature do not verify as a pair; recovery R2 or the owner\'s manual path', `the live pair does not verify with ${keyText}`);
   if (isNew) end(0, `PUBLISHED ${P} generated ${head.generated}: the new head and signature are live and verify`);
-  if (!firstPublish && holds(fh, oldHead.bytes) && holds(fsig, oldSig.bytes)) red('UNCHANGED: the old pair is live; nothing was published; dispatch a new run', 'the old pair is still live');
+  if (!firstPublish && !repair && holds(fh, oldHead.bytes) && holds(fsig, oldSig.bytes)) red('UNCHANGED: the old pair is live; nothing was published; dispatch a new run', 'the old pair is still live');
   red('REPLAYED: a pair that verifies but is neither the new nor the old one is live; a security event (docs/RUNBOOK.md)', 'someone else\'s verified head is live');
 }

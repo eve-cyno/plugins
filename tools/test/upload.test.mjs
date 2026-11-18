@@ -13,6 +13,7 @@ import { LIFETIME_MS } from '../lib/indexbuild.mjs';
 import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 import { makeStubBin, md5Etag, object, pointStub, readAwsLog, readBucket, s3Calls, serveBucket, writeBucket } from './awsstub.mjs';
 import { stubEnv } from './ghstub.mjs';
+import { zip } from './zipwrite.mjs';
 
 const require = createRequire(import.meta.url);
 const I = require(path.join(ROOT, 'vendor', 'eve-cyno-host', 'host', 'dist', 'market', 'indexformat.js'));
@@ -117,8 +118,33 @@ function ghRoutes(kind) {
   return r;
 }
 
+/**
+ * gh answers for recovery R2, run 300 under review: run 290 (the half-published run: index approved, sign succeeded, upload failed;
+ * artifacts of index HR) and run 280 (<A>: signed and uploaded; artifacts of index `older`, A by default). `drop`: { runId: [artifact
+ * names it lacks] }.
+ */
+function repairRoutes({ drop = {}, older = 'A' } = {}) {
+  const now = Date.now();
+  const runs = [ghRun(300, 'b'.repeat(40), stamp(now)), ghRun(290, 'd'.repeat(40), stamp(now - DAY)), ghRun(280, 'a'.repeat(40), stamp(now - 5 * DAY))];
+  const r = {
+    [`GET ${GH}/environments/index`]: ghRoutes('none')[`GET ${GH}/environments/index`],
+    [`GET ${GH}/actions/workflows/publish.yml/runs?per_page=100`]: { stdout: [{ total_count: runs.length, workflow_runs: runs }] },
+    [`GET ${GH}/actions/workflows/resign.yml/runs?per_page=100`]: { stdout: [{ total_count: 0, workflow_runs: [] }] },
+  };
+  for (const [id, name, upload] of [[290, 'HR', 'failure'], [280, older, 'success']]) {
+    r[`GET ${GH}/actions/runs/${id}/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
+    r[`GET ${GH}/actions/runs/${id}/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: id * 10, name: 'sign', conclusion: 'success' }, { id: id * 10 + 1, name: 'upload', conclusion: upload }] }] };
+    const catFile = fs.readdirSync(path.join(ix[name].dir, 'catalog'))[0];
+    const files = { head: ['index.json', ix[name].head], signature: ['index.json.minisig', ix[name].sig], catalog: [catFile, fs.readFileSync(path.join(ix[name].dir, 'catalog', catFile))] };
+    const arts = Object.keys(files).filter(n => !(drop[id] ?? []).includes(n)).map((n, i) => ({ id: id * 10 + i + 1, name: n, size_in_bytes: 100, expired: false }));
+    r[`GET ${GH}/actions/runs/${id}/artifacts?per_page=100`] = { stdout: [{ total_count: arts.length, artifacts: arts }] };
+    for (const x of arts) r[`GET ${GH}/actions/artifacts/${x.id}/zip`] = { b64: zip([{ name: files[x.name][0], data: files[x.name][1] }]).toString('base64') };
+  }
+  return r;
+}
+
 /** One case: a bucket holding `live`, an input folder made from index `input`, faults, and the environment of the upload step. */
-function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, gh = 'none', env = {}, testPub = false, head } = {}) {
+function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, gh = 'none', routes, env = {}, testPub = false, head } = {}) {
   const dir = tempDir('upload');
   const bucket = path.join(dir, 'bucket.json');
   writeBucket(bucket, { objects: structuredClone(live ?? objectsOf('A')), faults, ...(ver ? { version: ver } : {}), ...(skeletonDrop ? { skeletonDrop } : {}) });
@@ -128,7 +154,7 @@ function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, 
   const awsLog = path.join(dir, 'aws.jsonl');
   fs.writeFileSync(awsLog, '');
   pointStub(BIN, { bucket, log: awsLog });
-  const g = stubEnv(BIN, ghRoutes(gh), temps);
+  const g = stubEnv(BIN, routes ?? ghRoutes(gh), temps);
   return {
     dir, bucket, inDir, awsLog, ghLog: g.log, summary: path.join(dir, 'summary.md'),
     env: { ...g.env, R2_ACCESS_KEY_ID: FAKE_ID, R2_SECRET_ACCESS_KEY: FAKE_SECRET, R2_ACCOUNT_ID: ACCOUNT,
@@ -138,7 +164,7 @@ function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, 
 async function upload(sc, mode = 'production', extra = []) {
   const args = mode === 'resign' ? ['--resign', '--in', sc.inDir, '--summary', sc.summary, '--prefix', P, '--key', PUB]
     : mode === 'test' ? ['--target', 'test', '--repair', 'false', '--in', sc.inDir, '--summary', sc.summary, '--prefix', PT]
-      : ['--target', 'production', '--repair', 'false', '--in', sc.inDir, '--summary', sc.summary, '--prefix', P, '--key', PUB];
+      : ['--target', 'production', '--repair', mode === 'repair' ? 'true' : 'false', '--in', sc.inDir, '--summary', sc.summary, '--prefix', P, '--key', PUB];
   const r = await run(TOOL, [...args, '--archive-cache', CACHE, ...extra], { env: sc.env });
   const log = readAwsLog(sc.awsLog);
   const out = r.stdout + r.stderr;
@@ -244,14 +270,6 @@ describe('upload: order, headers and create-only files', () => {
 });
 
 describe('upload: refusals before any write', () => {
-  test('PB-repair-refused: --repair true (recovery R2) is not built into the upload step; nothing is read or written', async () => {
-    const sc = scenario();
-    const r = await run(TOOL, ['--target', 'production', '--repair', 'true', '--in', sc.inDir, '--prefix', P, '--key', PUB], { env: sc.env });
-    assert.equal(r.code, 1, r.stdout + r.stderr);
-    assert.match(r.stdout + r.stderr, /recovery R2/);
-    assert.deepEqual(readAwsLog(sc.awsLog), []);
-  });
-
   test('PB-usage: the publish and resign forms, and --key only for target production', async () => {
     const sc = scenario();
     for (const args of [['--in', sc.inDir], ['--resign', '--target', 'production', '--in', sc.inDir], ['--target', 'test', '--repair', 'false', '--in', sc.inDir, '--key', PUB],
@@ -521,5 +539,234 @@ describe('upload: target test and resign', () => {
     assert.equal(gone.code, 1, gone.out);
     assert.match(gone.out, /resign never/);
     assert.equal(gone.puts.length, 0);
+  });
+});
+
+// ---- recovery R2: build-index.mjs base and --compare-live with --repair true, and the upload step's own base and floor ----------------
+describe('recovery R2 (repair: true)', () => {
+  const X = { id: 'dev.example.gone', versions: '*', reason: 'Revoked by the half-published run.', date: '2026-01-01' };
+  const Y = { id: 'dev.example.old', versions: '*', reason: 'Revoked by an older run.', date: '2026-01-01' };
+  before(async () => {
+    // AY: an older uploaded run's index revoking Y. HR: the half-published run's index (signed, its upload failed), newer than A and
+    // AY, revoking X only. NR keeps X, NL lifts it. NO: NR's head over a catalog generated as A's (older than HR's catalog).
+    await sleep(1100);
+    await buildIndex('AY', { ...TREE_A, revoked: [Y] }, P, signer);
+    await sleep(1100);
+    await buildIndex('HR', { ...TREE_A, revoked: [X] }, P, signer);
+    await sleep(1100);
+    await buildIndex('NR', { ...TREE_B, revoked: [X] }, P, signer);
+    await buildIndex('NL', TREE_B, P, signer);
+    const dir = path.join(T, 'NO');
+    fs.cpSync(ix.NR.dir, dir, { recursive: true });
+    const catFile = fs.readdirSync(path.join(dir, 'catalog'))[0];
+    const cat = Buffer.from(JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(dir, 'catalog', catFile), 'utf8')), generated: JSON.parse(ix.A.head).generated }));
+    fs.rmSync(path.join(dir, 'catalog', catFile));
+    fs.writeFileSync(path.join(dir, 'catalog', `${sha(cat)}.json`), cat);
+    const h = JSON.parse(ix.NR.head);
+    fs.writeFileSync(path.join(dir, 'index.json'), `${JSON.stringify({ ...h, catalog: { url: `${P}catalog/${sha(cat)}.json`, sha256: sha(cat), size: cat.length } }, null, 2)}\n`);
+    signFolder(dir, signer);
+    ix.NO = { dir, list: ix.NR.list, head: fs.readFileSync(path.join(dir, 'index.json')), sig: fs.readFileSync(path.join(dir, 'index.json.minisig')) };
+  });
+  /** The live state a half-finished upload leaves: HR's head and catalog, A's signature (the pair does not verify). */
+  const broken = () => ({ ...objectsOf('A'), ...objectsOf('HR'), [SIG]: objectsOf('A')[SIG] });
+  /** An unsigned head generated at `g` (ms) that names a catalog without any revocation, served with that catalog. */
+  const attacker = (g) => {
+    const cat = Buffer.from(JSON.stringify({ schema: 1, generated: stamp(g), plugins: [], revoked: [] }));
+    const h = Buffer.from(JSON.stringify({ schema: 1, generated: stamp(g), expires: stamp(g + LIFETIME_MS), catalog: { url: `${P}catalog/${sha(cat)}.json`, sha256: sha(cat), size: cat.length } }));
+    return { ...broken(), [HEAD]: object(h, 'application/json', 'no-cache'), [`v1/catalog/${sha(cat)}.json`]: object(cat, 'application/json', IMMUTABLE) };
+  };
+  const base = (sc, out) => run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'true', '--out', out, '--summary', sc.summary, '--prefix', P, '--key', PUB], { env: sc.env });
+  const compare = (sc, baseDir, index, liftText, repair = 'true') => {
+    const lift = path.join(sc.dir, `lift-${Math.random().toString(16).slice(2)}.txt`);
+    fs.writeFileSync(lift, liftText);
+    return run('tools/build-index.mjs', ['--compare-live', '--base', baseDir, '--index', ix[index].dir, '--lift', lift, '--repair', repair], { env: sc.env });
+  };
+
+  test('PB-repair-not-broken: repair against a live index that verifies is refused by the build step and the upload step', async () => {
+    const sc = scenario({ input: 'NR', routes: repairRoutes() });
+    const b = await base(sc, path.join(sc.dir, 'base'));
+    assert.equal(b.code, 1, b.stdout + b.stderr);
+    assert.match(b.stderr, /^REFUSED: NOT BROKEN: /m);
+    assert.ok(!fs.existsSync(path.join(sc.dir, 'base')));
+    const u = await upload(sc, 'repair');
+    assert.equal(u.code, 1, u.out);
+    assert.match(u.out, /NOT BROKEN/);
+    assert.equal(u.puts.length, 0);
+    assert.equal(sc.ghLog().length, 0, 'GitHub is not asked for a live index that verifies');
+  });
+
+  test('PB-repair-build-and-upload: the base is the verified half-published run, lifts count against the union, the upload publishes', async () => {
+    const sc = scenario({ live: broken(), input: 'NR', routes: repairRoutes() });
+    const out = path.join(sc.dir, 'base');
+    const b = await base(sc, out);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.match(b.stdout, /^BASE REPAIR /m);
+    const meta = JSON.parse(fs.readFileSync(path.join(out, 'BASE.json'), 'utf8'));
+    assert.equal(meta.kind, 'repair');
+    assert.equal(meta.baseRun, 290);
+    assert.equal(meta.floor, JSON.parse(ix.HR.head).generated);
+    assert.deepEqual(meta.union.map(r => r.id), [X.id]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'catalog.json'), 'utf8')).revoked, [X], 'the half-published run\'s own catalog artifact');
+    assert.deepEqual(fs.readFileSync(path.join(out, 'index.json')), ix.HR.head);
+    assert.match(fs.readFileSync(sc.summary, 'utf8'), /REPAIR/);
+    assert.match(b.stdout, /run 290 .*verifies/);
+    assert.match(b.stdout, /floor .* from run 290's verified head/);
+    const keep = await compare(sc, out, 'NR', '\n');
+    assert.equal(keep.code, 0, keep.stdout + keep.stderr);
+    assert.match(keep.stdout, /^COMPARE OK against the repair base /m);
+    const dropped = await compare(sc, out, 'NL', '\n');
+    assert.equal(dropped.code, 1, dropped.stdout);
+    assert.match(dropped.stdout, /^FAIL lift .*dev\.example\.gone \*/m);
+    const lifted = await compare(sc, out, 'NL', 'dev.example.gone *\n');
+    assert.equal(lifted.code, 0, lifted.stdout + lifted.stderr);
+    assert.match(lifted.stdout, /^NOTE revocation lifted: dev\.example\.gone \*/m);
+    const u = await upload(sc, 'repair');
+    assert.equal(u.code, 0, u.out);
+    assert.match(u.last, /^PUBLISHED .*REPAIR/);
+    const live = broken();
+    assert.deepEqual(u.puts.slice(-2).map(p => [p.key, p.ifMatch]), [[SIG, live[SIG].etag], [HEAD, live[HEAD].etag]]);
+    assert.deepEqual(bytesOf(u.bucket, HEAD), ix.NR.head);
+    assert.match(u.out, /repair: base: run 290 /);
+  });
+
+  test('PB-repair-union-revocations: an older verified candidate\'s revocation the base dropped still needs a lift', async () => {
+    const sc = scenario({ live: broken(), input: 'NR', routes: repairRoutes({ older: 'AY' }) });
+    const out = path.join(sc.dir, 'base');
+    const b = await base(sc, out);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    const meta = JSON.parse(fs.readFileSync(path.join(out, 'BASE.json'), 'utf8'));
+    assert.equal(meta.baseRun, 290);
+    assert.deepEqual(meta.union.map(r => r.id), [X.id, Y.id]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'catalog.json'), 'utf8')).revoked, [X], 'the base catalog revokes X only');
+    const dropped = await compare(sc, out, 'NR', '\n');
+    assert.equal(dropped.code, 1, dropped.stdout);
+    assert.match(dropped.stdout, /^FAIL lift .*union.*dev\.example\.old \*/m);
+    const lifted = await compare(sc, out, 'NR', 'dev.example.old *\n');
+    assert.equal(lifted.code, 0, lifted.stdout + lifted.stderr);
+    assert.match(lifted.stdout, /^NOTE revocation lifted: dev\.example\.old \*/m);
+    const u = await upload(sc, 'repair');
+    assert.equal(u.code, 0, u.out);
+    assert.match(u.out, /uploading it lifts the revocation dev\.example\.old \*/);
+    assert.doesNotMatch(u.out, /uploading it lifts the revocation dev\.example\.gone/);
+  });
+
+  test('PB-repair-catalog-not-older: a new head over a catalog older than the base catalog is a rollback', async () => {
+    const sc = scenario({ live: broken(), input: 'NO', routes: repairRoutes() });
+    const out = path.join(sc.dir, 'base');
+    assert.equal((await base(sc, out)).code, 0);
+    const c = await compare(sc, out, 'NO', '\n');
+    assert.equal(c.code, 1, c.stdout);
+    assert.match(c.stdout, /^FAIL rollback .*older than the base catalog/m);
+    const u = await upload(sc, 'repair');
+    assert.equal(u.code, 1, u.out);
+    assert.match(u.out, /older than the base catalog/);
+    assert.equal(u.puts.length, 0);
+  });
+
+  test('PB-repair-unsigned-head-never-base: an attacker-written live head and its catalog are never the base', async () => {
+    const sc = scenario({ live: attacker(Date.now() - 60 * DAY / 60), input: 'NL', routes: repairRoutes() });
+    const out = path.join(sc.dir, 'base');
+    const b = await base(sc, out);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'catalog.json'), 'utf8')).revoked, [X], 'not the live catalog without revocations');
+    const dropped = await compare(sc, out, 'NL', '\n');
+    assert.equal(dropped.code, 1, dropped.stdout);
+    assert.match(dropped.stdout, /^FAIL lift .*dev\.example\.gone \*/m, 'the revocation the live catalog dropped still needs a lift');
+    const u = await upload(sc, 'repair');
+    assert.equal(u.code, 0, u.out);
+    assert.match(u.out, /uploading it lifts the revocation dev\.example\.gone \*/);
+  });
+
+  test('PB-repair-floor-raised-only: an unsigned live generated newer than the new head blocks it; one over 5 minutes ahead is ignored', async () => {
+    const near = scenario({ live: attacker(Date.now() + 120_000), input: 'NR', routes: repairRoutes() });
+    const out = path.join(near.dir, 'base');
+    const b = await base(near, out);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.match(b.stdout, /floor .* from the unsigned live head/);
+    const c = await compare(near, out, 'NR', '\n');
+    assert.equal(c.code, 1, c.stdout);
+    assert.match(c.stdout, /^FAIL rollback .*repair floor/m);
+    const u = await upload(near, 'repair');
+    assert.equal(u.code, 1, u.out);
+    assert.match(u.out, /not newer than the repair floor/);
+    assert.equal(u.puts.length, 0);
+    const far = scenario({ live: attacker(Date.now() + DAY), input: 'NR', routes: repairRoutes() });
+    const out2 = path.join(far.dir, 'base');
+    const b2 = await base(far, out2);
+    assert.equal(b2.code, 0, b2.stdout + b2.stderr);
+    assert.match(b2.stdout, /more than 5 minutes ahead of now: ignored/);
+    const c2 = await compare(far, out2, 'NR', '\n');
+    assert.equal(c2.code, 0, c2.stdout + c2.stderr);
+    const u2 = await upload(far, 'repair');
+    assert.equal(u2.code, 0, u2.out);
+    // The base's own head again (generated exactly at the floor) is a rollback too.
+    const same = scenario({ live: broken(), input: 'HR', routes: repairRoutes() });
+    const out3 = path.join(same.dir, 'base');
+    assert.equal((await base(same, out3)).code, 0);
+    const c3 = await compare(same, out3, 'HR', '\n');
+    assert.equal(c3.code, 1, c3.stdout);
+    assert.match(c3.stdout, /^FAIL rollback .*repair floor/m);
+    const u3 = await upload(same, 'repair');
+    assert.equal(u3.code, 1, u3.out);
+    assert.match(u3.out, /not newer than the repair floor/);
+    assert.equal(u3.puts.length, 0);
+  });
+
+  test('PB-repair-artifact-missing-stops: a candidate without its head or signature artifact stops the build and the upload step', async () => {
+    const sc = scenario({ live: broken(), input: 'NR', routes: repairRoutes({ drop: { 290: ['head'] } }) });
+    const b = await base(sc, path.join(sc.dir, 'base'));
+    assert.equal(b.code, 1, b.stdout + b.stderr);
+    assert.match(b.stderr, /^REFUSED: ARTIFACT MISSING: run 290 .*head/m);
+    assert.ok(!fs.existsSync(path.join(sc.dir, 'base')));
+    const sig = scenario({ live: broken(), input: 'NR', routes: repairRoutes({ drop: { 280: ['signature'] } }) });
+    const u = await upload(sig, 'repair');
+    assert.equal(u.code, 1, u.out);
+    assert.match(u.out, /ARTIFACT MISSING: run 280 .*signature/);
+    assert.equal(u.puts.length, 0);
+    const noRun = scenario({ live: broken(), input: 'NR', routes: repairRoutes(), env: { GITHUB_RUN_ID: '' } });
+    const n = await upload(noRun, 'repair');
+    assert.equal(n.code, 1, n.out);
+    assert.match(n.out, /REPAIR: no run id \(GITHUB_RUN_ID\)/);
+    assert.equal(n.puts.length, 0);
+    const nb = await base(noRun, path.join(noRun.dir, 'base'));
+    assert.equal(nb.code, 1);
+    assert.match(nb.stderr, /^REFUSED: REPAIR: no run id \(GITHUB_RUN_ID\)/m);
+    assert.equal(noRun.ghLog().length, 0, 'GitHub is not asked without the run id');
+  });
+
+  test('PB-repair-base-kind: --repair true takes only a repair base, and --repair false never a repair base', async () => {
+    const sc = scenario({ live: broken(), input: 'NR', routes: repairRoutes() });
+    const out = path.join(sc.dir, 'base');
+    assert.equal((await base(sc, out)).code, 0);
+    const f = await compare(sc, out, 'NR', '\n', 'false');
+    assert.equal(f.code, 1, f.stdout);
+    assert.match(f.stderr, /repair base/);
+    const ok = scenario({ input: 'NR' });
+    const live = path.join(ok.dir, 'live');
+    const lb = await run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'false', '--out', live, '--prefix', P, '--key', PUB], { env: ok.env });
+    assert.equal(lb.code, 0, lb.stdout + lb.stderr);
+    const t = await compare(ok, live, 'NR', '\n', 'true');
+    assert.equal(t.code, 1, t.stdout);
+    assert.match(t.stderr, /--repair true needs/);
+  });
+
+  test('PB-repair-production-only: the upload step refuses --repair true for target test before it reads anything', async () => {
+    const sc = scenario({ testPub: true, routes: repairRoutes() });
+    const r = await run(TOOL, ['--target', 'test', '--repair', 'true', '--in', sc.inDir, '--prefix', PT], { env: sc.env });
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /^REFUSED: repair is for target production only/m);
+    assert.deepEqual(readAwsLog(sc.awsLog), []);
+    assert.equal(sc.ghLog().length, 0);
+  });
+
+  test('PB-repair-r1-no-restore: a head PUT that did not land restores nothing over a pair that never verified', async () => {
+    const lost = (nth) => ({ op: 'put-object', key: HEAD, nth, result: 'network-lost' });
+    const r = await upload(scenario({ live: broken(), input: 'NR', routes: repairRoutes(), faults: [lost(1), lost(2)] }), 'repair');
+    assert.equal(r.code, 1, r.out);
+    assert.equal(r.puts.filter(p => p.key === SIG).length, 1, 'the old signature is not put back');
+    assert.match(r.last, /^HALF-PUBLISHED/, 'the new signature over the old head does not verify');
+    const s = await upload(scenario({ live: broken(), input: 'NR', routes: repairRoutes(), faults: [{ op: 'put-object', key: SIG, nth: 1, result: '412' }] }), 'repair');
+    assert.equal(s.code, 1, s.out);
+    assert.match(s.last, /^UNCHANGED: the live index still does not verify/);
   });
 });

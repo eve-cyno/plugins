@@ -170,7 +170,11 @@ describe('E2E live reads of build-index.mjs', () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(T, 'base-test', 'BASE.json'), 'utf8')).kind, 'test');
     const r = await run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'true', '--out', path.join(T, 'base-r'), ...keyArgs()]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr + r.stdout, /recovery R2/);
+    assert.match(r.stderr, /^REFUSED: NOT BROKEN: .*recovery R2/m, 'repair (recovery R2) against a live index that verifies');
+    assert.ok(!fs.existsSync(path.join(T, 'base-r')));
+    const rt = await run('tools/build-index.mjs', ['base', '--target', 'test', '--repair', 'true', '--out', path.join(T, 'base-rt')]);
+    assert.equal(rt.code, 1);
+    assert.match(rt.stderr, /repair is for target production only/);
   });
 
   test('E2E-base-missing: a live head that answers 404 is a first publish only when GitHub shows no approved run (fail closed)', async () => {
@@ -286,6 +290,21 @@ describe('E2E check.mjs', () => {
     assert.doesNotMatch(r.stdout, /^PASS C4-C7 dev\.example\.intel 1\.1\.0/m, 'a live version is not');
     assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.intel 1\.0\.0/m);
     assert.equal(last(r.stdout), 'CHECKS PASSED');
+  });
+
+  test('E2E-check-publish-repair: a repair base is named as such, and its lifts count against the union of revocations', async () => {
+    const dir = path.join(T, 'base-repair-check');
+    fs.cpSync(path.join(T, 'base'), dir, { recursive: true });
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'BASE.json'), 'utf8'));
+    const older = { id: 'dev.example.older', versions: '*', reason: 'Revoked by an older candidate run.', date: '2026-01-01' };
+    const union = [...JSON.parse(fs.readFileSync(path.join(dir, 'catalog.json'), 'utf8')).revoked, older];
+    fs.writeFileSync(path.join(dir, 'BASE.json'), JSON.stringify({ ...meta, kind: 'repair', baseRun: 290, floor: meta.generated, floorSource: "run 290's verified head", union }));
+    const r = await check('publish', dir, path.join(T, 'tree2'), ['--target', 'production']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^NOTE base: the repair base \(run 290's verified catalog/m);
+    assert.doesNotMatch(r.stdout, /the live catalog/);
+    assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.older \*/m);
+    assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.intel 1\.0\.0/m);
   });
 
   test('E2E-check-refuses: a wrong pinned hash fails C5, and C16 does not run', async () => {
