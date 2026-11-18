@@ -7,11 +7,11 @@
 # - Workflow-level concurrency index-sign, shared with resign.yml: whole runs never overlap, and waiting runs queue (queue: max).
 # - build (no environment, no secret): every check against the live base, the catalog and the unsigned head; the head's exact bytes
 #   and SHA-256 go to the job summary. Artifacts head and catalog (90 days), archives.json (35 days).
-# - sign (target production): environment index (main only, approved by the reviewer account). Artifact in, signature out: it checks
+# - sign (target production): environment index (main only, approved by its required reviewer). Artifact in, signature out: it checks
 #   out only the public keys folder and runs no repository code, no Node, npm or AWS CLI. The secret key goes to a 0600 file under
 #   $RUNNER_TEMP and its passphrase to minisign's stdin from an unexported shell variable; an always() step shreds the key file.
 # - sign-test (target test): no environment, so no index secret can reach it; signs with a throwaway key made in the run.
-# - upload: environment mirror (main only, approved by the reviewer account); the R2 secrets reach its upload step only.
+# - upload: environment mirror (main only, approved by its required reviewer); the R2 secrets reach its upload step only.
 # - verify: reads the live index back. A red verify is never re-run: re-check it locally (docs/RUNBOOK.md).
 # - Inputs and outputs reach the scripts through env, never through an expression inside run.
 # - tools/build-index.mjs and tools/check.mjs come with plan task 1.7, tools/publish/ with task 2.4; the calls below are their

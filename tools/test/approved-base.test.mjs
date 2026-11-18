@@ -1,28 +1,26 @@
 // Tests of tools/approved-base.mjs (plan 4.5 step 1 and 2): <A> is the commit of the newest other run of publish.yml or resign.yml
-// with an approval of environment index by the reviewer account and successful sign and upload jobs; the compare status of <A> to
-// <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like the REST answers of
-// the runs, approvals, jobs and compare endpoints; the reviewer file comes from a temp git repository.
+// with an approval of environment index by the environment's only required reviewer and successful sign and upload jobs; the
+// compare status of <A> to <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like
+// the REST answers of the environment, runs, approvals, jobs and compare endpoints; the reviewer is read from the environment.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { approvedBase } from '../approved-base.mjs';
-import { makeGhStub, repoWithReviewer, stubEnv } from './ghstub.mjs';
+import { REVIEWER as WHO, envDoc, makeGhStub, stubEnv, userReviewer } from './ghstub.mjs';
 
-const TOOL = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'approved-base.mjs');
+const TOOL = fileURLToPath(new URL('../approved-base.mjs', import.meta.url));
 const temps = [];
 after(() => { for (const t of temps) fs.rmSync(t, { recursive: true, force: true }); });
 const BIN = makeGhStub(temps);
 const R = 'repos/eve-cyno/plugins';
-const REVIEWER = 4242;
+const REVIEWER = WHO.id;
 const sha = (c) => c.repeat(40);
-// <B>, the run under review's commit, is a real commit of a temp repository: the tool reads the reviewer id committed there
-// (4242), while the working tree says 777.
-const good = repoWithReviewer(JSON.stringify({ reviewerId: REVIEWER }), JSON.stringify({ reviewerId: 777 }), temps);
-const B = good.rev;
+const B = sha('b');
 const A = sha('a');
+/** The login or the id of the test reviewer, anywhere in a text. */
+const NAMES_REVIEWER = new RegExp(`${WHO.login}|${WHO.id}`, 'i');
 
 /** One workflow run as the list and get endpoints answer it. */
 function run(id, wf, headSha, created) {
@@ -39,11 +37,12 @@ const jobs = (runId, list) => [{ total_count: list.length, jobs: list.map(([name
 const PUBLISHED = (id) => ({ approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])], jobs: jobs(id, [['build', 'success'], ['sign', 'success'], ['sign-test', 'skipped'], ['upload', 'success'], ['verify', 'success']]) });
 
 /** The runs a case lists: [{ run, approvals, jobs }]; `under` is the run under review. */
-function routes({ under, others, compare = 'ahead', publishPages, extra = {} }) {
+function routes({ under, others, compare = 'ahead', publishPages, environment, extra = {} }) {
   const all = [under, ...others];
   const of = (wf) => all.filter((x) => x.run.path.endsWith(wf)).map((x) => x.run);
   const page = (list) => [{ total_count: list.length, workflow_runs: list }];
   const r = {
+    [`GET ${R}/environments/index`]: environment ?? { stdout: envDoc('index') },
     [`GET ${R}/actions/runs/${under.run.id}`]: { stdout: under.run },
     [`GET ${R}/actions/workflows/publish.yml/runs?per_page=100`]: { stdout: publishPages ?? page(of('publish.yml')) },
     [`GET ${R}/actions/workflows/resign.yml/runs?per_page=100`]: { stdout: page(of('resign.yml')) },
@@ -60,10 +59,12 @@ function routes({ under, others, compare = 'ahead', publishPages, extra = {} }) 
 const UNDER = { run: run(300, 'publish.yml', B, '2026-12-10T10:00:00Z'), ...PUBLISHED(300) };
 const GOOD = { run: run(200, 'publish.yml', A, '2026-12-01T10:00:00Z'), ...PUBLISHED(200) };
 
-async function call(spec, { repo = good, runId = 300 } = {}) {
+async function call(spec, { runId = 300 } = {}) {
   const { env, log } = stubEnv(BIN, routes(spec), temps);
-  const r = await approvedBase({ runId, repoDir: repo.dir, env });
-  return { ...r, text: r.lines.join('\n'), calls: log() };
+  const r = await approvedBase({ runId, env });
+  const text = r.lines.join('\n');
+  assert.doesNotMatch(text, NAMES_REVIEWER, 'the reviewer\'s login and id are never printed');
+  return { ...r, text, calls: log() };
 }
 /** The case finds <A> = GOOD's commit after skipping `skipped` with a line matching `why`. */
 async function skips(skipped, why) {
@@ -78,7 +79,7 @@ async function skips(skipped, why) {
 
 describe('approved-base: <A> skips every run that is not an approved, signed and uploaded other run', () => {
   test('AB-good: the newest other run with an approved index and successful sign and upload is <A>', async () => {
-    const r = await skips({ run: run(250, 'resign.yml', sha('c'), '2026-12-05T06:17:00Z'), approvals: [], jobs: jobs(250, [['check', 'success'], ['head', 'skipped'], ['sign', 'skipped'], ['upload', 'skipped'], ['verify', 'skipped']]) }, 'no approval of index by the reviewer account');
+    const r = await skips({ run: run(250, 'resign.yml', sha('c'), '2026-12-05T06:17:00Z'), approvals: [], jobs: jobs(250, [['check', 'success'], ['head', 'skipped'], ['sign', 'skipped'], ['upload', 'skipped'], ['verify', 'skipped']]) }, "no approval of index by the environment's reviewer");
     assert.ok(!r.calls.some((a) => /compare\/c{40}/.test(a[a.length - 1])), 'no compare for a skipped run');
   });
   test('AB-skip-noop-resign: a re-sign that ended at check', () => skips({ run: run(250, 'resign.yml', sha('c'), '2026-12-05T06:17:00Z'), approvals: [], jobs: jobs(250, [['check', 'success'], ['head', 'skipped'], ['sign', 'skipped'], ['upload', 'skipped'], ['verify', 'skipped']]) }, 'no approval of index'));
@@ -141,17 +142,26 @@ describe('approved-base: direction and failures', () => {
     assert.equal(r.code, 1);
     assert.match(r.text, /^ERROR: .*approvals.*exited 1/m);
   });
-  test('AB-placeholder: the committed placeholder fails', async () => {
-    const repo = repoWithReviewer(JSON.stringify({ reviewerId: 0, placeholder: 'PLACEHOLDER' }), undefined, temps);
-    const under = { ...UNDER, run: { ...UNDER.run, head_sha: repo.rev } };
-    const r = await call({ under, others: [GOOD] }, { repo });
-    assert.equal(r.code, 1);
-    assert.match(r.text, /placeholder/);
-  });
-  test('AB-reviewer-at-B: the id comes from the file at the run\'s commit, not the working tree (777 there)', async () => {
+  test('AB-reviewer-from-environment: only approvals by the environment\'s reviewer count, whoever it is', async () => {
     const other = { ...GOOD, approvals: [approval(777, ['index'])] };
     const r = await call({ under: UNDER, others: [other] });
     assert.equal(r.code, 3, r.text);
+    const r2 = await call({ under: UNDER, others: [other], environment: { stdout: envDoc('index', { reviewers: [userReviewer(777)] }) } });
+    assert.equal(r2.code, 0, r2.text);
+    assert.match(r2.text, new RegExp(`^A ${A} from run 200 `, 'm'));
+    assert.equal(r2.calls.filter((a) => a[a.length - 1] === `${R}/environments/index`).length, 1, 'the environment is read once');
+  });
+  test('AB-reviewer-unreadable: a failed environment read is an ERROR, never "first publish"', async () => {
+    const r = await call({ under: UNDER, others: [], environment: { stdout: '', stderr: 'gh: Server Error (HTTP 502)\n', exit: 1 } });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /^ERROR: .*environments\/index.*exited 1/m);
+  });
+  test('AB-reviewer-not-one: two reviewers, or none, is an ERROR', async () => {
+    for (const reviewers of [[userReviewer(REVIEWER, WHO.login), userReviewer(777)], []]) {
+      const r = await call({ under: UNDER, others: [GOOD], environment: { stdout: envDoc('index', { reviewers }) } });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, /^ERROR: environment index: [02] required reviewers, expected exactly 1/m);
+    }
   });
   test('AB-unknown-workflow: a run of another workflow is not reviewed here', async () => {
     const under = { ...UNDER, run: { ...UNDER.run, path: '.github/workflows/check.yml' } };
@@ -162,11 +172,14 @@ describe('approved-base: direction and failures', () => {
   test('AB-cli: exit codes and usage', () => {
     const { env } = stubEnv(BIN, routes({ under: UNDER, others: [GOOD] }), temps);
     const cli = (args) => spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8', env });
-    assert.equal(cli(['--run', '300', '--repo-dir', good.dir]).status, 0);
-    const exit = (spec) => spawnSync(process.execPath, [TOOL, '--run', '300', '--repo-dir', good.dir], { encoding: 'utf8', env: stubEnv(BIN, routes(spec), temps).env }).status;
+    const ok = cli(['--run', '300']);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.doesNotMatch(ok.stdout + ok.stderr, NAMES_REVIEWER);
+    const exit = (spec) => spawnSync(process.execPath, [TOOL, '--run', '300'], { encoding: 'utf8', env: stubEnv(BIN, routes(spec), temps).env }).status;
     assert.equal(exit({ under: UNDER, others: [GOOD], compare: 'behind' }), 1, 'NO APPROVAL exits 1');
     assert.equal(exit({ under: UNDER, others: [] }), 3, 'FIRST PUBLISH exits 3');
-    for (const bad of ['x', '0', '01', '-5', '1.5']) assert.equal(cli(['--run', bad, '--repo-dir', good.dir]).status, 2, bad);
-    assert.equal(cli(['--repo-dir', good.dir]).status, 2);
+    for (const bad of ['x', '0', '01', '-5', '1.5']) assert.equal(cli(['--run', bad]).status, 2, bad);
+    assert.equal(cli([]).status, 2);
+    assert.equal(cli(['--run', '300', '--repo-dir', '.']).status, 2, 'no reviewer is read from a checkout any more');
   });
 });

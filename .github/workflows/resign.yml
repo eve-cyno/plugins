@@ -1,6 +1,6 @@
 # Re-signs the live plugin index before its head expires (docs/RUNBOOK.md, "Re-sign"). Same catalog, new generated time, 60 days.
 # - A weekly schedule only asks: check reads the live head and says whether a re-sign is needed (the head is 30 days old or more, or
-#   fewer than 30 days remain before it expires). The signature still needs the reviewer account's approval of index and of mirror,
+#   fewer than 30 days remain before it expires). The signature still needs the required reviewer's approval of index and of mirror,
 #   each after the runbook's "Before every index and mirror approval".
 # - resign.yml never repairs: head verifies the live head with the pinned keys first and fails with a pointer to recovery R2
 #   (publish.yml with repair) when it does not verify, or when there is none.

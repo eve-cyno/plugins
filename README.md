@@ -29,7 +29,7 @@ A maintainer reviews every new plugin and every version that asks for more permi
 
 Workflows run on manual dispatch, with one exception: a weekly scheduled re-sign (`resign.yml`) runs when the live head is older than
 30 days. This is an exception to the EVE-Cyno project rule that workflows are manual-only, for `eve-cyno/plugins` only, approved by the
-owner on 2026-11-18. The signature still needs the reviewer account's approvals (see [docs/RUNBOOK.md](docs/RUNBOOK.md)).
+owner on 2026-11-18. The signature still needs the owner's approvals of the `index` and `mirror` environments (see [docs/RUNBOOK.md](docs/RUNBOOK.md)).
 
 ## Running the checks
 

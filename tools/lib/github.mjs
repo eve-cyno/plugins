@@ -94,9 +94,12 @@ export function parseHttp(text) {
   return { status: Number(m[1]), headers, body };
 }
 
-/** One request read with its status line and headers (`gh api -i`): the parts of parseHttp, or { error }. */
-export async function probe(method, endpoint, opts) {
-  const r = await runGh(['api', `--hostname=${HOST}`, '-i', `--method=${method}`, ...HEADERS, endpoint], opts);
+/**
+ * One request read with its status line and headers (`gh api -i`): the parts of parseHttp, or { error }. `fields` are gh's body
+ * arguments (`-f key=value`, `-F key=value`), placed before the endpoint, which stays the last argument.
+ */
+export async function probe(method, endpoint, opts, fields = []) {
+  const r = await runGh(['api', `--hostname=${HOST}`, '-i', `--method=${method}`, ...HEADERS, ...fields, endpoint], opts);
   if (r.error) return { error: r.error };
   if (!r.stdout) return { error: `gh api exited ${r.code} with no answer: ${oneLine(r.stderr)}` };
   return parseHttp(r.stdout);

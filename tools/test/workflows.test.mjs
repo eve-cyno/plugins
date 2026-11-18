@@ -28,8 +28,7 @@ function stepText(step) {
 }
 
 /**
- * A copy of the workflows, the tool sources (tools/*.mjs, tools/lib/*.mjs) and tools/reviewer.json with `edits` applied, loaded like
- * the real ones. An edit is { file, from, to } on a workflow (the text must occur exactly once, or at least once with `all`),
+ * A copy of the workflows and the tool sources (tools/*.mjs, tools/lib/*.mjs) with `edits` applied, loaded like the real ones. An edit is { file, from, to } on a workflow (the text must occur exactly once, or at least once with `all`),
  * { file, job, from, to } (the same, inside one job's lines only), { path, from, to } on a repository path, or { file | path, text }
  * (writes the whole file; null deletes it).
  */
@@ -41,14 +40,14 @@ function mutant(edits) {
   for (const sub of ['tools', 'tools/lib']) {
     fs.mkdirSync(path.join(t, sub), { recursive: true });
     for (const f of fs.readdirSync(path.join(ROOT, sub))) {
-      if (f.endsWith('.mjs') || (sub === 'tools' && f === 'reviewer.json')) fs.copyFileSync(path.join(ROOT, sub, f), path.join(t, sub, f));
+      if (f.endsWith('.mjs')) fs.copyFileSync(path.join(ROOT, sub, f), path.join(t, sub, f));
     }
   }
   for (const e of edits) {
     const p = e.path ? path.join(t, e.path) : path.join(dir, e.file);
     if ('text' in e) {
       if (e.text === null) fs.rmSync(p);
-      else fs.writeFileSync(p, e.text);
+      else { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, e.text); }
       continue;
     }
     const src = fs.readFileSync(p, 'utf8');
@@ -254,14 +253,24 @@ describe('C-WF10 resign.yml upload', () => {
   test('C-WF10 refuses inputs on resign.yml', () => refuses('C-WF10', [{ file: 'resign.yml', from: '\n  workflow_dispatch:\n', to: '\n  workflow_dispatch:\n    inputs:\n      lift:\n        type: string\n' }], /inputs/));
 });
 
-describe('C-WF11 the reviewer id comes only from tools/reviewer.json', () => {
+describe('C-WF11 no reviewer is written in the repository; it is read from the environments', () => {
+  const ab = (line) => ({ path: 'tools/approved-base.mjs', from: '// tools/approved-base.mjs:', to: `${line}\n// tools/approved-base.mjs:` });
   test('C-WF11 the real files pass', () => assert.deepEqual(RULES['C-WF11'](real), []));
   test('C-WF11 refuses a reviewer variable in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'upload', from: '      TARGET: ${{ inputs.target }}\n', to: '      TARGET: ${{ inputs.target }}\n      APPROVER: ${{ vars.REVIEWER_ID }}\n' }], /publish\.yml: names a reviewer outside a comment/));
   test('C-WF11 refuses a reviewer input', () => refuses('C-WF11', [{ file: 'publish.yml', from: '      repair:\n', to: '      reviewer:\n        type: string\n      repair:\n' }], /publish\.yml: names a reviewer outside a comment/));
-  test('C-WF11 refuses the id as a literal in a workflow', () => refuses('C-WF11', [{ path: 'tools/reviewer.json', text: '{"reviewerId": 98765432}\n' }, { file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: '    timeout-minutes: 30\n    env:\n      X: 98765432\n' }], /resign\.yml: holds the reviewer id 98765432/));
-  test('C-WF11 refuses the id as a literal in a tool', () => refuses('C-WF11', [{ path: 'tools/reviewer.json', text: '{"reviewerId": 98765432}\n' }, { path: 'tools/approved-base.mjs', from: '// tools/approved-base.mjs:', to: 'const ID = 98765432;\n// tools/approved-base.mjs:' }], /tools\/approved-base\.mjs: holds the reviewer id 98765432/));
-  test('C-WF11 refuses a tool that reads the reviewer file itself', () => refuses('C-WF11', [{ path: 'tools/approved-base.mjs', from: '// tools/approved-base.mjs:', to: "const F = 'tools/reviewer.json';\n// tools/approved-base.mjs:" }], /tools\/approved-base\.mjs: names the reviewer file or its key/));
+  test('C-WF11 refuses a user id literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: '    timeout-minutes: 30\n    env:\n      OWNER_ID: 98765432\n' }], /resign\.yml: a user id or login written as a literal \(line \d+\)/));
+  test('C-WF11 refuses an actor compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.actor_id == '98765432' }}\n" }], /resign\.yml: a user id or login written as a literal/));
+  test('C-WF11 refuses a login compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'verify', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.triggering_actor == 'someone' }}\n" }], /publish\.yml: a user id or login written as a literal/));
+  test('C-WF11 refuses a user id compared with a literal in a tool', () => refuses('C-WF11', [ab('const mine = (a) => a.user.id === 98765432;')], /tools\/approved-base\.mjs: a user id or login written as a literal/));
+  test('C-WF11 refuses a literal compared with a user id in a tool', () => refuses('C-WF11', [ab("const mine = (a) => '98765432' == a.user?.id;")], /tools\/approved-base\.mjs: a user id or login written as a literal/));
+  test('C-WF11 refuses a login compared with a literal in a tool', () => refuses('C-WF11', [ab("const mine = (a) => a.user.login === 'someone';")], /tools\/approved-base\.mjs: a user id or login written as a literal/));
+  test('C-WF11 refuses a user id constant in a tool', () => refuses('C-WF11', [ab('const APPROVER_ID = 98765432;')], /tools\/approved-base\.mjs: a user id or login written as a literal/));
+  test('C-WF11 refuses a committed reviewer file', () => refuses('C-WF11', [{ path: 'tools/reviewer.json', text: '{"id": 98765432}\n' }], /tools\/reviewer\.json: a reviewer file/));
+  test('C-WF11 refuses a tool that names a reviewer file or key', () => refuses('C-WF11', [ab("const F = 'tools/reviewer.json';")], /tools\/approved-base\.mjs: names a reviewer file or a reviewer id or login key/));
+  test('C-WF11 refuses a reviewer id key in the documents', () => refuses('C-WF11', [{ path: 'docs/notes.md', text: 'Set reviewer_login: someone in the file.\n' }], /docs\/notes\.md: names a reviewer file or a reviewer id or login key/));
   test('C-WF11 refuses a reviewer argument or environment variable in a tool', () => refuses('C-WF11', [{ path: 'tools/check-envs.mjs', from: '// tools/check-envs.mjs:', to: "const A = process.argv.indexOf('--reviewer');\n// tools/check-envs.mjs:" }], /tools\/check-envs\.mjs: a reviewer argument or environment variable/));
-  test('C-WF11 refuses lib/reviewer.mjs reading the environment', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: 'const E = process.env.X;\n// tools/lib/reviewer.mjs:' }], /tools\/lib\/reviewer\.mjs: reads process\.env or process\.argv/));
-  test('C-WF11 refuses a reviewer file of another shape', () => refuses('C-WF11', [{ path: 'tools/reviewer.json', text: '{"reviewerId": "98765432"}\n' }], /tools\/reviewer\.json/));
+  test('C-WF11 refuses lib/reviewer.mjs reading the environment', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: 'const E = process.env.X;\n// tools/lib/reviewer.mjs:' }], /tools\/lib\/reviewer\.mjs: reads process/));
+  test('C-WF11 refuses lib/reviewer.mjs reading a file', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: "import fs from 'node:fs';\n// tools/lib/reviewer.mjs:" }], /tools\/lib\/reviewer\.mjs: imports node:fs/));
+  test('C-WF11 refuses lib/reviewer.mjs loading code at run time', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: "const m = await import('node:child_process');\n// tools/lib/reviewer.mjs:" }], /tools\/lib\/reviewer\.mjs: loads a module at run time/));
+  test('C-WF11 refuses a missing lib/reviewer.mjs', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', text: null }], /tools\/lib\/reviewer\.mjs: missing/));
 });

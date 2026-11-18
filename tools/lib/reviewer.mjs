@@ -1,52 +1,37 @@
-// tools/lib/reviewer.mjs: the reviewer account's numeric GitHub user id (plan 4.2, "The reviewer account in code"). The only place
-// that reads it: tools/reviewer.json, either at a given commit through `git show <rev>:tools/reviewer.json` (check-envs.mjs and
-// approved-base.mjs, which never read the local checkout) or in the checked-out tree (the workflow tools, which run at github.sha).
-// Never from an argument, an environment variable or an Actions variable (static test C-WF11). The file is exactly
-// {"reviewerId": <positive integer>}; the committed placeholder and any other shape are refused.
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+// tools/lib/reviewer.mjs: the only required reviewer of the environments index and mirror (plan 4.1 "One account", 4.2 "The
+// reviewer in code"). No login or user id is written in the repository: the reviewer is read at run time from GitHub's answer for
+// GET /repos/eve-cyno/plugins/environments/<name>, its one required_reviewers rule. This module reads nothing else, no file, no
+// environment variable and no argument (static rule C-WF11), and it never prints the login or the id: its errors name neither.
+import { REPO, getJson, oneLine } from './github.mjs';
 
-export const REVIEWER_FILE = 'tools/reviewer.json';
-const REV_RE = /^[0-9a-f]{40}$/;
-
-/** { id } from the text of the reviewer file, or { error }. */
-export function parseReviewer(text) {
-  let v;
-  try { v = JSON.parse(text); } catch { return { error: `${REVIEWER_FILE} is not JSON` }; }
-  if (v === null || typeof v !== 'object' || Array.isArray(v)) return { error: `${REVIEWER_FILE} is not an object` };
-  if ('placeholder' in v) {
-    return { error: `${REVIEWER_FILE} holds the placeholder: the owner writes the reviewer account's numeric GitHub user id (docs/RUNBOOK.md, The reviewer account)` };
-  }
-  const keys = Object.keys(v);
-  if (keys.length !== 1 || keys[0] !== 'reviewerId') return { error: `${REVIEWER_FILE} must be exactly {"reviewerId": <id>}` };
-  const id = v.reviewerId;
-  if (!Number.isSafeInteger(id) || id <= 0) return { error: `${REVIEWER_FILE}: reviewerId must be a positive whole number` };
-  return { id };
-}
+/** A GitHub login: 1 to 39 letters, digits and single inner hyphens. */
+export const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /**
- * { id } from the reviewer file as committed at `rev` (40 hex) in the git repository `repoDir`, or { error }. Never rejects. `env`
- * is the environment git runs with (the caller's; this module reads no environment of its own).
+ * { id, login } of the one required reviewer that an environment answer names, or { error }. Fails closed: no rule, two rules, no
+ * reviewer, two reviewers, a team, or a user without a numeric id or a valid login is an error, never a guess.
  */
-export function readReviewerAt(repoDir, rev, env) {
-  if (typeof rev !== 'string' || !REV_RE.test(rev)) return Promise.resolve({ error: `the commit ${JSON.stringify(rev)} is not 40 lower-case hex` });
-  if (env === null || typeof env !== 'object') return Promise.resolve({ error: 'no environment for git was given' });
-  const childEnv = { ...env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) delete childEnv[k];
-  return new Promise((resolve) => {
-    execFile('git', ['-C', repoDir, 'show', `${rev}:${REVIEWER_FILE}`], { env: childEnv, encoding: 'utf8', maxBuffer: 65536, timeout: 30_000, windowsHide: true },
-      (err, stdout) => {
-        if (err) return resolve({ error: `the reviewer file at ${rev} could not be read (${err.code === 'ENOENT' ? 'git not found' : 'git show failed'})` });
-        const r = parseReviewer(stdout);
-        resolve(r.error ? { error: `at ${rev}: ${r.error}` } : r);
-      });
-  });
+export function reviewerOf(doc) {
+  if (!isObj(doc)) return { error: 'the environment answer is not an object' };
+  if (!Array.isArray(doc.protection_rules)) return { error: 'protection_rules is missing' };
+  const rules = doc.protection_rules.filter((r) => isObj(r) && r.type === 'required_reviewers');
+  if (rules.length !== 1) return { error: `${rules.length} required_reviewers rules, expected exactly 1` };
+  const list = Array.isArray(rules[0].reviewers) ? rules[0].reviewers : [];
+  if (list.length !== 1) return { error: `${list.length} required reviewers, expected exactly 1` };
+  const one = list[0];
+  if (!isObj(one) || one.type !== 'User') return { error: `the required reviewer is a ${oneLine(isObj(one) ? one.type : typeof one)}, not a User` };
+  const user = one.reviewer;
+  if (!isObj(user) || !Number.isSafeInteger(user.id) || user.id <= 0) return { error: 'the required reviewer has no numeric user id' };
+  if (typeof user.login !== 'string' || !LOGIN_RE.test(user.login)) return { error: 'the required reviewer has no valid login' };
+  return { id: user.id, login: user.login };
 }
 
-/** { id } from the reviewer file of the checked-out tree at `root`, or { error }. */
-export function readReviewerFile(root) {
-  let text;
-  try { text = fs.readFileSync(path.join(root, REVIEWER_FILE), 'utf8'); } catch (e) { return { error: `${REVIEWER_FILE}: ${e.code ?? e.message}` }; }
-  return parseReviewer(text);
+/** { id, login, doc } for the environment `name` (index or mirror) of eve-cyno/plugins, read now, or { error }. Never rejects. */
+export async function readReviewer(name, opts) {
+  if (name !== 'index' && name !== 'mirror') return { error: `environment ${oneLine(name)} is not index or mirror` };
+  const r = await getJson(`repos/${REPO}/environments/${name}`, opts);
+  if (r.error) return { error: r.error };
+  const who = reviewerOf(r.value);
+  return who.error ? { error: `environment ${name}: ${who.error}` } : { ...who, doc: r.value };
 }

@@ -2,21 +2,22 @@
 // tools/approved-base.mjs: plan 4.5 steps 1 and 2 as a convenience for the reviewer, who still confirms every line on the run pages
 // and against the reviewer's own offline list (docs/RUNBOOK.md). Given the run under review (its commit is <B>), it prints:
 // - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that has an approval of
-//   environment index by the reviewer account (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
+//   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
 //   both concluded success (GET .../actions/runs/<id>/jobs, the run's latest attempt), with one "skip" line for every newer run and
 //   why it does not count;
 // - the compare status of <A> to <B> (GET .../compare/<A>...<B>) and the compare view to read.
-// The reviewer account's id is the one committed at <B> (tools/lib/reviewer.mjs, `git show`), never the local checkout's.
-// Fail closed: any request that fails, or a list that did not come back whole, is an ERROR, never "no approved run".
+// The reviewer is the only required reviewer of environment index, read now from GitHub (tools/lib/reviewer.mjs); no login or id is
+// written in the repository, and this tool prints neither. Fail closed: any request that fails, a list that did not come back whole,
+// or an environment that does not name exactly one reviewer is an ERROR, never "no approved run".
 //
-// Usage: node tools/approved-base.mjs --run <run id> [--repo-dir <git checkout holding <B>>]
+// Usage: node tools/approved-base.mjs --run <run id>
 // Exit 0: <A> found and <B> is ahead of it or identical; 1: NO APPROVAL or ERROR; 2: usage; 3: FIRST PUBLISH (no approved run
 // found; allowed only under the runbook's first-publish rule).
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { HOST, REPO, getAll, getJson, oneLine } from './lib/github.mjs';
-import { readReviewerAt } from './lib/reviewer.mjs';
+import { readReviewer } from './lib/reviewer.mjs';
 
 const R = `repos/${REPO}`;
 const WORKFLOWS = ['publish.yml', 'resign.yml'];
@@ -32,7 +33,7 @@ async function whyNot(run, id, opts) {
   if (!Array.isArray(ap.value)) throw { error: `${R}/actions/runs/${run.id}/approvals: the answer is not a list` };
   const approved = ap.value.some((a) => isObj(a) && a.state === 'approved' && isObj(a.user) && a.user.id === id
     && Array.isArray(a.environments) && a.environments.some((e) => isObj(e) && e.name === 'index'));
-  if (!approved) return 'no approval of index by the reviewer account';
+  if (!approved) return "no approval of index by the environment's reviewer";
   const jobs = await getAll(`${R}/actions/runs/${run.id}/jobs?per_page=100`, 'jobs', opts);
   if (jobs.error) throw jobs;
   for (const name of ['sign', 'upload']) {
@@ -43,8 +44,8 @@ async function whyNot(run, id, opts) {
   return '';
 }
 
-/** Finds <A> for run `runId`. `repoDir` is a git checkout holding the run's commit; `env` the environment gh and git run with. */
-export async function approvedBase({ runId, repoDir, env }) {
+/** Finds <A> for run `runId`. `env` is the environment gh runs with. */
+export async function approvedBase({ runId, env }) {
   const lines = [];
   const done = (code, line) => { if (line) lines.push(line); return { code, lines }; };
   const opts = { env };
@@ -59,9 +60,9 @@ export async function approvedBase({ runId, repoDir, env }) {
     const B = u.head_sha;
     lines.push(`B ${B} from ${label(u)}`);
 
-    const reviewer = await readReviewerAt(repoDir, B, env);
-    if (reviewer.error) return done(1, `ERROR: ${reviewer.error}`);
-    lines.push(`reviewer account id ${reviewer.id} (committed at ${B})`);
+    const reviewer = await readReviewer('index', opts);
+    if (reviewer.error) return done(1, `ERROR: ${oneLine(reviewer.error)}`);
+    lines.push("reviewer: the only required reviewer of environment index, read now (login and id not printed)");
 
     const runs = [];
     for (const wf of WORKFLOWS) {
@@ -84,7 +85,7 @@ export async function approvedBase({ runId, repoDir, env }) {
 
       const A = run.head_sha;
       lines.push(`A ${A} from ${label(run)}: ${oneLine(run.html_url ?? '')}`);
-      lines.push('Confirm on that run page that the index approval shown is the reviewer account\'s own, and that A is the newest entry');
+      lines.push('Confirm on that run page that the index approval shown is your own, and that A is the newest entry');
       lines.push('of your own list with a successful sign and upload.');
       const cmp = await getJson(`${R}/compare/${A}...${B}`, opts);
       if (cmp.error) throw cmp;
@@ -96,7 +97,7 @@ export async function approvedBase({ runId, repoDir, env }) {
       lines.push(`Read every change outside entries/** and revoked.json: https://${HOST}/${REPO}/compare/${A}...${B}`);
       return done(0);
     }
-    return done(3, 'FIRST PUBLISH: no other run of publish.yml or resign.yml has an approval of index by the reviewer account and '
+    return done(3, "FIRST PUBLISH: no other run of publish.yml or resign.yml has an approval of index by the environment's reviewer and "
       + 'successful sign and upload jobs. Treat <B> as a first publish only while your own list has no entry with a successful upload; '
       + 'otherwise this is NO APPROVAL (runs or approvals may have been deleted).');
   } catch (e) {
@@ -104,12 +105,12 @@ export async function approvedBase({ runId, repoDir, env }) {
   }
 }
 
-const USAGE = 'usage: node tools/approved-base.mjs --run <run id> [--repo-dir <git checkout>]';
+const USAGE = 'usage: node tools/approved-base.mjs --run <run id>';
 
 async function main(argv) {
   let a;
   try {
-    a = parseArgs({ args: argv, strict: true, allowPositionals: false, options: { run: { type: 'string' }, 'repo-dir': { type: 'string' } } }).values;
+    a = parseArgs({ args: argv, strict: true, allowPositionals: false, options: { run: { type: 'string' } } }).values;
   } catch (e) {
     process.stderr.write(`${oneLine(e.message)}\n${USAGE}\n`);
     return 2;
@@ -118,7 +119,7 @@ async function main(argv) {
     process.stderr.write(`--run must be a workflow run id\n${USAGE}\n`);
     return 2;
   }
-  const r = await approvedBase({ runId: Number(a.run), repoDir: path.resolve(a['repo-dir'] ?? '.'), env: process.env });
+  const r = await approvedBase({ runId: Number(a.run), env: process.env });
   process.stdout.write(`${r.lines.join('\n')}\n`);
   return r.code;
 }

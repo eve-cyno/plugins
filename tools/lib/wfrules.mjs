@@ -4,7 +4,6 @@
 // files only; they run nothing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseReviewer } from './reviewer.mjs';
 import { parseYaml } from './yamlsub.mjs';
 
 /** The three workflows and their only triggers (C-WF1). */
@@ -394,64 +393,81 @@ function cwf10(ws) {
   return p;
 }
 
-/** The tool sources C-WF11 reads: every file under tools/ except the tests, with its path relative to the root. */
-function toolSources(root) {
+/**
+ * The files whose names match `re`, with their paths relative to the root: under the folder `rel` and its subfolders (tools/test
+ * and node_modules aside), or with `rel` '' the files at the root only.
+ */
+function filesUnder(root, rel, re) {
   const out = [];
-  const walk = (rel) => {
+  const walk = (r) => {
     let ents;
-    try { ents = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { return; }
+    try { ents = fs.readdirSync(path.join(root, r), { withFileTypes: true }); } catch { return; }
     for (const e of ents.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      const r = `${rel}/${e.name}`;
-      if (e.isDirectory()) { if (r !== 'tools/test' && e.name !== 'node_modules') walk(r); continue; }
-      if (e.isFile() && /\.(?:mjs|cjs|js|json|sh)$/.test(e.name)) out.push({ rel: r, text: fs.readFileSync(path.join(root, r), 'utf8') });
+      const q = r ? `${r}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (r && q !== 'tools/test' && e.name !== 'node_modules') walk(q); continue; }
+      if (e.isFile() && re.test(e.name)) out.push({ rel: q, text: fs.readFileSync(path.join(root, q), 'utf8') });
     }
   };
-  walk('tools');
+  walk(rel);
   return out;
 }
 
-const REVIEWER_FILE_PATH = 'tools/reviewer.json';
-/** The only files that may name the reviewer file or its key: the reader, and this rule. */
-const REVIEWER_READERS = new Set(['tools/lib/reviewer.mjs', 'tools/lib/wfrules.mjs']);
+const RULE_FILE = 'tools/lib/wfrules.mjs';
+const READER = 'tools/lib/reviewer.mjs';
+/** A name that stores a reviewer: a reviewer file, or a reviewer id or login key. */
+const REVIEWER_KEY_RE = /reviewer[^/\s]*\.json|reviewer[_-]?(?:id|login)\b/i;
 const ARG_OR_ENV_RES = [/--reviewer/i, /REVIEWER/, /(?:process\.env|\benv)\s*(?:\?\.|\.|\[\s*['"`])\s*[A-Za-z0-9_]*reviewer/i];
+/** A login in code: a `.login`, or an Actions actor. */
+const WHO_RE = String.raw`(?:[\w$.?]*\.login\b|\b(?:github\.)?(?:actor|triggering_actor)\b)`;
+/** A quoted literal that is not one of typeof's answers. */
+const QUOTED_RE = String.raw`["'](?!(?:string|number|object|undefined|boolean|function|bigint|symbol)["'])[^"'\n]+["']`;
+/**
+ * A user id or login written as a literal: a name for a user's, actor's, owner's, approver's or reviewer's id or login given or
+ * compared with a literal, a `.id` or a `.login` (or an Actions actor) compared with one, either way round.
+ */
+const LITERAL_USER_RES = [
+  /\b(?:user|actor|owner|approver|reviewer|login)[_-]?id["']?\s*(?:[:=]|[!=]==?)\s*["']?[0-9]+/i,
+  /\.id\s*[!=]==?\s*["']?[0-9]+|["']?[0-9]+["']?\s*[!=]==?\s*[A-Za-z_$][\w$.?]*\.id\b/,
+  new RegExp(String.raw`${WHO_RE}\s*[!=]==?\s*${QUOTED_RE}|${QUOTED_RE}\s*[!=]==?\s*${WHO_RE}`),
+];
 /** A YAML line without its comment (a `#` at the start or after whitespace). */
 const uncommented = (line) => line.replace(/(^|\s)#.*$/, '');
 
 /**
- * C-WF11: the reviewer account's id comes only from tools/reviewer.json, read by tools/lib/reviewer.mjs. No workflow names a
- * reviewer outside a comment (no input, variable or secret); no other tool names the file or its key, or takes a reviewer argument
- * or environment variable; reviewer.mjs reads neither process.env nor process.argv; the id itself appears in no workflow and no
- * other tool; the file is the committed placeholder or exactly {"reviewerId": <positive integer>}.
+ * C-WF11 (plan 4.1, 4.2): no reviewer is written in the repository; the tools read it at run time from the environments'
+ * protection rules (tools/lib/reviewer.mjs). No workflow names a reviewer outside a comment (no input, variable or secret); no
+ * workflow or tool writes a user id or login as a literal; no tool takes a reviewer argument or environment variable; there is no
+ * reviewer file, and no tool, workflow or document names one or a reviewer id or login key; tools/lib/reviewer.mjs exists, imports
+ * only ./github.mjs and reads neither process nor a module loaded at run time. A static rule cannot know the real login and id:
+ * tools/check-envs.mjs looks for them in every path, file and commit at the run's commit (C-ENV1).
  */
 function cwf11(ws) {
   const p = [...ws.errors];
   for (const f of ws.files) {
     const w = ws.wf[f];
     if (!w) continue;
-    w.text.split('\n').forEach((l, i) => { if (/reviewer/i.test(uncommented(l))) p.push(`${f}: names a reviewer outside a comment (line ${i + 1})`); });
+    w.text.split('\n').forEach((l, i) => {
+      const code = uncommented(l);
+      if (/reviewer/i.test(code)) p.push(`${f}: names a reviewer outside a comment (line ${i + 1})`);
+      if (LITERAL_USER_RES.some((re) => re.test(code))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
+    });
+    if (REVIEWER_KEY_RE.test(w.text)) p.push(`${f}: names a reviewer file or a reviewer id or login key`);
   }
-  const tools = toolSources(ws.root);
+  const tools = filesUnder(ws.root, 'tools', /\.(?:mjs|cjs|js|json|sh)$/);
   for (const { rel, text } of tools) {
-    if (rel === REVIEWER_FILE_PATH || rel.startsWith('tools/test/')) continue;
-    if (!REVIEWER_READERS.has(rel)) {
-      if (/reviewer\.json|reviewerId/.test(text)) p.push(`${rel}: names the reviewer file or its key (only tools/lib/reviewer.mjs reads it)`);
-      if (ARG_OR_ENV_RES.some((re) => re.test(text))) p.push(`${rel}: a reviewer argument or environment variable`);
-    }
-    if (rel === 'tools/lib/reviewer.mjs' && /process\s*\.\s*(?:env|argv)|process\s*\[/.test(text)) p.push(`${rel}: reads process.env or process.argv`);
+    if (/(^|\/)reviewer[^/]*\.json$/i.test(rel)) { p.push(`${rel}: a reviewer file (the reviewer is read from the environments, never committed)`); continue; }
+    if (rel === RULE_FILE) continue;
+    if (REVIEWER_KEY_RE.test(text)) p.push(`${rel}: names a reviewer file or a reviewer id or login key`);
+    if (ARG_OR_ENV_RES.some((re) => re.test(text))) p.push(`${rel}: a reviewer argument or environment variable`);
+    if (LITERAL_USER_RES.some((re) => re.test(text))) p.push(`${rel}: a user id or login written as a literal`);
   }
-  if (!tools.some((t) => t.rel === 'tools/lib/reviewer.mjs')) p.push('tools/lib/reviewer.mjs: missing');
-  const file = tools.find((t) => t.rel === REVIEWER_FILE_PATH);
-  if (!file) return [...p, `${REVIEWER_FILE_PATH}: missing`];
-  let v;
-  try { v = JSON.parse(file.text); } catch { return [...p, `${REVIEWER_FILE_PATH}: not JSON`]; }
-  const isPlaceholder = isMap(v) && same(sorted(keys(v)), ['placeholder', 'reviewerId']) && v.reviewerId === 0 && typeof v.placeholder === 'string'
-    && v.placeholder.startsWith('PLACEHOLDER');
-  if (isPlaceholder) return p;
-  const r = parseReviewer(file.text);
-  if (r.error) return [...p, `${REVIEWER_FILE_PATH}: neither the placeholder nor a reviewer id: ${r.error}`];
-  const idRe = new RegExp(`(?<![0-9])${r.id}(?![0-9])`);
-  for (const f of ws.files) if (ws.wf[f] && idRe.test(ws.wf[f].text)) p.push(`${f}: holds the reviewer id ${r.id}`);
-  for (const { rel, text } of tools) if (rel !== REVIEWER_FILE_PATH && idRe.test(text)) p.push(`${rel}: holds the reviewer id ${r.id}`);
+  const docs = [...filesUnder(ws.root, '', /\.(?:md|json)$/), ...filesUnder(ws.root, 'docs', /\.md$/)];
+  for (const { rel, text } of docs) if (REVIEWER_KEY_RE.test(text)) p.push(`${rel}: names a reviewer file or a reviewer id or login key`);
+  const reader = tools.find((t) => t.rel === READER);
+  if (!reader) return [...p, `${READER}: missing`];
+  for (const m of reader.text.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)) if (m[1] !== './github.mjs') p.push(`${READER}: imports ${m[1]} (it reads the reviewer from API data only)`);
+  if (/\bprocess\b/.test(reader.text)) p.push(`${READER}: reads process (no environment, argument or working folder)`);
+  if (/\bimport\s*\(|\brequire\s*\(/.test(reader.text)) p.push(`${READER}: loads a module at run time`);
   return p;
 }
 

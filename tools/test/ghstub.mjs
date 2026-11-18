@@ -1,7 +1,7 @@
-// A stub `gh` for the tests of tools/check-envs.mjs and tools/approved-base.mjs. It is written into a temp folder that is the only
-// entry of PATH the tools see, so the real gh is never found: no network, no token. It answers `<method> <endpoint>` (the last
-// argument) from a routes file (STUB_ROUTES) and appends its arguments to a log (STUB_LOG). The real git is linked beside it, because
-// the tools read the reviewer file with `git show <rev>:<path>`.
+// A stub `gh` for the tests of tools/check-envs.mjs, tools/approved-base.mjs and tools/lib/reviewer.mjs. It is written into a temp
+// folder that is the only entry of PATH the tools see, so the real gh is never found: no network, no token. It answers
+// `<method> <endpoint>` (the last argument) from a routes file (STUB_ROUTES) and appends its arguments to a log (STUB_LOG). The real
+// git is linked beside it, because check-envs.mjs reads the run's commit with git to look for the reviewer's login and id.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -50,26 +50,58 @@ const GIT_ENV = {
 };
 
 /**
- * A temp git repository whose commit <B> holds tools/reviewer.json with `atB` (text); `working` (text), when given, is committed on
- * top of <B> and left in the working tree, so a tool that reads HEAD or the checkout instead of <B> sees it. Returns { dir, rev }.
+ * A temp git repository whose commit <B> holds `files` ({ path: text }), made with `message` and the author `author` ({ name, email },
+ * a neutral test identity by default); `later` ({ path: text }), when given, is committed on top of <B> and left in the working tree,
+ * so a tool that reads HEAD or the checkout instead of <B> sees it. Returns { dir, rev }.
  */
-export function repoWithReviewer(atB, working, temps) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rv-repo-'));
+export function repoWith(files, temps, { message = 'B', author, later } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'b-repo-'));
   temps.push(dir);
+  const env = { ...process.env, ...GIT_ENV, ...(author ? { GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email } : {}) };
   const git = (...a) => {
-    const r = spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: { ...process.env, ...GIT_ENV } });
+    const r = spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8', env });
     if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
+  const write = (tree) => {
+    for (const [p, text] of Object.entries(tree)) {
+      fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true });
+      fs.writeFileSync(path.join(dir, p), text);
+    }
+  };
   git('init', '-q');
-  fs.mkdirSync(path.join(dir, 'tools'));
-  fs.writeFileSync(path.join(dir, 'tools', 'reviewer.json'), atB);
+  write(files);
   git('add', '.');
-  git('commit', '-q', '-m', 'B');
+  git('commit', '-q', '-m', message);
   const rev = git('rev-parse', 'HEAD');
-  if (working !== undefined) {
-    fs.writeFileSync(path.join(dir, 'tools', 'reviewer.json'), working);
-    git('commit', '-q', '-am', 'later');
+  if (later) {
+    write(later);
+    git('add', '.');
+    git('commit', '-q', '-m', 'later');
   }
   return { dir, rev };
 }
+
+/** The test reviewer: the one required reviewer of both environments in the canned answers. */
+export const REVIEWER = Object.freeze({ id: 987654, login: 'reviewer-account' });
+
+/**
+ * An environment as GET /repos/{owner}/{repo}/environments/{name} answers it, set up as docs/RUNBOOK.md says (one required reviewer,
+ * prevent_self_review false, admin bypass off, selected branches); `o` overrides single parts.
+ */
+export function envDoc(name, o = {}) {
+  return {
+    id: name === 'index' ? 7 : 8, node_id: 'EN_x', name, url: `https://api.github.com/repos/eve-cyno/plugins/environments/${name}`,
+    html_url: `https://github.com/eve-cyno/plugins/deployments/activity_log?environments_filter=${name}`,
+    created_at: '2026-11-18T10:00:00Z', updated_at: '2026-11-18T10:00:00Z',
+    can_admins_bypass: 'bypass' in o ? o.bypass : false,
+    protection_rules: o.rules ?? [
+      { id: 11, node_id: 'GA_r', prevent_self_review: 'selfReview' in o ? o.selfReview : false, type: 'required_reviewers',
+        reviewers: o.reviewers ?? [{ type: 'User', reviewer: { login: REVIEWER.login, id: REVIEWER.id, type: 'User', site_admin: false } }] },
+      { id: 12, node_id: 'GA_b', type: 'branch_policy' },
+    ],
+    deployment_branch_policy: 'dbp' in o ? o.dbp : { protected_branches: false, custom_branch_policies: true },
+  };
+}
+/** A User entry of a required_reviewers rule. */
+export const userReviewer = (id, login = `user-${id}`) => ({ type: 'User', reviewer: { login, id, type: 'User' } });
