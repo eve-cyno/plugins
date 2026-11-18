@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
 
@@ -211,7 +211,7 @@ jobs:
           echo "checked out: $(ls "$keys" | tr '\n' ' ')"
 
       - name: Download the head
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: head
           path: ${{ runner.temp }}/head
@@ -330,7 +330,7 @@ jobs:
           [ "${GITHUB_RUN_ATTEMPT:-}" = 1 ] || { echo "::error::this is attempt ${GITHUB_RUN_ATTEMPT:-?} of the run; a re-run never builds, signs or uploads: dispatch a new run"; exit 1; }
 
       - name: Download the head
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: head
           path: ${{ runner.temp }}/head
@@ -435,7 +435,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
 
@@ -446,32 +446,32 @@ jobs:
         run: node tools/vendor-host.mjs --verify
 
       - name: Download the head
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: head
           path: ${{ runner.temp }}/in
 
       - name: Download the signature
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signature
           path: ${{ runner.temp }}/in
 
       - name: Download the catalog
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: catalog
           path: ${{ runner.temp }}/in/catalog
 
       - name: Download the archive list
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: archives.json
           path: ${{ runner.temp }}/in
 
       - name: Download the throwaway public key (target test)
         if: ${{ inputs.target == 'test' }}
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: test-key
           path: ${{ runner.temp }}/in
@@ -522,7 +522,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
 
@@ -534,7 +534,7 @@ jobs:
 
       - name: Download the throwaway public key (target test)
         if: ${{ inputs.target == 'test' }}
-        uses: actions/download-artifact@TODO-PIN # TODO-PIN: the 40-hex commit of a reviewed release; no SHA could be verified offline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: test-key
           path: ${{ runner.temp }}/in

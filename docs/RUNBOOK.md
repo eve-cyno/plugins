@@ -168,9 +168,21 @@ Three steps are the owner's alone and come first; each is repeated in the list b
 2. `tools/reviewer.json` holds the reviewer account's real id (merged through a pull request; never the placeholder).
 3. The token decision is made. Under T1: the token is swapped, `tools/check-envs.mjs` passes, and the probe table above is filled in.
 4. The secrets and variables are set (owner only).
-5. **Pinned actions.** Every `uses:` still marked `@TODO-PIN` (`actions/setup-node`, `actions/download-artifact`) gets the full
-   40-hex commit SHA of a reviewed release, with the version in a comment, and `EVECYNO_PIN_STRICT=1 npm test` passes (by default the
-   static tests only report the open pins as a todo).
+5. **Pinned actions** (done 2026-11-18). Every `uses:` names the full 40-hex commit of a release tag, with the tag as a trailing
+   comment, and the static rule C-WF2 fails on anything else (a tag, a short SHA, a placeholder, a missing tag comment, or one action
+   pinned two ways). The pins, read anonymously from the public repositories (`git ls-remote https://github.com/actions/<name>
+   'refs/tags/v*'`, a shallow fetch of the tag to confirm it names a commit, and the release list for the date and the prerelease
+   flag), each the newest stable release that was at least two weeks old:
+
+   | Action | Tag | Commit | Released |
+   |---|---|---|---|
+   | `actions/checkout` | `v7.0.1` | `3d3c42e5aac5ba805825da76410c181273ba90b1` | 2026-07-20 |
+   | `actions/setup-node` | `v7.1.0` | `949feb2413d6458794dcd2491c4babbbce0c15c1` | 2026-10-08 |
+   | `actions/upload-artifact` | `v7.0.2` | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 |
+   | `actions/download-artifact` | `v8.0.2` | `9000827ccba6bdab643e8b6fd33ac0654aef8333` | 2026-10-07 |
+
+   A new pin is read the same way and changes every `uses:` line of that action in one commit; the reviewer reads it in the compare
+   view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
    `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass.
 7. **Free tier.** The R2 free-tier table (storage, Class A, Class B headroom) in the infra repository's hosting runbook is filled in

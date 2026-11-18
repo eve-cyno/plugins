@@ -9,11 +9,10 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { YamlSubsetError, parseYaml } from '../lib/yamlsub.mjs';
-import { GUARD_STEP, MAIN_HEAD_STEP, RULES, jobLines, loadWorkflows, todoPins } from '../lib/wfrules.mjs';
+import { GUARD_STEP, MAIN_HEAD_STEP, RULES, jobLines, loadWorkflows } from '../lib/wfrules.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WF_DIR = path.join(ROOT, '.github', 'workflows');
-const STRICT_PINS = process.env.EVECYNO_PIN_STRICT === '1';
 
 const temps = [];
 after(() => { for (const t of temps) fs.rmSync(t, { recursive: true, force: true }); });
@@ -155,21 +154,18 @@ describe('C-WF1 triggers', () => {
 });
 
 describe('C-WF2 actions pinned by full SHA', () => {
-  test('C-WF2 the real workflows pass (TODO-PIN is reported below, never accepted as a pin)', () => assert.deepEqual(RULES['C-WF2'](real), []));
+  test('C-WF2 the real workflows pass', () => assert.deepEqual(RULES['C-WF2'](real), []));
   test('C-WF2 refuses a tag', () => refuses('C-WF2', [{ file: 'check.yml', job: 'checks', from: '@3d3c42e5aac5ba805825da76410c181273ba90b1', to: '@v7' }], /not pinned/));
   test('C-WF2 refuses a short SHA', () => refuses('C-WF2', [{ file: 'resign.yml', job: 'check', from: '@3d3c42e5aac5ba805825da76410c181273ba90b1', to: '@3d3c42e' }], /not pinned/));
   test('C-WF2 refuses upper-case hex', () => refuses('C-WF2', [{ file: 'publish.yml', job: 'sign', from: 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9', to: 'actions/upload-artifact@CF430E030DDBB5B0ABF93D22962F4752F3646CD9' }], /not pinned/));
   test('C-WF2 refuses a local action', () => refuses('C-WF2', [{ file: 'check.yml', job: 'checks', from: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', to: './.github/actions/checkout' }], /not pinned/));
   test('C-WF2 refuses a docker image', () => refuses('C-WF2', [{ file: 'check.yml', job: 'checks', from: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', to: 'docker://alpine:3' }], /not pinned/));
   test('C-WF2 refuses a uses: the structure did not see', () => refuses('C-WF2', [{ file: 'check.yml', from: '\njobs:\n', to: '\nx: |\n  uses: a/b@v1\njobs:\n' }], /uses: lines/));
-  test('C-WF2 a TODO-PIN is reported with its place', () => {
-    const ws = mutant([{ file: 'check.yml', job: 'checks', from: '@3d3c42e5aac5ba805825da76410c181273ba90b1', to: '@TODO-PIN' }]);
-    assert.ok(todoPins(ws).some((t) => /check\.yml job checks step \d+: actions\/checkout@TODO-PIN/.test(t)), JSON.stringify(todoPins(ws)));
-    assert.deepEqual(RULES['C-WF2'](ws), []);
-  });
-  const todos = todoPins(real);
-  const todo = todos.length > 0 && !STRICT_PINS ? `${todos.length} uses: wait for a verified SHA (EVECYNO_PIN_STRICT=1 fails): ${todos.join('; ')}` : false;
-  test('C-WF2 no TODO-PIN remains', { todo }, () => assert.deepEqual(todos, []));
+  test('C-WF2 refuses a placeholder instead of a SHA', () => refuses('C-WF2', [{ file: 'check.yml', job: 'checks', from: '@3d3c42e5aac5ba805825da76410c181273ba90b1', to: '@TODO-PIN' }], /check\.yml job checks step \d+: uses "actions\/checkout@TODO-PIN" is not pinned/));
+  test('C-WF2 refuses a pin without its release tag comment', () => refuses('C-WF2', [{ file: 'publish.yml', job: 'build', from: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0', to: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1' }], /publish\.yml line \d+: a uses: line must be written/));
+  test('C-WF2 refuses a comment that is not a release tag', () => refuses('C-WF2', [{ file: 'resign.yml', job: 'upload', from: 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2', to: 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8', all: true }], /resign\.yml line \d+: a uses: line must be written/));
+  test('C-WF2 refuses one action pinned to two commits', () => refuses('C-WF2', [{ file: 'resign.yml', job: 'verify', from: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', to: 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' }], /actions\/setup-node is pinned 2 ways/));
+  test('C-WF2 refuses one commit under two tags', () => refuses('C-WF2', [{ file: 'check.yml', job: 'checks', from: '@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1', to: '@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0' }], /actions\/checkout is pinned 2 ways/));
 });
 
 describe('C-WF3 no expressions inside run', () => {

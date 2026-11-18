@@ -47,7 +47,8 @@ const SIGN_NEEDS = Object.freeze({ 'publish.yml': 'build', 'resign.yml': 'head' 
 const SIGN_KEYS = ['env', 'environment', 'if', 'needs', 'permissions', 'runs-on', 'steps', 'timeout-minutes'];
 const NO_CODE_RE = /\b(npm|npx|node|aws|corepack|yarn|pnpm)\b/;
 const PIN_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}$/;
-const TODO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+@TODO-PIN$/;
+/** A `uses:` line as C-WF2 wants it written: the action, its 40-hex commit and the release tag as a trailing comment. */
+const USES_LINE_RE = /^ *(?:- +)?uses: +([A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?)@([0-9a-f]{40}) +# (v[0-9]+\.[0-9]+\.[0-9]+)$/;
 export const UPLOAD_IF = "!cancelled() && needs.build.result == 'success' && ((inputs.target == 'production' && needs.sign.result == 'success') || (inputs.target == 'test' && needs.sign-test.result == 'success'))";
 
 const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -122,11 +123,6 @@ function usesOf(ws) {
   return out;
 }
 
-/** Every `uses:` still marked TODO-PIN (an action whose commit SHA could not be verified yet), with its place. */
-export function todoPins(ws) {
-  return usesOf(ws).filter((u) => typeof u.uses === 'string' && TODO_RE.test(u.uses)).map((u) => `${u.at}: ${u.uses}`);
-}
-
 /** C-WF1: exactly the three workflow files, each with exactly its triggers; never pull_request_target, workflow_run, issue_comment. */
 function cwf1(ws) {
   const p = [...ws.errors];
@@ -147,15 +143,33 @@ function cwf1(ws) {
   return [...new Set(p)];
 }
 
-/** C-WF2: every `uses:` names a commit by its full 40-hex SHA (a TODO-PIN is reported by todoPins, never accepted as a pin). */
+/**
+ * C-WF2: every `uses:` names a commit by its full 40-hex SHA, written `owner/repo@<sha> # vX.Y.Z` (the release tag the SHA was read
+ * from, docs/RUNBOOK.md "Pinned actions"), and every use of one action names the same commit and tag. Nothing else is a pin: a tag,
+ * a branch, a short SHA, a local action, a docker image or a placeholder fails.
+ */
 function cwf2(ws) {
   const p = [...ws.errors];
   const all = usesOf(ws);
   for (const u of all) {
-    if (typeof u.uses !== 'string' || !(PIN_RE.test(u.uses) || TODO_RE.test(u.uses))) p.push(`${u.at}: uses ${JSON.stringify(u.uses)} is not pinned to a 40-hex commit SHA`);
+    if (typeof u.uses !== 'string' || !PIN_RE.test(u.uses)) p.push(`${u.at}: uses ${JSON.stringify(u.uses)} is not pinned to a 40-hex commit SHA`);
   }
   let lines = 0;
-  for (const w of Object.values(ws.wf)) lines += (w.text.match(/^ *(?:- +)?uses:/gm) ?? []).length;
+  const pins = new Map();
+  for (const [f, w] of Object.entries(ws.wf)) {
+    w.lines.forEach((l, i) => {
+      if (!/^ *(?:- +)?uses:/.test(l)) return;
+      lines++;
+      const m = USES_LINE_RE.exec(l);
+      if (!m) { p.push(`${f} line ${i + 1}: a uses: line must be written owner/repo@<40-hex commit> # vX.Y.Z`); return; }
+      const pin = `${m[2]} # ${m[3]}`;
+      if (!pins.has(m[1])) pins.set(m[1], new Map());
+      if (!pins.get(m[1]).has(pin)) pins.get(m[1]).set(pin, `${f} line ${i + 1}`);
+    });
+  }
+  for (const [action, seen] of pins) {
+    if (seen.size > 1) p.push(`${action} is pinned ${seen.size} ways (one action, one commit and tag): ${[...seen].map(([pin, at]) => `${pin} at ${at}`).join('; ')}`);
+  }
   if (lines !== all.length) p.push(`the files hold ${lines} uses: lines, the workflow structure ${all.length}`);
   return p;
 }
