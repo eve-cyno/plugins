@@ -1,5 +1,3 @@
-DRAFT: pending owner approval of F1-F11 (Q5); do not publish
-
 # EVE-Cyno plugin index: review policy
 
 This repository is the public list of plugins and theme packages the EVE-Cyno desktop app can install from its Marketplace. The app
