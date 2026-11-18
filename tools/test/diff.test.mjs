@@ -1,7 +1,7 @@
 // DF-*: C10, C11, C14, C17 (tools/lib/diff.mjs). Each failing case is the proof of the line it guards (mutants: see the commit message).
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { checkEntry, enginesReach, permissionsDiff } from '../lib/diff.mjs';
+import { checkEntry, enginesReach, permissionsDiff, sameEntry } from '../lib/diff.mjs';
 
 const ver = (version, permissions = {}, extra = {}) => ({ version, engines: '^1.20.0', permissions, ...extra });
 const entry = (versions, extra = {}) => ({ id: 'dev.example.intel', name: 'Intel Board', author: 'Example Author', maintainers: ['alice'], versions, ...extra });
@@ -61,10 +61,23 @@ describe('entry flags (C10, C11, C14, C17)', () => {
     assert.deepEqual(checkEntry(entry([ver('1.0.0')], { author: 'Someone Else' }), base, { prAuthor: 'alice' }).flags, ['identity']);
     assert.ok(checkEntry(entry([ver('1.0.0')], { name: 'Intel Board 2' }), base, { prAuthor: 'alice' }).flags.includes('identity'));
   });
-  test('DF-maintainer: a PR author outside the base maintainers is flagged identity, case-insensitively inside', () => {
+  test('DF-maintainer: a PR author outside the base maintainers who changes the entry is flagged identity, case-insensitively inside', () => {
     const base = entry([ver('1.0.0')]);
-    assert.deepEqual(checkEntry(base, base, { prAuthor: 'mallory' }).flags, ['identity']);
-    assert.deepEqual(checkEntry(base, base, { prAuthor: 'ALICE' }).flags, []);
+    const head = entry([ver('1.1.0'), ver('1.0.0')]);
+    assert.deepEqual(checkEntry(head, base, { prAuthor: 'mallory' }).flags, ['identity']);
+    assert.deepEqual(checkEntry(head, base, { prAuthor: 'ALICE' }).flags, []);
+    assert.deepEqual(checkEntry(entry([ver('1.0.0')], { summary: 'x' }), base, { prAuthor: 'mallory' }).flags, ['identity'], 'any field');
+  });
+  test('DF-untouched: an entry whose JSON the PR does not change needs no maintainer (key order aside)', () => {
+    const base = entry([ver('1.0.0')]);
+    assert.deepEqual(checkEntry(base, base, { prAuthor: 'mallory' }).flags, []);
+    const reordered = Object.fromEntries(Object.entries(structuredClone(base)).reverse());
+    reordered.versions = reordered.versions.map(v => Object.fromEntries(Object.entries(v).reverse()));
+    assert.deepEqual(checkEntry(reordered, base, { prAuthor: 'mallory' }).flags, []);
+    assert.equal(sameEntry(reordered, base), true);
+    assert.equal(sameEntry(entry([ver('1.0.0', { overlays: true })]), base), false, 'a nested value');
+    assert.equal(sameEntry(entry([ver('1.0.0'), ver('0.9.0')]), base), false, 'an array length');
+    assert.equal(sameEntry(base, null), false);
   });
   test('DF-first-party: setting firstParty is flagged', () => {
     const base = entry([ver('1.0.0')], { maintainers: [] });

@@ -9,8 +9,9 @@
 //   review  --base <dir> --head <dir> [--author <login>] [--summary <file>] [--archive-cache <dir>]   check.yml, job review
 //     The review classes: first-party (C3), escalation and identity (C10: the host's delta of requested permissions, background turned
 //     on, name or author changed; the background flag and optional permissions read from each archive's plugin.json), new (C11),
-//     maintenance (C13: anything changed but entries/<id>.json and revoked.json), identity (C14: the author is not a maintainer of the
-//     base entry), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes> when any is set.
+//     maintenance (C13: anything changed but entries/<id>.json and revoked.json), identity (C14: the author is not a maintainer of a
+//     base entry the pull request changes or removes), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes>
+//     when any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
 //     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
@@ -254,7 +255,7 @@ async function entryFlags(head, base) {
     }
     const why = {
       new: 'a new entry (no entry of this id on the base)', escalation: 'a new version asks for more than the version before it, or turns background on',
-      identity: 'the name or the author changed, or the pull request author is not a maintainer of the base entry', 'first-party': 'firstParty set or changed',
+      identity: 'the name or the author changed, or the pull request changes the entry and its author is not a maintainer of the base entry', 'first-party': 'firstParty set or changed',
       engines: 'a new version\'s engines admit no host API major that a released host supports',
     };
     for (const f of r.flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17' }[f], `${e.id}: ${why[f]}`);

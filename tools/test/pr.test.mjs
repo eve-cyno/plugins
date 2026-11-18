@@ -116,6 +116,23 @@ describe('PR fixture suite', () => {
     assert.equal(last(r.stdout), 'NEEDS REVIEW maintenance');
   });
 
+  test('PR-untouched-entry: an entry the pull request does not change needs none of its maintainers', async () => {
+    const B = pluginZip(manifest({ id: 'dev.other.tool', name: 'Other Tool' }));
+    cacheArchive(cache, B);
+    const other = pluginEntry([version('1.0.0', B)], { id: 'dev.other.tool', name: 'Other Tool', maintainers: ['bob'] });
+    const A110 = pluginZip(manifest({ version: '1.1.0' }));
+    cacheArchive(cache, A110);
+    const base = baseTree({ entries: [pluginEntry([version('1.0.0', A100)]), other] });
+    const both = tree({ entries: [pluginEntry([version('1.1.0', A110), version('1.0.0', A100)]), other] });
+    const r = await check('review', base, both, ['--author', 'example-login']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED');
+    const m = await check('review', base, both, ['--author', 'bob']);
+    assert.equal(m.code, 3, m.stdout + m.stderr);
+    assert.match(m.stdout, /^FLAG identity C10 C14 dev\.example\.intel: /m, 'the changed entry still needs one of its maintainers');
+    assert.doesNotMatch(m.stdout, /^FLAG identity C10 C14 dev\.other\.tool/m);
+  });
+
   test('PR-entries-dotfile: entries/.gitattributes is refused at C1 and flagged maintenance by C13', async () => {
     const base = baseTree();
     const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/.gitattributes': '*.json export-ignore\n' } });

@@ -55,6 +55,13 @@ export function checkNames(head, base, others) {
   return out;
 }
 
+/** JSON with the keys of every object sorted, so two parsed entries compare by value, not by the order their files list keys in. */
+const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
+  : typeof v === 'object' && v !== null ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`
+    : JSON.stringify(v));
+/** True when `a` and `b` hold the same JSON value: a pull request that leaves an entry so has not touched it. */
+export const sameEntry = (a, b) => canon(a) === canon(b);
+
 /**
  * All of C3, C10, C11, C14, C17 for one entry. `base` is the entry on the base branch or null, `others` every other entry of the head
  * tree, `prAuthor` the PR's login (null when the check runs without one). Returns { refusals: string[], flags: string[] } with flags
@@ -67,7 +74,8 @@ export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
   if ((head.firstParty === true) !== (base?.firstParty === true)) flags.add('first-party');
   if (base !== null) {
     if (base.name !== head.name || base.author !== head.author) flags.add('identity');
-    if (prAuthor !== null && !(base.maintainers ?? []).some((m) => m.toLowerCase() === prAuthor.toLowerCase())) flags.add('identity');
+    // C14 holds a pull request to the maintainers of each entry it changes; an entry it leaves as it was needs none of them.
+    if (prAuthor !== null && !sameEntry(head, base) && !(base.maintainers ?? []).some((m) => m.toLowerCase() === prAuthor.toLowerCase())) flags.add('identity');
   }
   const known = new Set((base?.versions ?? []).map((v) => v.version));
   const all = [...(base?.versions ?? []), ...head.versions.filter((v) => !known.has(v.version))];
