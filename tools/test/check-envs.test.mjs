@@ -1,13 +1,14 @@
 // Tests of tools/check-envs.mjs (C-ENV1, plan 4.1). GitHub is a stub gh on PATH (ghstub.mjs) that answers from canned bodies shaped
 // like GitHub's REST answers; the run's commit <B> is a temp git repository. The reviewer is read from the environments, never from
-// the repository, and its login and id must appear nowhere at <B>. The probe rule is fail-closed: only HTTP 403 with the exact
-// message "Resource not accessible by personal access token" and an x-ratelimit-remaining above 0 passes, for each of the five probes.
+// the repository, and its login and id must appear nowhere at <B>. The probe rule is fail-closed: a refusal probe passes only on HTTP
+// 403 with the exact message "Resource not accessible by personal access token" and an x-ratelimit-remaining above 0, and the two
+// secrets lists (Secrets and Environments, granted for good on 2026-11-18) only on HTTP 200 with a list of secrets.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { PROBES, PROBE_MESSAGE, checkEnvs } from '../check-envs.mjs';
+import { PROBES, PROBE_ENV, PROBE_MESSAGE, checkEnvs } from '../check-envs.mjs';
 import { REVIEWER, envDoc, makeGhStub, repoWith, stubEnv, userReviewer } from './ghstub.mjs';
 
 const TOOL = fileURLToPath(new URL('../check-envs.mjs', import.meta.url));
@@ -22,16 +23,20 @@ const NAMES_REVIEWER = new RegExp(`${REVIEWER.login}|${REVIEWER.id}`, 'i');
 
 const policies = (list = [{ id: 1, node_id: 'DBP_x', name: 'main', type: 'branch' }]) => [{ total_count: list.length, branch_policies: list }];
 const TEXT = { 200: 'OK', 204: 'No Content', 403: 'Forbidden', 404: 'Not Found', 422: 'Unprocessable Entity', 429: 'Too Many Requests', 502: 'Bad Gateway' };
-/** `gh api -i` output: status line, headers, a blank line, the body. */
-function http(status, message, remaining = '4999') {
+/** `gh api -i` output: status line, headers, a blank line, the body (an empty list of secrets on a 2xx unless `body` is given). */
+function http(status, message, remaining = '4999', body) {
   const head = [`HTTP/2.0 ${status} ${TEXT[status] ?? 'X'}`, 'Content-Type: application/json; charset=utf-8', 'X-Ratelimit-Limit: 5000'];
   if (remaining !== null) head.push(`X-Ratelimit-Remaining: ${remaining}`);
   const ok = status < 300;
-  const body = ok ? '{"total_count":0}' : JSON.stringify({ message, documentation_url: 'https://docs.github.com/rest', status: String(status) });
+  body ??= ok ? '{"total_count":0,"secrets":[]}' : JSON.stringify({ message, documentation_url: 'https://docs.github.com/rest', status: String(status) });
   return { stdout: `${head.join('\r\n')}\r\n\r\n${body}`, exit: ok ? 0 : 1, stderr: ok ? '' : `gh: ${message} (HTTP ${status})\n` };
 }
 const keyOf = (a) => `${(a.find((x) => x.startsWith('--method=')) ?? '').slice(9)} ${a[a.length - 1]}`;
 const probeKey = (pr) => `${pr.method} ${pr.endpoint}`;
+const ENV_GET = `GET ${R}/environments/${PROBE_ENV}`;
+const ENV_PUT = `PUT ${R}/environments/${PROBE_ENV}`;
+const ALLOWED = PROBES.filter((p) => p.expect === 200);
+const DENIED = PROBES.filter((p) => p.expect === 403);
 
 function routes(o = {}) {
   const r = {
@@ -40,13 +45,15 @@ function routes(o = {}) {
     [`GET ${R}/environments/index/deployment-branch-policies?per_page=100`]: o.indexPolicies ?? { stdout: policies() },
     [`GET ${R}/environments/mirror/deployment-branch-policies?per_page=100`]: o.mirrorPolicies ?? { stdout: policies() },
   };
-  for (const pr of PROBES) r[probeKey(pr)] = o.probes?.[pr.key] ?? http(403, PROBE_MESSAGE);
+  for (const pr of PROBES) r[probeKey(pr)] = o.probes?.[pr.key] ?? (pr.expect === 200 ? http(200) : http(403, PROBE_MESSAGE));
+  r[ENV_GET] = o.probeEnvGet ?? http(404, 'Not Found');
   return r;
 }
 
 async function run(o = {}, { repo = good, rev } = {}) {
   const { env, log } = stubEnv(BIN, routes(o), temps);
   const r = await checkEnvs({ rev: rev ?? repo.rev, repoDir: repo.dir, env });
+  assert.equal(r.lines.some((l) => l.startsWith('ALARM')), r.alarms.length > 0, 'every alarm is also an output line');
   return { ...r, text: r.lines.join('\n'), calls: log() };
 }
 const fails = async (o, re, opts) => {
@@ -59,7 +66,7 @@ const fails = async (o, re, opts) => {
 };
 
 describe('C-ENV1 settings', () => {
-  test('CE-pass: both environments right, <B> clean and all five probes refused: PASS; only ids and settings are read', async () => {
+  test('CE-pass: both environments right, <B> clean, the four refusals 403 and the two secrets lists 200: PASS; only ids, settings and secret names are read', async () => {
     const r = await run();
     assert.equal(r.ok, true, r.text);
     assert.match(r.text, /C-ENV1 PASS/);
@@ -68,19 +75,24 @@ describe('C-ENV1 settings', () => {
     for (const a of r.calls) assert.ok(a.includes('--hostname=github.com'), `the host is an argument: ${a}`);
     const secretReads = r.calls.filter((a) => /secrets/.test(a[a.length - 1])).map(keyOf).sort();
     assert.deepEqual(secretReads, [`GET ${R}/actions/secrets`, `GET ${R}/environments/index/secrets`], 'only the two probes name secrets, as lists');
-    for (const pr of PROBES) {
-      const a = r.calls.find((c) => keyOf(c) === probeKey(pr));
-      assert.ok(a.includes('-i'), `${probeKey(pr)} is read with its status line and headers`);
+    for (const k of [...PROBES.map(probeKey), ENV_GET]) {
+      const a = r.calls.find((c) => keyOf(c) === k);
+      assert.ok(a.includes('-i'), `${k} is read with its status line and headers`);
     }
+    for (const pr of ALLOWED) assert.match(r.text, new RegExp(`PASS probe ${pr.name}: GET \\S+ answered HTTP 200 \\(allowed`));
+    for (const pr of DENIED) assert.match(r.text, new RegExp(`PASS probe ${pr.name.replace(/[()]/g, '\\$&')}: ${pr.method} \\S+ answered HTTP 403 "`));
+    assert.deepEqual(r.alarms, []);
   });
-  test('CE-probe-set: exactly the plan\'s five probes, each changing nothing', () => {
-    assert.deepEqual(PROBES.map((p) => [p.key, p.name, p.method, p.endpoint]), [
-      ['admin', 'Administration', 'GET', `${R}/keys`],
-      ['env', 'Environments', 'GET', `${R}/environments/index/secrets`],
-      ['secrets', 'Secrets', 'GET', `${R}/actions/secrets`],
-      ['deploy', 'Deployments (approve)', 'POST', `${R}/actions/runs/1/pending_deployments`],
-      ['actions', 'Actions write', 'DELETE', `${R}/actions/artifacts/1`],
+  test('CE-probe-set: the six probes; Secrets and Environments are allowed (owner 2026-11-18), the other four refused', () => {
+    assert.deepEqual(PROBES.map((p) => [p.key, p.name, p.expect, p.method, p.endpoint]), [
+      ['admin', 'Administration', 403, 'GET', `${R}/keys`],
+      ['env', 'Environments', 200, 'GET', `${R}/environments/index/secrets`],
+      ['secrets', 'Secrets', 200, 'GET', `${R}/actions/secrets`],
+      ['deploy', 'Deployments (approve)', 403, 'POST', `${R}/actions/runs/1/pending_deployments`],
+      ['actions', 'Actions write', 403, 'DELETE', `${R}/actions/artifacts/1`],
+      ['envcreate', 'Administration (create environment)', 403, 'PUT', `${R}/environments/c-env1-probe-denied`],
     ]);
+    assert.equal(PROBE_ENV, 'c-env1-probe-denied');
   });
   test('CE-probe-deploy-body: the approve probe names run 1 and asks to reject, so even a wrongly allowed token approves nothing', async () => {
     const r = await run();
@@ -183,8 +195,37 @@ describe('C-ENV1 the reviewer\'s login and id appear nowhere at <B>', () => {
   });
 });
 
-describe('C-ENV1 the five probes of the agents\' token', () => {
-  for (const pr of PROBES) {
+describe('C-ENV1 the six probes of the agents\' token', () => {
+  test('CE-probe-split: four refusals and two secrets lists, each list read only', () => {
+    assert.deepEqual(DENIED.map((p) => p.key), ['admin', 'deploy', 'actions', 'envcreate']);
+    assert.deepEqual(ALLOWED.map((p) => [p.key, p.method]), [['env', 'GET'], ['secrets', 'GET']]);
+  });
+  for (const pr of ALLOWED) {
+    const at = (answer) => ({ probes: { [pr.key]: answer } });
+    test(`CE-probe-${pr.key}-only-200: HTTP 200 with a list of secrets passes`, async () => {
+      const r = await run(at(http(200, null, '4999', '{"total_count":2,"secrets":[{"name":"A"},{"name":"B"}]}')));
+      assert.equal(r.ok, true, r.text);
+      assert.match(r.text, new RegExp(`PASS probe ${pr.name}: GET ${pr.endpoint} answered HTTP 200 \\(allowed`));
+    });
+    test(`CE-probe-${pr.key}-403-fails: the agents' token holds Secrets and Environments for good, so a refusal fails`, async () => {
+      await fails(at(http(403, PROBE_MESSAGE)), new RegExp(`FAIL probe ${pr.name}: HTTP 403, expected 200 \\(the agents' token holds Secrets and Environments`));
+    });
+    test(`CE-probe-${pr.key}-404-fails`, async () => { await fails(at(http(404, 'Not Found')), new RegExp(`FAIL probe ${pr.name}: HTTP 404, expected 200`)); });
+    test(`CE-probe-${pr.key}-429 fails`, async () => { await fails(at(http(429, 'API rate limit exceeded')), new RegExp(`FAIL probe ${pr.name}: HTTP 429, expected 200`)); });
+    test(`CE-probe-${pr.key}-204 fails: only 200`, async () => { await fails(at(http(204)), new RegExp(`FAIL probe ${pr.name}: HTTP 204, expected 200`)); });
+    for (const [what, body] of [['no list', '{"total_count":0}'], ['a count that is not a number', '{"total_count":"0","secrets":[]}'], ['not JSON', '<html></html>'], ['a message', '{"message":"x"}']]) {
+      test(`CE-probe-${pr.key}-not-a-list fails (${what})`, async () => {
+        await fails(at(http(200, null, '4999', body)), new RegExp(`FAIL probe ${pr.name}: HTTP 200 but not a list of secrets`));
+      });
+    }
+  }
+  test('CE-probe-secret-names-not-printed: the lists answer names only, and not even those are printed', async () => {
+    const list = '{"total_count":2,"secrets":[{"name":"MINISIGN_INDEX_KEY","created_at":"2026-11-18T19:00:00Z"},{"name":"R2_SECRET_ACCESS_KEY"}]}';
+    const r = await run({ probes: { env: http(200, null, '4999', list), secrets: http(200, null, '4999', list) } });
+    assert.equal(r.ok, true, r.text);
+    assert.doesNotMatch(r.text, /MINISIGN_INDEX_KEY|R2_SECRET_ACCESS_KEY|created_at/);
+  });
+  for (const pr of DENIED) {
     const name = pr.name.replace(/[()]/g, '\\$&');
     const at = (answer) => ({ probes: { [pr.key]: answer } });
     test(`CE-probe-${pr.key}-only-403: 403, the exact message and x-ratelimit-remaining above 0 pass`, async () => {
@@ -206,7 +247,30 @@ describe('C-ENV1 the five probes of the agents\' token', () => {
   test('CE-probe-ratelimit-missing: no x-ratelimit-remaining fails', async () => { await fails({ probes: { admin: http(403, PROBE_MESSAGE, null) } }, /FAIL probe Administration: .*x-ratelimit-remaining missing/); });
   test('CE-probe-ratelimit-twice: two x-ratelimit-remaining headers fail', async () => {
     const a = http(403, PROBE_MESSAGE, '4999');
-    await fails({ probes: { secrets: { ...a, stdout: a.stdout.replace('X-Ratelimit-Remaining: 4999', 'X-Ratelimit-Remaining: 4999\r\nX-Ratelimit-Remaining: 0') } } }, /FAIL probe Secrets: .*x-ratelimit-remaining 4999, 0/);
+    await fails({ probes: { deploy: { ...a, stdout: a.stdout.replace('X-Ratelimit-Remaining: 4999', 'X-Ratelimit-Remaining: 4999\r\nX-Ratelimit-Remaining: 0') } } }, /FAIL probe Deployments \(approve\): .*x-ratelimit-remaining 4999, 0/);
+  });
+  test('CE-probe-envcreate-created: a token that may create an environment fails loudly and names the environment to delete', async () => {
+    for (const status of [200, 201, 204]) {
+      const r = await fails({ probes: { envcreate: http(status, null, '4999', '{"id":1,"name":"c-env1-probe-denied"}') } },
+        new RegExp(`FAIL probe Administration \\(create environment\\): HTTP ${status}: the agents' token created or changed the environment c-env1-probe-denied`));
+      assert.match(r.lines[0], /^ALARM: the agents' token created the environment c-env1-probe-denied in eve-cyno\/plugins: the owner deletes it \(Settings, Environments, c-env1-probe-denied, Delete environment\) and takes Administration off the token/);
+      assert.equal(r.alarms.length, 1);
+      assert.equal(r.alarms[0], r.lines[0]);
+    }
+  });
+  test('CE-probe-envcreate-new-name: a GET that answers 404 confirms the name is new, right before the PUT', async () => {
+    const r = await run();
+    const keys = r.calls.map(keyOf);
+    assert.equal(keys.indexOf(ENV_PUT) - keys.indexOf(ENV_GET), 1, keys.join('\n'));
+  });
+  test('CE-probe-envcreate-exists fails: the probe must name an environment that does not exist', async () => {
+    const r = await fails({ probeEnvGet: http(200, null, '4999', '{"id":1,"name":"c-env1-probe-denied"}') },
+      /FAIL probe Administration \(create environment\): the environment c-env1-probe-denied exists \(HTTP 200\); the owner deletes it \(Settings, Environments, c-env1-probe-denied, Delete environment\)/);
+    assert.ok(r.calls.map(keyOf).includes(ENV_PUT), 'the refusal is still checked');
+  });
+  test('CE-probe-envcreate-unconfirmed fails: anything but 404 on the GET', async () => {
+    await fails({ probeEnvGet: http(403, PROBE_MESSAGE) }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(HTTP 403; expected 404\)/);
+    await fails({ probeEnvGet: { stdout: '', stderr: 'error connecting to api.github.com\n', exit: 1 } }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(no answer/);
   });
   test('CE-probe-5xx fails', async () => { await fails({ probes: { env: http(502, 'Server Error') } }, /FAIL probe Environments: HTTP 502/); });
   test('CE-probe-network-error fails', async () => { await fails({ probes: { admin: { stdout: '', stderr: 'error connecting to api.github.com\n', exit: 1 } } }, /FAIL probe Administration: no answer/); });
@@ -226,6 +290,11 @@ describe('C-ENV1 command line', () => {
     assert.equal(pass.status, 0, pass.stdout + pass.stderr);
     assert.doesNotMatch(pass.stdout + pass.stderr, NAMES_REVIEWER);
     assert.equal(cli(['--rev', good.rev, '--repo-dir', good.dir], { probes: { deploy: http(404, 'Not Found') } }).status, 1);
+    const created = cli(['--rev', good.rev, '--repo-dir', good.dir], { probes: { envcreate: http(200) } });
+    assert.equal(created.status, 1, 'an environment the probe created is a failure');
+    assert.match(created.stdout.split('\n')[0], /^ALARM: .*c-env1-probe-denied/, 'the first line of the output');
+    assert.match(created.stderr, /^ALARM: the agents' token created the environment c-env1-probe-denied/m, 'and on stderr');
+    assert.equal(cli(['--rev', good.rev, '--repo-dir', good.dir], { probes: { secrets: http(403, PROBE_MESSAGE) } }).status, 1);
     assert.equal(cli(['--rev', 'main', '--repo-dir', good.dir]).status, 2);
     assert.equal(cli(['--repo-dir', good.dir]).status, 2);
     const t2 = cli(['--rev', good.rev, '--repo-dir', good.dir, '--t2']);

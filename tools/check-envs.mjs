@@ -7,15 +7,20 @@
 //   required reviewer, a User, read from the environment (tools/lib/reviewer.mjs); both environments name the same user;
 // - that user's login and id appear nowhere at <B>: in no path, no file and no commit (author, committer, message) reachable
 //   from <B> (the repository never holds them, plan 4.2); hits are named by path or commit, with the login masked;
-// - five probes of the token answer HTTP 403 with the message PROBE_MESSAGE exactly and an x-ratelimit-remaining above 0 (PROBES:
-//   Administration, Environments, Secrets, Deployments approve, Actions write). Each request changes nothing: three read lists,
-//   two name a run or an artifact that does not exist, and the approve request asks to reject. Any other answer fails, a 404
-//   included.
+// - six probes of the token answer as the owner set it up (PROBES). Four must be refused: HTTP 403 with the message PROBE_MESSAGE
+//   exactly and an x-ratelimit-remaining above 0 (Administration, Deployments approve, Actions write, and creating an environment);
+//   any other answer fails, a 404 included. Two must be allowed: the Secrets and Environments permissions are the token's for good
+//   (owner decision 2026-11-18, so agents set secrets with the scripted flows), and their secrets lists must answer HTTP 200 with a
+//   list (names only; nothing of it is printed).
+//   Requests: three read lists; two name a run or an artifact that does not exist, and the approve request asks to reject; one PUT
+//   names the environment PROBE_ENV, which a GET must first show does not exist (404). That PUT is the only probe that could change
+//   something: a token wrongly allowed to make it creates PROBE_ENV, and the check then fails with an ALARM line, first in the
+//   output and on stderr, that names the environment the owner deletes.
 // The agents' token was switched on 2026-11-18 (plan 4.1, Q16: T1 done), so there is no mode without the probes (the former --t2 is
 // a usage error): with one account as dispatcher and approver, the token's refusals are the safeguard.
 //
 // Usage: node tools/check-envs.mjs --rev <B, 40 hex> [--repo-dir <git checkout holding B>]
-// Exit 0 PASS, 1 FAIL, 2 usage. The reviewer's login and id are never printed; ids of runs and settings only.
+// Exit 0 PASS, 1 FAIL (an ALARM included), 2 usage. The reviewer's login and id are never printed; ids of runs and settings only.
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -24,20 +29,25 @@ import { REPO, getAll, getJson, oneLine, probe } from './lib/github.mjs';
 import { reviewerOf } from './lib/reviewer.mjs';
 
 export const PROBE_MESSAGE = 'Resource not accessible by personal access token';
+/** The environment the create probe names. It must not exist; a token that may create it fails C-ENV1, and the owner deletes it. */
+export const PROBE_ENV = 'c-env1-probe-denied';
 const R = `repos/${REPO}`;
+const DELETE_IT = `the owner deletes it (Settings, Environments, ${PROBE_ENV}, Delete environment)`;
 const ENVIRONMENTS = ['index', 'mirror'];
 const RULE_TYPES = new Set(['required_reviewers', 'branch_policy']);
 const REV_RE = /^[0-9a-f]{40}$/;
+/** expect 403: refused exactly (probeProblem); expect 200: allowed, a list of secrets. `creates`: the probe's environment must not exist. */
 export const PROBES = Object.freeze([
-  { key: 'admin', name: 'Administration', method: 'GET', endpoint: `${R}/keys`, on404: '' },
-  { key: 'env', name: 'Environments', method: 'GET', endpoint: `${R}/environments/index/secrets`, on404: '' },
-  { key: 'secrets', name: 'Secrets', method: 'GET', endpoint: `${R}/actions/secrets`, on404: '' },
+  { key: 'admin', name: 'Administration', expect: 403, method: 'GET', endpoint: `${R}/keys`, on404: '' },
+  { key: 'env', name: 'Environments', expect: 200, method: 'GET', endpoint: `${R}/environments/index/secrets` },
+  { key: 'secrets', name: 'Secrets', expect: 200, method: 'GET', endpoint: `${R}/actions/secrets` },
   {
-    key: 'deploy', name: 'Deployments (approve)', method: 'POST', endpoint: `${R}/actions/runs/1/pending_deployments`,
+    key: 'deploy', name: 'Deployments (approve)', expect: 403, method: 'POST', endpoint: `${R}/actions/runs/1/pending_deployments`,
     fields: ['-f', 'state=rejected', '-f', 'comment=C-ENV1 probe: changes nothing', '-F', 'environment_ids[]=1'],
     on404: ' (the token may be able to approve deployments)',
   },
-  { key: 'actions', name: 'Actions write', method: 'DELETE', endpoint: `${R}/actions/artifacts/1`, on404: ' (the token may be able to delete workflow runs and artifacts)' },
+  { key: 'actions', name: 'Actions write', expect: 403, method: 'DELETE', endpoint: `${R}/actions/artifacts/1`, on404: ' (the token may be able to delete workflow runs and artifacts)' },
+  { key: 'envcreate', name: 'Administration (create environment)', expect: 403, method: 'PUT', endpoint: `${R}/environments/${PROBE_ENV}`, on404: '', creates: PROBE_ENV },
 ]);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -70,6 +80,13 @@ function policyProblems(items) {
 /** The result of one probe: '' on a pass, else why it fails. */
 export function probeProblem(answer, pr) {
   if (answer.error) return `no answer (${oneLine(answer.error)})`;
+  if (pr.expect === 200) {
+    if (answer.status !== 200) return `HTTP ${answer.status}, expected 200 (the agents' token holds Secrets and Environments, read and write, owner decision 2026-11-18)`;
+    const b = answer.body;
+    if (!isObj(b) || !Number.isSafeInteger(b.total_count) || !Array.isArray(b.secrets)) return 'HTTP 200 but not a list of secrets { total_count, secrets }';
+    return '';
+  }
+  if (pr.creates && answer.status >= 200 && answer.status < 300) return `HTTP ${answer.status}: the agents' token created or changed the environment ${pr.creates}; ${DELETE_IT}`;
   if (answer.status !== 403) return `HTTP ${answer.status}${answer.status === 404 ? pr.on404 : ''}`;
   const msg = isObj(answer.body) ? answer.body.message : undefined;
   if (msg !== PROBE_MESSAGE) return `HTTP 403 with message ${typeof msg === 'string' ? JSON.stringify(oneLine(msg)) : '(none)'}, not "${PROBE_MESSAGE}"`;
@@ -119,10 +136,11 @@ export async function identityHits(repoDir, rev, who, env) {
 
 /**
  * Runs C-ENV1. `rev` is <B>, `repoDir` a git checkout that holds it, `env` the environment gh and git run with (the agents' token).
- * Returns { ok, lines }.
+ * Returns { ok, lines, alarms } (alarms: lines that are also first in `lines`, for something the check itself may have created).
  */
 export async function checkEnvs({ rev, repoDir, env }) {
   const lines = [];
+  const alarms = [];
   let ok = true;
   const fail = (what, why) => { ok = false; lines.push(`FAIL ${what}: ${why}`); };
   const opts = { env };
@@ -160,12 +178,24 @@ export async function checkEnvs({ rev, repoDir, env }) {
   }
 
   for (const pr of PROBES) {
-    const why = probeProblem(await probe(pr.method, pr.endpoint, opts, pr.fields ?? []), pr);
+    if (pr.creates) {
+      const g = await probe('GET', pr.endpoint, opts);
+      if (g.error || g.status !== 404) {
+        fail(`probe ${pr.name}`, g.status === 200 ? `the environment ${pr.creates} exists (HTTP 200); ${DELETE_IT}, so the probe names a new one`
+          : `could not confirm that the environment ${pr.creates} does not exist (${g.error ? `no answer: ${oneLine(g.error)}` : `HTTP ${g.status}`}; expected 404)`);
+      }
+    }
+    const answer = await probe(pr.method, pr.endpoint, opts, pr.fields ?? []);
+    const why = probeProblem(answer, pr);
     if (why) fail(`probe ${pr.name}`, why);
+    else if (pr.expect === 200) lines.push(`PASS probe ${pr.name}: ${pr.method} ${pr.endpoint} answered HTTP 200 (allowed, owner decision 2026-11-18)`);
     else lines.push(`PASS probe ${pr.name}: ${pr.method} ${pr.endpoint} answered HTTP 403 "${PROBE_MESSAGE}"`);
+    if (pr.creates && !answer.error && answer.status >= 200 && answer.status < 300) {
+      alarms.push(`ALARM: the agents' token created the environment ${pr.creates} in ${REPO}: ${DELETE_IT} and takes Administration off the token; no approval until then`);
+    }
   }
   lines.push(ok ? 'C-ENV1 PASS' : 'C-ENV1 FAIL');
-  return { ok, lines };
+  return { ok, lines: [...alarms, ...lines], alarms };
 }
 
 const USAGE = 'usage: node tools/check-envs.mjs --rev <40 hex commit> [--repo-dir <git checkout>]';
@@ -183,6 +213,7 @@ async function main(argv) {
     return 2;
   }
   const r = await checkEnvs({ rev: a.rev, repoDir: path.resolve(a['repo-dir'] ?? '.'), env: process.env });
+  for (const l of r.alarms) process.stderr.write(`${l}\n`);
   process.stdout.write(`${r.lines.join('\n')}\n`);
   return r.ok ? 0 : 1;
 }

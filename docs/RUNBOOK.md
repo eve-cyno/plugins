@@ -6,19 +6,21 @@ rules (C-WF1 to C-WF11).
 
 Roles:
 
-- **The owner** (his own GitHub account) merges, dispatches runs, sets secrets, and is the **only required reviewer** of the
-  environments `index` and `mirror`. He approves only from GitHub Mobile, after the steps in "Before every index and mirror approval".
+- **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
+  and `mirror`. He approves only from GitHub Mobile, after the steps in "Before every index and mirror approval".
 - **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs` and local verifications, and hands their output
-  to the owner. It never approves a deployment, never dispatches `publish.yml` with `target: production`, and never sets, reads or
-  deletes a secret.
-- **Agents** work with the agents' token (below), which cannot approve a deployment, dispatch a run, or change an environment, its
-  secrets, the runs or the artifacts. They push over SSH.
+  to the owner. It sets secrets only with the two commands of "Secrets and variables", which never show it a value. It never approves
+  a deployment, never dispatches `publish.yml` with `target: production`, and never reads a secret's value.
+- **Agents** work with the agents' token (below). It cannot approve a deployment, dispatch a run, change an environment's protection
+  rules, or delete runs or artifacts. It can write secrets and environment variables (owner decision 2026-11-18; "One account" names
+  what that allows). Agents push over SSH.
 
-**Hard rule.** No private key, passphrase or token ever passes through an agent shell, a file an agent writes, a log or a message.
+**Hard rule.** No private key, passphrase or token is ever seen by an agent: never in an argument list, an output, a file an agent
+writes, a log or a message. The commands of "Secrets and variables" move each value on stdin only.
 
 ## Secrets and variables
 
-Names only. The values exist only where the owner puts them.
+Names only. No value is ever written here, typed into a web page or seen by an agent.
 
 | Environment | Kind | Name | Used by |
 |---|---|---|---|
@@ -32,10 +34,22 @@ Names only. The values exist only where the owner puts them.
 None of them is a repository or organization secret. The static rule C-WF5 fails if a `MINISIGN_` name appears outside a job with
 `environment: index`, or an `R2_` name outside a job with `environment: mirror`.
 
-The owner sets them in the GitHub UI (Settings, Environments), or on the release PC with the infra repository's
-`scripts/desktop-signing-rotate.sh secrets index index --env index --repo eve-cyno/plugins` (once its `--repo` option exists). After
-the first head signed here verifies, the owner deletes the two `MINISIGN_INDEX_*` secrets of `eve-cyno/desktop`; its `sign.yml` purpose
-`index` then fails with "a secret of this key is not set" and stays as the emergency path.
+All six were set on 2026-11-18. To set them, or set them again, run these from a checkout of the infra repository
+(`eve-cyno-infra`). The owner or the coordinator runs them; nobody pastes a value anywhere:
+
+1. **`index`:** `scripts/desktop-signing-rotate.sh secrets index index --env index --repo eve-cyno/plugins`. It takes the index
+   primary from the encrypted backup, proves it against its `.pub` and the key the app pins (key id `F5F7F2E299DF08D4` on
+   2026-11-18), and pipes
+   the key and its passphrase to `gh secret set` on stdin.
+2. **`mirror` secrets:** `scripts/secret-dialog.sh --gh eve-cyno/plugins --env mirror 'R2_ACCESS_KEY_ID:^[0-9a-f]{32}$'
+   'R2_SECRET_ACCESS_KEY:^[0-9a-f]{64}$'`. It opens one password dialog per name, the owner types the value of the R2 token made
+   for this bucket, and the value goes to `gh secret set` on stdin. A value that does not match its pattern is refused before
+   anything is written. The agents never see the values.
+3. **`mirror` variables:** `R2_ACCOUNT_ID` and `R2_BUCKET` are plain values, not secrets, set with `gh variable set --env mirror
+   --repo eve-cyno/plugins`.
+
+After the first head signed here verifies, the two `MINISIGN_INDEX_*` secrets of `eve-cyno/desktop` are deleted with `gh secret
+delete`; its `sign.yml` purpose `index` then fails with "a secret of this key is not set" and stays as the emergency path.
 
 ## The environments
 
@@ -67,9 +81,20 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   the API.
 - **Claude in Chrome is blocked on `github.com`** (owner step O1), so no agent can click an approval in the owner's browser session.
 - **Why "Prevent self-review" stays off, and what guards instead.** With one account as dispatcher and approver it would block every
-  run. The safeguards are: (1) the agents' token cannot approve (the probes of `tools/check-envs.mjs`, plus the empirical check after
-  the token switch, below); (2) the reading before every approval, with `tools/approved-base.mjs` and the owner's own list; (3)
-  recovery R2's stop rule for missing artifacts.
+  run. The safeguards are: (1) the agents' token cannot approve or change the protection rules (the probes of
+  `tools/check-envs.mjs`, plus the empirical check after the token switch, below); (2) the reading before every approval, with
+  `tools/approved-base.mjs` and the owner's own list; (3) recovery R2's stop rule for missing artifacts.
+- **The agents can write secrets, named honestly.** The agents' token holds Secrets and Environments, read and write, for good
+  (owner decision 2026-11-18), so the coordinator sets secrets with the scripted commands and the owner never pastes one. So an
+  agent can replace a secret's value (the index key and passphrase, the R2 keys) or an environment variable (`R2_ACCOUNT_ID`,
+  `R2_BUCKET`), or delete one. It cannot read a value back (GitHub returns names only), approve a deployment, or change an
+  environment's reviewers, branch rule or admin bypass: those need Deployments write or Administration, which the token lacks.
+  `tools/check-envs.mjs` checks the protection, and that the token is refused both permissions, before every approval. What a
+  replaced value does: an index key other than the pinned one fails the `sign` job's check against
+  `vendor/eve-cyno-host/host/src/keys/index.pub`, so nothing is uploaded; other R2 keys or variables fail the upload or put the files
+  where `plugins.eve-cyno.dev` does not serve them, which the `verify` job reports as a failure. Both are a failed run, not a
+  forged index; the values are then set again with the commands of "Secrets and variables". A replaced value is not visible
+  in the run before the approval (GitHub shows only the secret's update time).
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
@@ -89,33 +114,44 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
 **Switched on 2026-11-18.** The agents' `gh` login is the owner's fine-grained personal access token:
 
 - **Resource owner:** the organization `eve-cyno` only. **Organization permissions:** none.
-- **Repository permissions:** read-only (Metadata, Contents and the other reads it needs). **No write permission of any kind**, and
-  **no access** to **Administration, Environments, Secrets, Variables or Deployments**; in particular no Actions write and no
-  Workflows.
+- **Repository permissions:** reads (Metadata, Contents, Actions, Issues, Pull requests), plus **Secrets and Environments, read and
+  write, for good** (owner decision 2026-11-18): the coordinator sets secrets and environment variables with the commands of
+  "Secrets and variables", and the permissions are never added for a task and taken away after it.
+- **Off, and checked before every approval:** **Administration** (it creates and changes environments, their reviewers, branch
+  rules and admin bypass), **Deployments write** (it approves or rejects a waiting run) and **Actions write** (it dispatches runs
+  and deletes runs and artifacts). No Workflows permission.
 - Git pushes go **over SSH** and need no API permission.
 - The everyday token (classic, with `admin:org`) stays off every agent shell.
 
-The coordinator's first checks with it (2026-11-18): `PATCH repos/eve-cyno/plugins` answered 403, the `index` environment's secrets
-list answered 403, and reads work. Those are not yet the full record below.
+The coordinator's first checks with it (2026-11-18, before Secrets and Environments were added): `PATCH repos/eve-cyno/plugins`
+answered 403, and reads work. Those are not yet the full record below.
 
-Without those permissions the agents' token cannot approve a deployment, change an environment or its secrets, delete runs or
-artifacts, or dispatch a run; every dispatch, test runs included, is the owner's own. `tools/check-envs.mjs` proves the first four
-with five requests that change nothing, each of which must answer exactly HTTP 403 with the message "Resource not accessible by
-personal access token" and an `x-ratelimit-remaining` above 0 (anything else, a 404 included, fails; there is no mode without the
-probes):
+So the agents' token cannot approve a deployment, change an environment's protection, delete runs or artifacts, or dispatch a run;
+every dispatch, test runs included, is the owner's own. It can replace secret values ("One account" says what that allows).
+`tools/check-envs.mjs` checks the token with six probes; there is no mode without them:
 
-| Permission | Request | Agents' token (expected 403) | Everyday token (expected 404 or 2xx) |
-|---|---|---|---|
-| Administration | `GET repos/eve-cyno/plugins/keys` | not measured yet | not measured yet |
-| Environments | `GET repos/eve-cyno/plugins/environments/index/secrets` | not measured yet | not measured yet |
-| Secrets | `GET repos/eve-cyno/plugins/actions/secrets` | not measured yet | not measured yet |
-| Deployments (approve) | `POST repos/eve-cyno/plugins/actions/runs/1/pending_deployments` (`state=rejected`, run 1 does not exist here) | not measured yet | not measured yet |
-| Actions write | `DELETE repos/eve-cyno/plugins/actions/artifacts/1` (no such artifact) | not measured yet | not measured yet |
+- **Four must be refused:** exactly HTTP 403 with the message "Resource not accessible by personal access token" and an
+  `x-ratelimit-remaining` above 0. Anything else fails, a 404 included.
+- **Two must be allowed:** the secrets lists answer HTTP 200 with a list. They show names only, never values, and the check prints
+  neither. A refusal there fails too: it means the token is not the one described here.
+- **The create probe** first checks with a GET that the environment `c-env1-probe-denied` does not exist (HTTP 404), then asks to
+  create it. It is the only probe that could change something. If it is ever allowed, the token has Administration: the check
+  fails with an `ALARM` line, first in its output and on stderr, and the owner deletes that environment (Settings, Environments,
+  `c-env1-probe-denied`, Delete environment) and takes Administration off the token before any approval. If the environment
+  exists when the check starts, the check fails until the owner has deleted it.
 
-The coordinator records both columns once after the token switch (the everyday column by the owner, with `gh api -i` and the same
-request; the two secrets lists show names only, never values). Whether GitHub checks the permission before it looks up a run or
-artifact that does not exist is not documented: if the agents' token gets a 404 on either of those, that check always fails closed and
-the coordinator decides.
+| Permission | Request | Agents' token: expected | Agents' token: measured | Everyday token (measured once) |
+|---|---|---|---|---|
+| Administration | `GET repos/eve-cyno/plugins/keys` | 403 | not measured yet | not measured yet |
+| Environments | `GET repos/eve-cyno/plugins/environments/index/secrets` | 200, a list | not measured yet | not measured yet |
+| Secrets | `GET repos/eve-cyno/plugins/actions/secrets` | 200, a list | not measured yet | not measured yet |
+| Deployments (approve) | `POST repos/eve-cyno/plugins/actions/runs/1/pending_deployments` (`state=rejected`, run 1 does not exist here) | 403 | not measured yet | not measured yet |
+| Actions write | `DELETE repos/eve-cyno/plugins/actions/artifacts/1` (no such artifact) | 403 | not measured yet | not measured yet |
+| Administration (create environment) | `PUT repos/eve-cyno/plugins/environments/c-env1-probe-denied` (after a GET that answers 404) | 403 | not measured yet | never sent: it would create the environment |
+
+The coordinator records the agents' column after the token change, and the owner the everyday column once, with `gh api -i` and
+the same request (never the `PUT`). Whether GitHub checks the permission before it looks up a run or artifact that does not exist
+is not documented: if the agents' token gets a 404 on either of those, that check always fails closed and the coordinator decides.
 
 **Empirical approve check, once after the token switch (coordinator).** The probe above names a run that does not exist; this one
 uses a real run that waits for approval, and is safe because the request asks to reject and a refused request changes nothing. A push
@@ -152,9 +188,11 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 
    and it printed `C-ENV1 PASS` (exit 0). It checks both environments (one required reviewer, the same user on both, self-review
    prevention off, admin bypass off, `main` only, no other rule), that the reviewer's login and id appear in no path, file or commit at
-   `<B>`, and that all five probes of "The agents' token" answer exactly HTTP 403 with the message "Resource not accessible by
-   personal access token" and an `x-ratelimit-remaining` above 0. Any other answer fails, and no option skips the probes. A pass is
-   not proof that nothing changed between the check and the approval; that rests on the owner's rules above.
+   `<B>`, and that the six probes of "The agents' token" answer as its table expects: the four refusals exactly HTTP 403 with the
+   message "Resource not accessible by personal access token" and an `x-ratelimit-remaining` above 0, the two secrets lists HTTP 200.
+   Any other answer fails, and no option skips the probes. An `ALARM` line means the check created the environment
+   `c-env1-probe-denied`: no approval until the owner has deleted it and taken Administration off the token. A pass is not proof
+   that nothing changed between the check and the approval; that rests on the owner's rules above.
 2. **Find `<A>`, the last approved base.** `<A>` is the commit of the newest run of `publish.yml` or `resign.yml`, **other than the
    run under review**, that has an approval of `index` by the environment's reviewer (the owner) and whose `sign` and `upload` jobs
    both concluded `success`. Not the newest green run: a no-op re-sign ends green at `check`, a scheduled run takes `main`'s head, and
@@ -206,25 +244,25 @@ For a `target: test` run, this is the first and only reading.
 
 ## Owner steps before the first production publish
 
-Three steps are the owner's alone and come first; each is repeated in the list below.
+Three steps come first; each is repeated in the list below. O1 is the owner's alone.
 
 - **O1, the approver.** The environments list the owner's own account as their only reviewer ("The environments"). The owner
   installs GitHub Mobile on his phone, signs in with 2FA and turns on its push notifications; he approves only there. He sets the
   Claude in Chrome extension's site permission for `github.com` to blocked. Then he writes the confirmation in "One account" above.
-- **O2, the agents' token** (done 2026-11-18). The owner made the read-only fine-grained token of "The agents' token"
-  (organization `eve-cyno` only; no Administration, Environments, Secrets, Variables or Deployments, nothing that writes) the agents'
-  `gh` login and keeps the everyday token off every agent shell; agents push over SSH. Still open: the coordinator runs
-  `tools/check-envs.mjs` (all five probes 403), fills in the probe table (the owner gives the everyday column), and does the
-  empirical approve check.
-- **O3, the index key.** The owner pastes the index key into the `index` environment secrets `MINISIGN_INDEX_KEY` and
-  `MINISIGN_INDEX_PASSWORD` in the GitHub UI (Settings, Environments, `index`), never through an agent shell, a file an agent
-  writes or a message.
+- **O2, the agents' token** (done 2026-11-18). The owner made the fine-grained token of "The agents' token" (organization
+  `eve-cyno` only; reads, plus Secrets and Environments read and write for good; no Administration, Deployments write or Actions
+  write) the agents' `gh` login and keeps the everyday token off every agent shell; agents push over SSH. Still open: the
+  coordinator runs `tools/check-envs.mjs` (four refusals 403, two secrets lists 200), fills in the probe table (the owner gives the
+  everyday column), and does the empirical approve check.
+- **O3, the secrets** (done 2026-11-18). The index key and its passphrase, the R2 keys and the two variables were set with the
+  commands of "Secrets and variables": the index key from the encrypted backup on stdin, the R2 keys typed by the owner into a
+  password dialog. Nobody pasted a value into a web page, a chat or a terminal.
 
 1. The environments exist with the settings above; the written confirmation in "One account" is filled in.
 2. The token is switched (O2, done): `tools/check-envs.mjs` passes, the probe table is filled in, and the empirical approve check
    is recorded with a refusal.
 3. Nothing in the repository names the owner's login or user id: `tools/check-envs.mjs` passes at `main`'s head.
-4. The secrets and variables are set (owner only).
+4. The secrets and variables are set (O3, done; "Secrets and variables" has the commands to set them again).
 5. **Pinned actions** (done 2026-11-18). Every `uses:` names the full 40-hex commit of a release tag, with the tag as a trailing
    comment, and the static rule C-WF2 fails on anything else (a tag, a short SHA, a placeholder, a missing tag comment, or one action
    pinned two ways). The pins, read anonymously from the public repositories (`git ls-remote https://github.com/actions/<name>
@@ -299,7 +337,7 @@ input names it exactly, one `<id> <versions>` per line; `build` fails otherwise.
 |---|---|---|
 | `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run |
 | `build` or `head` | a check failed, or the commit is no longer `main`'s head | read the summary; fix through a pull request; dispatch a new run |
-| `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; check the secrets (owner) and the head; dispatch a new run |
+| `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; set the `index` secrets again with the command of "Secrets and variables" and check the head; dispatch a new run |
 | `upload`, a 412 | someone changed the live index during the run | stop; find out who wrote it (R2 audit, other runs) before anything else; then dispatch a new run |
 | `upload`, other | see the R1 outcome in the job log and summary | below |
 | `verify` | the live index does not read back as published | **never re-run**: the coordinator re-checks it locally with `node vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives`; a confirmed failure goes to recovery R2 |
@@ -336,9 +374,9 @@ index", by hand: build with the vendored tools, `release-sign.sh` with purpose `
 
 As in the desktop repository's `docs/release-checklist.md`, "Key compromise and rotation": the app pins a primary and a standby
 index key, and a rotation is an app release that pins the new pair. In addition, for this repository: after
-`rotate.sh promote index ...` the owner sets the new primary into the `index` environment of `eve-cyno/plugins` (`--repo`), and the
-vendor pin moves to the desktop commit with the new `.pub` files (`node tools/vendor-host.mjs --check` passes). Both index keys lost
-is not fatal (checklist, "Keys lost, not leaked").
+`rotate.sh promote index ...` the new primary goes into the `index` environment of `eve-cyno/plugins` with the command of
+"Secrets and variables" (`--repo eve-cyno/plugins`), and the vendor pin moves to the desktop commit with the new `.pub` files
+(`node tools/vendor-host.mjs --check` passes). Both index keys lost is not fatal (checklist, "Keys lost, not leaked").
 
 ## Measurements
 
