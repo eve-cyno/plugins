@@ -133,6 +133,46 @@ describe('PR fixture suite', () => {
     assert.doesNotMatch(m.stdout, /^FLAG identity C10 C14 dev\.other\.tool/m);
   });
 
+  test('PR-unlist: a merged version marked unlisted passes, stays pinned, and leaves the index without its archive', async () => {
+    const OLD = pluginZip(manifest({ version: '0.9.0' })); // never cached: neither C4 nor C16 may need it once it is unlisted
+    const base = tree({ entries: [pluginEntry([version('1.0.0', A100), version('0.9.0', OLD)])] });
+    const h = tree({ entries: [pluginEntry([version('1.0.0', A100), version('0.9.0', OLD, { unlisted: true })])] });
+    const r = await check('refuse', base, h);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^PASS C16 .*\(1 archives\)/m);
+  });
+
+  test('PR-version-removed: removing a merged version is refused at C8 (unlist it instead)', async () => {
+    const A110 = pluginZip(manifest({ version: '1.1.0' }));
+    cacheArchive(cache, A110);
+    const base = tree({ entries: [pluginEntry([version('1.1.0', A110), version('1.0.0', A100)])] });
+    await refused(tree({ entries: [pluginEntry([version('1.0.0', A100)])] }), /^FAIL C8 dev\.example\.intel 1\.1\.0: a merged version is never removed/m, base);
+  });
+
+  test('PR-swap-across-prs: an unlisted version re-added with other bytes is refused at C8 (repro 2)', async () => {
+    const A200 = pluginZip(manifest({ version: '2.0.0' }));
+    const A200b = pluginZip(manifest({ version: '2.0.0' }), [{ name: 'evil.js', data: 'x' }]);
+    cacheArchive(cache, A200b);
+    const base = tree({ entries: [pluginEntry([version('2.0.0', A200, { unlisted: true }), version('1.0.0', A100)])] });
+    const h = tree({ entries: [pluginEntry([version('2.0.0', A200b), version('1.0.0', A100)])] });
+    await refused(h, /^FAIL C8 dev\.example\.intel 2\.0\.0: sha256 of a merged version never changes/m, base);
+  });
+
+  test('PR-entry-removed: removing a merged entry is refused at C8', async () => {
+    await refused(tree({ entries: [] }), /^FAIL C8 dev\.example\.intel: a merged entry is never removed/m);
+  });
+
+  test('PR-background-over-unlisted: C10 reads the listed version before, not an unlisted one', async () => {
+    const bg = (v, background) => pluginZip(manifest({ version: v, background }));
+    const [B100, B110, B120] = [bg('1.0.0', true), bg('1.1.0', false), bg('1.2.0', true)];
+    for (const b of [B100, B110, B120]) cacheArchive(cache, b);
+    const base = tree({ entries: [pluginEntry([version('1.1.0', B110, { unlisted: true }), version('1.0.0', B100)])] });
+    const h = tree({ entries: [pluginEntry([version('1.2.0', B120), version('1.1.0', B110, { unlisted: true }), version('1.0.0', B100)])] });
+    const r = await check('review', base, h, ['--author', 'example-login']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED', 'background was on in 1.0.0, the listed version before 1.2.0');
+  });
+
   test('PR-entries-dotfile: entries/.gitattributes is refused at C1 and flagged maintenance by C13', async () => {
     const base = baseTree();
     const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/.gitattributes': '*.json export-ignore\n' } });

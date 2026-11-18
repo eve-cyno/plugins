@@ -49,6 +49,19 @@ describe('entry flags (C10, C11, C14, C17)', () => {
     const head = entry([ver('1.2.0', { overlays: true }), ver('1.1.0', { overlays: true }), ver('1.0.0')]);
     assert.deepEqual(checkEntry(head, base, { prAuthor: 'alice' }).flags, []);
   });
+  test('DF-compare-listed: an unlisted version is not the version before (the head decides what is unlisted)', () => {
+    const base = entry([ver('1.1.0', { overlays: true }, { unlisted: true }), ver('1.0.0')]);
+    const head = entry([ver('1.2.0', { overlays: true }), ver('1.1.0', { overlays: true }, { unlisted: true }), ver('1.0.0')]);
+    assert.deepEqual(checkEntry(head, base, { prAuthor: 'alice' }).flags, ['escalation']);
+    const unlistedNow = entry([ver('1.2.0', { overlays: true }), ver('1.1.0', { overlays: true }, { unlisted: true }), ver('1.0.0')]);
+    assert.deepEqual(checkEntry(unlistedNow, entry([ver('1.1.0', { overlays: true }), ver('1.0.0')]), { prAuthor: 'alice' }).flags, ['escalation']);
+    assert.deepEqual(checkEntry(entry([ver('1.2.0', { overlays: true }), ver('1.1.0', { overlays: true }), ver('1.0.0')]), entry([ver('1.1.0', { overlays: true }), ver('1.0.0')]), { prAuthor: 'alice' }).flags, []);
+  });
+  test('DF-unlisted-not-added: an unlisted version the base does not name (a live catalog leaves it out) is not compared or flagged', () => {
+    const base = entry([ver('1.0.0')]);
+    assert.deepEqual(checkEntry(entry([ver('1.1.0', { overlays: true }, { unlisted: true, engines: '^2.0.0' }), ver('1.0.0')]), base, { prAuthor: 'alice' }).flags, []);
+    assert.deepEqual(checkEntry(entry([ver('1.1.0', { overlays: true }, { engines: '^2.0.0' }), ver('1.0.0')]), base, { prAuthor: 'alice' }).flags.sort(), ['engines', 'escalation']);
+  });
   test('DF-base-version-untouched: versions already on base are not re-compared', () => {
     const base = entry([ver('1.1.0', { overlays: true }), ver('1.0.0')]);
     assert.deepEqual(checkEntry(base, base, { prAuthor: 'alice' }).flags, []);

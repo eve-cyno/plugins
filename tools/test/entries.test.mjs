@@ -139,6 +139,22 @@ describe('EN C1 shape', () => {
     assert.ok(has(problems(entry({ provenance: { repo: 'a/b', extra: 1 } })), 'C1'));
     assert.ok(has(problems(entry({ provenance: { workflow: 'x.yml' } })), 'C1'));
   });
+  test('EN-c1-unlisted: "unlisted" is true or absent; at most 50 listed versions (the app\'s limit), 200 in all', () => {
+    const u = (n, extra = {}) => version(`1.0.${n}`, SHA_A, extra);
+    assert.deepEqual(problems(entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_A, { unlisted: true })] })), []);
+    for (const bad of [false, 'yes', 1]) assert.ok(has(problems(entry({ versions: [version('1.0.0', SHA_A, { unlisted: bad })] })), 'C1'), String(bad));
+    const listed50 = Array.from({ length: 50 }, (_, i) => u(199 - i));
+    const unlisted150 = Array.from({ length: 150 }, (_, i) => u(149 - i, { unlisted: true }));
+    assert.deepEqual(problems(entry({ versions: [...listed50, ...unlisted150] })), [], '50 listed and 150 unlisted');
+    assert.ok(has(problems(entry({ versions: [...listed50, ...unlisted150, version('0.9.0', SHA_A, { unlisted: true })] })), 'C1', /schema/), '201 versions');
+    const listed51 = Array.from({ length: 51 }, (_, i) => u(199 - i));
+    assert.ok(has(problems(entry({ versions: listed51 })), 'C1', /host/), '51 listed');
+  });
+  test('EN-c1-all-unlisted: an entry whose every version is unlisted passes; each unlisted version is still checked', () => {
+    assert.deepEqual(problems(entry({ versions: [version('1.1.0', SHA_B, { unlisted: true }), version('1.0.0', SHA_A, { unlisted: true })] })), []);
+    const bad = entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_A, { unlisted: true, permissions: { network: ['http://api.example.com'] } })] });
+    assert.ok(has(problems(bad), 'C1', /host/), 'a malformed unlisted version');
+  });
   test('EN-c1-versions-required: a plugin needs at least one version', () => {
     assert.ok(has(problems(entry({ versions: [] })), 'C1'));
   });
@@ -206,8 +222,32 @@ describe('EN C8 version rules', () => {
   test('EN-c8-no-base: a new entry is checked for order only', () => {
     assert.deepEqual(checkVersionRules(entry(), null), []);
   });
-  test('EN-c8-unlist-allowed: removing an old version is fine', () => {
-    assert.deepEqual(checkVersionRules(entry({ versions: [version('1.1.0', SHA_B)] }), entry()), []);
+  test('EN-c8-unlist: a merged version is unlisted with "unlisted": true and keeps its pins', () => {
+    assert.deepEqual(checkVersionRules(entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_A, { unlisted: true })] }), entry()), []);
+    const swapped = entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_C, { unlisted: true })] });
+    assert.ok(has(checkVersionRules(swapped, entry()), 'C8', /1\.0\.0: sha256 of a merged version never changes/));
+  });
+  test('EN-c8-remove-refused: a merged version is never removed, so its number can never come back with other bytes', () => {
+    const r = checkVersionRules(entry({ versions: [version('1.1.0', SHA_B)] }), entry());
+    assert.ok(has(r, 'C8', /1\.0\.0: a merged version is never removed/), JSON.stringify(r));
+    assert.ok(has(checkVersionRules(entry({ versions: [version('1.0.0', SHA_A)] }), entry()), 'C8', /1\.1\.0: a merged version is never removed/));
+  });
+  test('EN-c8-relist-refused: an unlisted version stays unlisted', () => {
+    const base = entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_A, { unlisted: true })] });
+    assert.ok(has(checkVersionRules(entry(), base), 'C8', /1\.0\.0: an unlisted version stays unlisted/));
+    assert.deepEqual(checkVersionRules(base, base), []);
+  });
+  test('EN-c8-add-unlisted-refused: a version is listed when it is added (only a merged version is unlisted)', () => {
+    const head = entry({ versions: [version('1.2.0', SHA_C, { unlisted: true }), ...entry().versions] });
+    assert.ok(has(checkVersionRules(head, entry()), 'C8', /1\.2\.0: an added version is listed/));
+    assert.ok(has(checkVersionRules(entry({ versions: [version('1.0.0', SHA_A, { unlisted: true })] }), null), 'C8', /an added version is listed/));
+  });
+  test('EN-c8-swap-across-prs: re-adding an unlisted version with other bytes is refused (repro 2)', () => {
+    const base = entry({ versions: [version('2.0.0', SHA_B, { unlisted: true }), version('1.0.0', SHA_A)] });
+    const head = entry({ versions: [version('2.0.0', SHA_C), version('1.0.0', SHA_A)] });
+    const r = checkVersionRules(head, base);
+    assert.ok(has(r, 'C8', /2\.0\.0: sha256 of a merged version never changes/), JSON.stringify(r));
+    assert.ok(has(r, 'C8', /2\.0\.0: an unlisted version stays unlisted/));
   });
   test('EN-c8-order: not newest first', () => {
     assert.ok(has(checkVersionRules(entry({ versions: [version('1.0.0', SHA_A), version('1.1.0', SHA_B)] }), null), 'C8', /newest first/));
@@ -232,8 +272,9 @@ describe('EN C8 version rules', () => {
     assert.ok(has(checkVersionRules(head, entry()), 'C8', /1\.0\.5/));
   });
   test('EN-c8-new-below-base-max-after-unlist: unlisting the top does not lower the floor', () => {
-    const head = entry({ versions: [version('1.0.5', SHA_C), version('1.0.0', SHA_A)] });
-    assert.ok(has(checkVersionRules(head, entry()), 'C8', /1\.0\.5/));
+    const base = entry({ versions: [version('1.1.0', SHA_B, { unlisted: true }), version('1.0.0', SHA_A)] });
+    const head = entry({ versions: [version('1.1.0', SHA_B, { unlisted: true }), version('1.0.5', SHA_C), version('1.0.0', SHA_A)] });
+    assert.ok(has(checkVersionRules(head, base), 'C8', /1\.0\.5: an added version must be above every version already merged \(1\.1\.0\)/));
   });
   test('EN-c8-bad-semver: no throw', () => {
     assert.ok(has(checkVersionRules(entry({ versions: [version('nope', SHA_A)] }), null), 'C8'));
@@ -302,6 +343,13 @@ describe('EN mapping to the index-build source', () => {
     assert.deepEqual(toIndexSource([entry()], star, arch).plugins, []);
     const both = [{ id: 'dev.example.intel', versions: ['1.0.0', '1.1.0'], reason: 'Bad', date: '2026-12-02' }];
     assert.deepEqual(toIndexSource([entry()], both, arch).plugins, []);
+  });
+  test('EN-map-unlisted: an unlisted version is left out of the catalog and the listing, and so is a listing with none left', () => {
+    const e = entry({ versions: [version('1.1.0', SHA_B), version('1.0.0', SHA_A, { unlisted: true })] });
+    assert.deepEqual(toIndexSource([e], [], arch).plugins[0].versions.map(v => v.version), ['1.1.0']);
+    assert.deepEqual(toListing(e).versions.map(v => v.version), ['1.1.0']);
+    const all = entry({ versions: [version('1.1.0', SHA_B, { unlisted: true }), version('1.0.0', SHA_A, { unlisted: true })] });
+    assert.deepEqual(toIndexSource([all], [], arch).plugins, []);
   });
   test('EN-map-revoked-other-id: another id does not touch it', () => {
     const rev = [{ id: 'dev.example.other', versions: '*', reason: 'Bad', date: '2026-12-02' }];

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plugins.eve-cyno.dev/schemas/entry.v1.json",
   "title": "EVE-Cyno plugin index entry v1",
-  "description": "Covers only this repository's own fields. The listing fields (id, type, name, author, summary, description, categories, source, and each version's version, released, changes, engines, permissions) are checked by the host's own listingProblem and parseCatalog (tools/lib/entries.mjs), never copied here.",
+  "description": "Covers only this repository's own fields. The listing fields (id, type, name, author, summary, description, categories, source, and each version's version, released, changes, engines, permissions) are checked by the host's own listingProblem and parseCatalog (tools/lib/entries.mjs), never copied here. A merged version is never removed: \"unlisted\": true leaves it out of the catalog and keeps it pinned (url, sha256, size), so its number never comes back with other bytes. At most 50 versions are listed (the app's limit), 200 in all.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "id", "type", "versions"],
@@ -34,7 +34,7 @@
     "versions": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 50,
+      "maxItems": 200,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -47,7 +47,8 @@
           "permissions": true,
           "url": { "type": "string", "maxLength": 2048, "pattern": "^https://" },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "size": { "type": "integer", "minimum": 1, "maximum": 33554432 }
+          "size": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+          "unlisted": { "const": true }
         }
       }
     }

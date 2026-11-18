@@ -48,11 +48,14 @@ export function checkCatalogMirrors(catalog) {
   return out;
 }
 
-/** The catalog listing of an entry: the host's fields only, each archive at its mirror URL. Needs a shape-valid entry. */
-export function toListing(entry) {
+/** Whether a version is listed: a merged version marked `"unlisted": true` stays in its entry, pinned, but out of the catalog. */
+export const isListed = (v) => v?.unlisted !== true;
+
+/** The listing of an entry with `versions`: the host's fields only, each archive at its mirror URL. */
+function listingOf(entry, versions) {
   return {
     ...pick(entry, ['id', 'type', 'name', 'author', 'firstParty', 'summary', 'description', 'categories', 'source']),
-    versions: entry.versions.map(v => ({
+    versions: versions.map(v => ({
       ...pick(v, ['version', 'released', 'changes']),
       archive: { url: mirrorUrl(v.sha256), sha256: v.sha256, size: v.size },
       ...(entry.type === 'plugin' ? pick(v, ['engines', 'permissions']) : {}),
@@ -60,12 +63,29 @@ export function toListing(entry) {
   };
 }
 
+/** The catalog listing of an entry: its listed versions (never an unlisted one). Needs a shape-valid entry. */
+export const toListing = (entry) => listingOf(entry, entry.versions.filter(isListed));
+
 const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-/** The host's own read-back of one listing: listingProblem, then parseCatalog (nothing dropped, categories and order unchanged). */
+/**
+ * The host's read-back of the entry: its listed versions as one listing (the app's limits, 50 versions at most), and each unlisted
+ * version as a listing of its own, so a version keeps the app's shape after it is unlisted. An entry with no listed version is read
+ * through its unlisted ones only.
+ */
 function hostProblems(entry) {
+  const listed = entry.versions.filter(isListed);
+  const groups = [...(listed.length > 0 ? [listed] : []), ...entry.versions.filter(v => !isListed(v)).map(v => [v])];
+  for (const versions of groups) {
+    const out = listingProblems(listingOf(entry, versions));
+    if (out.length > 0) return out;
+  }
+  return [];
+}
+
+/** One listing through listingProblem, then parseCatalog (nothing dropped, categories and order unchanged). */
+function listingProblems(listing) {
   const out = [];
-  const listing = toListing(entry);
   const why = I.listingProblem(listing, MARKET_URL_PREFIX);
   if (why) return [prob('C1', `host listingProblem: the app drops this listing (${why})`)];
   try {
@@ -138,7 +158,9 @@ export function checkIds(files) {
 
 /**
  * C8: versions newest first and strictly increasing by semver; against `base` (the entry on the base branch, or null): a version
- * that is on the base keeps its url, sha256 and size (unlisting is fine), and an added version is strictly above every base version.
+ * that is on the base stays in the entry (it is unlisted with `"unlisted": true`, never removed) with its url, sha256 and size, and
+ * stays unlisted once it is; an added version is listed and strictly above every base version, unlisted ones included. So a version
+ * number, once merged, never comes back with other bytes, across any number of pull requests.
  */
 export function checkVersionRules(head, base) {
   const out = [];
@@ -161,9 +183,17 @@ export function checkVersionRules(head, base) {
       for (const k of ['url', 'sha256', 'size']) {
         if (v[k] !== b[k]) out.push(prob('C8', `${id} ${v.version}: ${k} of a merged version never changes (add a new version instead)`));
       }
-    } else if (floor !== undefined && typeof v?.version === 'string' && semver.valid(v.version) && !semver.gt(v.version, floor)) {
+      if (!isListed(b) && isListed(v)) out.push(prob('C8', `${id} ${v.version}: an unlisted version stays unlisted (add a new version instead)`));
+      continue;
+    }
+    if (!isListed(v)) out.push(prob('C8', `${id} ${String(v?.version).slice(0, 60)}: an added version is listed ("unlisted" marks a merged version only)`));
+    if (floor !== undefined && typeof v?.version === 'string' && semver.valid(v.version) && !semver.gt(v.version, floor)) {
       out.push(prob('C8', `${id} ${v.version}: an added version must be above every version already merged (${floor})`));
     }
+  }
+  const inHead = new Set(versions.map(v => v?.version));
+  for (const b of baseVersions) {
+    if (!inHead.has(b?.version)) out.push(prob('C8', `${id} ${String(b?.version).slice(0, 60)}: a merged version is never removed (set "unlisted": true; it stays pinned)`));
   }
   return out;
 }
@@ -200,13 +230,14 @@ const revokes = (rev, id, version) => rev.some(r => r?.id === id && (r.versions 
 
 /**
  * The index-build.mjs source {plugins, revoked}: entries sorted by id, known listing fields only, `archive` from
- * archiveFile(id, version) (a path relative to the source file); versions that `revoked` revokes are left out, and so is a listing
- * with none left (the app shows an installed revoked plugin from the revocation alone, R28). `revoked` is passed on unchanged.
+ * archiveFile(id, version) (a path relative to the source file); unlisted versions and versions that `revoked` revokes are left out,
+ * and so is a listing with none left (the app shows an installed revoked plugin from the revocation alone, R28). `revoked` is passed
+ * on unchanged.
  */
 export function toIndexSource(entries, revoked, archiveFile) {
   const plugins = [];
   for (const e of [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    const versions = e.versions.filter(v => !revokes(revoked, e.id, v.version)).map(v => ({
+    const versions = e.versions.filter(v => isListed(v) && !revokes(revoked, e.id, v.version)).map(v => ({
       ...pick(v, ['version', 'released', 'changes']),
       archive: archiveFile(e.id, v.version),
       ...(e.type === 'plugin' ? pick(v, ['engines', 'permissions']) : {}),

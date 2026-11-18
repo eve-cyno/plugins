@@ -78,9 +78,12 @@ export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
     if (prAuthor !== null && !sameEntry(head, base) && !(base.maintainers ?? []).some((m) => m.toLowerCase() === prAuthor.toLowerCase())) flags.add('identity');
   }
   const known = new Set((base?.versions ?? []).map((v) => v.version));
-  const all = [...(base?.versions ?? []), ...head.versions.filter((v) => !known.has(v.version))];
+  // The version before an added one is the greatest lower version that is listed, as the head lists them (unlisting is one-way, C8).
+  const listedNow = (v) => (head.versions.find((x) => x.version === v.version) ?? v).unlisted !== true;
+  const all = [...(base?.versions ?? []), ...head.versions.filter((v) => !known.has(v.version))].filter(listedNow);
   for (const v of head.versions) {
-    if (known.has(v.version)) continue;
+    // An unlisted version is never an added one (C8): against a live catalog, which leaves it out, it is not compared again.
+    if (known.has(v.version) || v.unlisted === true) continue;
     if (head.type !== 'theme' && !enginesReach(v.engines)) flags.add('engines');
     const prev = previousOf(v, all);
     if (prev === null) continue;

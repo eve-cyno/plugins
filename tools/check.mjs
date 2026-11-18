@@ -28,7 +28,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import semver from 'semver';
-import { MARKET_URL_PREFIX, checkCatalogMirrors, checkEntry as entryProblems, checkIds, checkVersionRules, readEntries, toListing } from './lib/entries.mjs';
+import { MARKET_URL_PREFIX, checkCatalogMirrors, checkEntry as entryProblems, checkIds, checkVersionRules, isListed, readEntries, toListing } from './lib/entries.mjs';
 import { checkArchiveBytes } from './lib/archives.mjs';
 import { checkEntry as diffEntry, checkNames } from './lib/diff.mjs';
 import { checkProvenance } from './lib/provenance.mjs';
@@ -126,13 +126,15 @@ const onBase = (b, version) => (b?.versions ?? []).some(v => v?.version === vers
 const revokedOn = (base, id, version) => base.revoked.some(r => isObj(r) && r.id === id
   && (r.versions === '*' || (Array.isArray(r.versions) && r.versions.includes(version))));
 
-// ---- C4-C7, C12: the archive of every version not on the base -----------------------------------------------------------------------------
+// ---- C4-C7, C12: the archive of every listed version not on the base ----------------------------------------------------------------------
 async function checkArchives(head, base) {
   for (const e of head.entries) {
+    // An unlisted version is not published (C8 refuses one added unlisted, so it was checked when it was added).
+    const todo = e.versions.filter(v => isListed(v) && !onBase(base.entries.get(e.id), v.version));
+    if (todo.length === 0) continue;
     const l = hostListing(e);
     if (!l) { R.fail('C1', `${e.id}: the app does not read the listing`); continue; }
-    for (const v of e.versions) {
-      if (onBase(base.entries.get(e.id), v.version)) continue;
+    for (const v of todo) {
       const at = `${e.id} ${v.version}`;
       const lv = l.versions.find(x => x.version === v.version);
       const got = await obtainArchive(v, { cache });
@@ -154,16 +156,21 @@ function checkRules(head, base) {
   for (const e of head.entries) {
     let b = base.entries.get(e.id) ?? null;
     // A live catalog names no author URL: C8 holds a live version to its SHA-256 and size (plan 4.2). It also leaves out the versions
-    // its revocations name; such a head version was merged before, so C8 counts it as on the base with its own pins (the PR checks
-    // held it to C8 against the base tree, and C4-C7 still check its archive here, since the live catalog does not list it).
-    if (b && base.kind === 'catalog') {
-      const live = b.versions.map(v => ({ ...v, url: e.versions.find(x => x.version === v.version)?.url }));
-      const lifted = e.versions.filter(v => !onBase(b, v.version) && revokedOn(base, e.id, v.version))
-        .map(v => ({ version: v.version, url: v.url, sha256: v.sha256, size: v.size }));
-      b = { ...b, versions: [...live, ...lifted] };
+    // its revocations name and the unlisted ones, and an entry with no version left; such a head version was merged before, so C8
+    // counts it as on the base with its own pins (the PR checks held it to C8 against the base tree; C4-C7 still check a revoked one
+    // here, since the live catalog does not list it).
+    if (base.kind === 'catalog') {
+      const live = (b?.versions ?? []).map(v => ({ ...v, url: e.versions.find(x => x.version === v.version)?.url }));
+      const kept = e.versions.filter(v => !onBase(b, v.version) && (revokedOn(base, e.id, v.version) || !isListed(v)))
+        .map(v => ({ version: v.version, url: v.url, sha256: v.sha256, size: v.size, ...(isListed(v) ? {} : { unlisted: true }) }));
+      if (b || kept.length > 0) b = { ...(b ?? { id: e.id }), versions: [...live, ...kept] };
     }
     for (const p of checkVersionRules(e, b)) R.fail(p.check, p.message);
     for (const why of checkNames(e, base.entries.get(e.id) ?? null, head.entries)) R.fail('C3', why.replace(/^C3 /, ''));
+  }
+  // A merged entry is never removed (its versions are unlisted instead), so its id never comes back with other bytes under old versions.
+  for (const id of base.entries.keys()) {
+    if (!head.entries.some(e => e.id === id)) R.fail('C8', `${id}: a merged entry is never removed (set "unlisted": true on its versions)`);
   }
   if (R.failed === before) R.pass('C3 C8', 'names, authors and version rules against the base');
 }
@@ -225,11 +232,13 @@ async function entryFlags(head, base) {
     const b = base.entries.get(e.id) ?? null;
     let he = e, be = b;
     if (e.type === 'plugin') {
-      // C10 reads `background` and optional permissions from the archives of each added version and of the version before it.
-      const all = [...(b?.versions ?? []), ...e.versions.filter(v => !onBase(b, v.version))].filter(v => semver.valid(v?.version));
+      // C10 reads `background` and optional permissions from the archives of each added version and of the listed version before it
+      // (diff.mjs: the head says which versions are unlisted).
+      const listedNow = (v) => isListed(e.versions.find(x => x.version === v.version) ?? v);
+      const all = [...(b?.versions ?? []), ...e.versions.filter(v => !onBase(b, v.version))].filter(v => semver.valid(v?.version) && listedNow(v));
       const need = new Set();
       for (const v of e.versions) {
-        if (onBase(b, v.version) || !semver.valid(v.version)) continue;
+        if (onBase(b, v.version) || !isListed(v) || !semver.valid(v.version)) continue; // an unlisted version is never added (C8)
         need.add(v.version);
         const prev = all.filter(o => semver.lt(o.version, v.version)).sort((x, y) => semver.rcompare(x.version, y.version))[0];
         if (prev) need.add(prev.version);

@@ -307,6 +307,23 @@ describe('E2E check.mjs', () => {
     assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.intel 1\.0\.0/m);
   });
 
+  test('E2E-check-publish-unlisted: against the live catalog an unlisted live version stays pinned; a removed one is refused', async () => {
+    // 1.1.0 is live and now unlisted; 1.0.0 is revoked (so not in the live catalog) and unlisted too: neither is added, checked or listed.
+    const unlisted = writeTree(path.join(T, 'tree-unlisted'), { entries: [pluginEntry([version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100, { unlisted: true })]), ENTRIES[1]], revoked: REVOKED });
+    const r = await check('publish', path.join(T, 'base'), unlisted, ['--target', 'production']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /^PASS C4-C7 dev\.example\.intel/m, 'an unlisted version is not checked again');
+    assert.match(r.stdout, /^PASS C16 .*\(1 archives\)/m, 'only the theme is listed');
+    const removed = writeTree(path.join(T, 'tree-removed'), { entries: [pluginEntry([version('1.0.0', A100)]), ENTRIES[1]], revoked: REVOKED });
+    const x = await check('publish', path.join(T, 'base'), removed, ['--target', 'production']);
+    assert.equal(x.code, 1, x.stdout + x.stderr);
+    assert.match(x.stdout, /^FAIL C8 dev\.example\.intel 1\.1\.0: a merged version is never removed/m);
+    const gone = writeTree(path.join(T, 'tree-gone'), { entries: [ENTRIES[1]], revoked: REVOKED });
+    const g = await check('publish', path.join(T, 'base'), gone, ['--target', 'production']);
+    assert.equal(g.code, 1, g.stdout + g.stderr);
+    assert.match(g.stdout, /^FAIL C8 dev\.example\.intel: a merged entry is never removed/m);
+  });
+
   test('E2E-check-refuses: a wrong pinned hash fails C5, and C16 does not run', async () => {
     const bad = writeTree(path.join(T, 'tree-bad'), { entries: [pluginEntry([version('1.1.0', A110, { sha256: sha(A100) })])] });
     const r = await check('refuse', path.join(T, 'empty'), bad);
@@ -314,5 +331,41 @@ describe('E2E check.mjs', () => {
     assert.match(r.stdout, /^FAIL C5 dev\.example\.intel 1\.1\.0: /m);
     assert.match(r.stdout, /^NOTE C16 and C9 are not run/m);
     assert.equal(last(r.stdout), 'CHECKS FAILED 1');
+  });
+
+  test('E2E-check-publish-unlisted-live: a version unlisted by an earlier publish, and an entry with none listed, pass against the live catalog', async () => {
+    // The live catalog was built from this tree: intel lists 1.2.0 only (1.1.0 unlisted, 1.0.0 revoked), dusk lists nothing.
+    const A120 = pluginZip(manifest({ version: '1.2.0' }));
+    cacheArchive(path.join(T, 'cache'), A120);
+    const tree = writeTree(path.join(T, 'tree-unlisted-live'), {
+      entries: [pluginEntry([version('1.2.0', A120), version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100)]), themeEntry([version('2.0.0', DUSK, { unlisted: true }, 'theme')])], revoked: REVOKED,
+    });
+    const out = path.join(T, 'index-unlisted-live');
+    const bu = await build(out, tree);
+    assert.equal(bu.code, 0, bu.stdout + bu.stderr);
+    signFolder(out);
+    servedRoot = out;
+    const base = path.join(T, 'base-unlisted-live');
+    const b = await run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'false', '--out', base, ...keyArgs()]);
+    servedRoot = path.join(T, 'index');
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(base, 'catalog.json'), 'utf8')).plugins.map(l => [l.id, l.versions.map(v => v.version)]), [['dev.example.intel', ['1.2.0']]]);
+    const r = await check('publish', base, tree, ['--target', 'production']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+    assert.doesNotMatch(r.stdout, /could not be read/, 'an unlisted version is never an added one for C10');
+    // A live catalog cannot tell a version listed again from an added one; the pull request's checks against the base tree refuse it.
+  });
+
+  test('E2E-review-unlist-and-add: the archive read for C10 is the listed version before the added one, as the head lists them', async () => {
+    // The pull request adds 1.2.0 and unlists 1.1.0: C10 compares 1.2.0 with 1.0.0, so 1.0.0's archive is read and 1.1.0's is not.
+    const A120 = pluginZip(manifest({ version: '1.2.0' }));
+    const cache = path.join(T, 'unlist-add-cache');
+    for (const z of [A120, A100]) cacheArchive(cache, z);
+    const base = writeTree(path.join(T, 'tree-unlist-add-base'), { entries: [pluginEntry([version('1.1.0', A110), version('1.0.0', A100)])], revoked: [] });
+    const head = writeTree(path.join(T, 'tree-unlist-add-head'), { entries: [pluginEntry([version('1.2.0', A120), version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100)])], revoked: [] });
+    const r = await run('tools/check.mjs', ['review', '--base', base, '--head', head, '--archive-cache', cache, '--author', 'example-login']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED');
   });
 });
