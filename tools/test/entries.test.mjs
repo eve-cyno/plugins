@@ -44,10 +44,24 @@ describe('EN reading', () => {
     assert.deepEqual(r.entries.map(e => e.file), ['dev.example.intel.json', 'dev.example.zeta.json']);
     assert.equal(r.entries[0].entry.id, 'dev.example.intel');
   });
-  test('EN-read-gitkeep: dotfiles are ignored', () => {
+  test('EN-read-gitkeep: an empty .gitkeep is the one dotfile allowed', () => {
     const d = tempDir();
     fs.writeFileSync(path.join(d, '.gitkeep'), '');
     assert.deepEqual(readEntries(d), { entries: [], problems: [] });
+    fs.writeFileSync(path.join(d, '.gitkeep'), 'x');
+    assert.ok(has(readEntries(d).problems, 'C1', /\.gitkeep/), 'a .gitkeep with content');
+  });
+  test('EN-read-dotfile: any other dotfile is refused (.gitattributes would change every later base)', () => {
+    for (const name of ['.gitattributes', '.hidden.json', '.DS_Store']) {
+      const d = tempDir();
+      fs.writeFileSync(path.join(d, name), '*.json export-ignore\n');
+      const r = readEntries(d);
+      assert.ok(has(r.problems, 'C1', /<id>\.json/), name);
+      assert.equal(r.problems[0].file, name);
+    }
+    const g = tempDir();
+    fs.mkdirSync(path.join(g, '.github'));
+    assert.ok(has(readEntries(g).problems, 'C1', /<id>\.json/), 'a dot folder');
   });
   test('EN-read-bad-json: not JSON is a C1 problem, never a throw', () => {
     const d = tempDir();

@@ -168,16 +168,25 @@ export function checkVersionRules(head, base) {
   return out;
 }
 
-/** Reads entries/*.json of `dir`: {entries: [{file, entry}] sorted by file name, problems}. Dotfiles are ignored; nothing here throws. */
+/**
+ * Reads entries/*.json of `dir`: {entries: [{file, entry}] sorted by file name, problems}; nothing here throws. entries/ holds
+ * `<id>.json` files and an empty `.gitkeep`, nothing else (C1): any other dotfile is refused, a `.gitattributes` above all, which would
+ * change what git does with the entries (export-ignore, export-subst), and so is a folder at any depth.
+ */
 export function readEntries(dir) {
   const entries = [], problems = [];
   let names;
-  try { names = fs.readdirSync(dir).filter(n => !n.startsWith('.')).sort(); } catch { return { entries, problems: [prob('C1', 'the entries folder cannot be read')] }; }
+  try { names = fs.readdirSync(dir).sort(); } catch { return { entries, problems: [prob('C1', 'the entries folder cannot be read')] }; }
   for (const file of names) {
     const full = path.join(dir, file);
     let st;
     try { st = fs.lstatSync(full); } catch { problems.push(prob('C1', 'cannot be read', file)); continue; }
-    if (!st.isFile()) { problems.push(prob('C1', 'not a regular file (a link or a folder)', file)); continue; }
+    if (file === '.gitkeep') {
+      if (!st.isFile() || st.size !== 0) problems.push(prob('C1', '.gitkeep must be an empty regular file', file));
+      continue;
+    }
+    if (file.startsWith('.')) { problems.push(prob('C1', 'entries/ holds <id>.json files and an empty .gitkeep only, no other dotfile', file)); continue; }
+    if (!st.isFile()) { problems.push(prob('C1', 'not a regular file (a link or a folder): entries/ holds <id>.json files only, at its top level', file)); continue; }
     if (!file.endsWith('.json')) { problems.push(prob('C1', 'entries are .json files only', file)); continue; }
     let value;
     try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(full))); } catch { problems.push(prob('C1', 'not JSON (UTF-8)', file)); continue; }

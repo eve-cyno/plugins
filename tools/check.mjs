@@ -9,7 +9,7 @@
 //   review  --base <dir> --head <dir> [--author <login>] [--summary <file>] [--archive-cache <dir>]   check.yml, job review
 //     The review classes: first-party (C3), escalation and identity (C10: the host's delta of requested permissions, background turned
 //     on, name or author changed; the background flag and optional permissions read from each archive's plugin.json), new (C11),
-//     maintenance (C13: anything changed outside entries/** and revoked.json), identity (C14: the author is not a maintainer of the
+//     maintenance (C13: anything changed but entries/<id>.json and revoked.json), identity (C14: the author is not a maintainer of the
 //     base entry), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes> when any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
@@ -265,7 +265,7 @@ async function entryFlags(head, base) {
   }
 }
 
-/** C13: every path outside entries/** and revoked.json whose content, type or mode differs between the two trees. */
+/** C13: every path other than entries/<id>.json and revoked.json whose content, type or mode differs between the two trees. */
 function treeFiles(dir) {
   const out = new Map();
   const add = (rel) => {
@@ -291,11 +291,12 @@ function treeFiles(dir) {
   return out;
 }
 function scopeFlag() {
-  const inScope = (p) => p.startsWith('entries/') || p === 'revoked.json';
+  // An entry file sits at the top of entries/ and is no dotfile; anything else there (.gitattributes, .gitkeep, a folder) is maintenance.
+  const inScope = (p) => /^entries\/[^/.][^/]*\.json$/.test(p) || p === 'revoked.json';
   const h = treeFiles(headDir), b = treeFiles(baseDir);
   const changed = [...new Set([...h.keys(), ...b.keys()])].filter(p => !inScope(p) && h.get(p) !== b.get(p)).sort();
-  if (changed.length > 0) R.flag('maintenance', 'C13', `${changed.length} path(s) outside entries/** and revoked.json: ${changed.slice(0, 10).join(', ')}${changed.length > 10 ? ', ...' : ''}`);
-  else R.pass('C13', 'only entries/** and revoked.json change');
+  if (changed.length > 0) R.flag('maintenance', 'C13', `${changed.length} path(s) outside entries/<id>.json and revoked.json: ${changed.slice(0, 10).join(', ')}${changed.length > 10 ? ', ...' : ''}`);
+  else R.pass('C13', 'only entries/<id>.json and revoked.json change');
 }
 
 // ---- run --------------------------------------------------------------------------------------------------------------------------------

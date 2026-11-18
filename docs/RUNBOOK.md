@@ -100,8 +100,8 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
   dispatches and approves under his own identity: GitHub cannot tell the owner's action from an agent's suggestion, and self-review
   prevention is off. **Only the reading before every approval catches this**: `<A>` from `tools/approved-base.mjs`, the compare view
-  from `<A>` with every change outside `entries/**` and `revoked.json` read, and the owner's own list. Without the owner's approval on
-  his phone such a run still reaches no secret.
+  from `<A>` with every change other than the `entries/<id>.json` files and `revoked.json` read, and the owner's own list. Without
+  the owner's approval on his phone such a run still reaches no secret.
 - **Not testable**, so the owner's rules: that no agent shell ever gets a GitHub token with more rights than the agents' token (the
   owner's everyday token, which has `admin:org`, can approve deployments and rewrite environments) or a signed-in GitHub session; and
   that the settings were not changed and changed back between two runs of the check.
@@ -221,14 +221,15 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    aside); a run of the list no longer shows on GitHub; or the live base (the verified live head, or R2's base) has a `generated` older
    than that newest entry's (an older verified head was replayed).
 4. **First publish only** (the tool says `FIRST PUBLISH`, there is no `<A>`): allowed only while no entry of your list has a
-   successful `upload`. After such an entry, a run that calls itself a first publish means **no approval**. Read every file outside
-   `entries/**` and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`), `package-lock.json`
-   included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <pinned
-   commit>` output.
+   successful `upload`. After such an entry, a run that calls itself a first publish means **no approval**. Read every file other
+   than the `entries/<id>.json` files and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`),
+   `package-lock.json` included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop
+   checkout> --rev <pinned commit>` output.
 5. **Check the direction, then read the change.** The compare status of `<A>` to `<B>` must be `ahead` or `identical`; `behind` or
-   `diverged` means **no approval**. Then read `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change outside
-   `entries/**` and `revoked.json`** (workflows, tools, vendor, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs),
-   because `npm ci` in `build` and `upload` runs what the manifest and lock file name, with the `mirror` secrets in `upload`. Read the
+   `diverged` means **no approval**. Then read `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change other than
+   the `entries/<id>.json` files and `revoked.json`** (anything else in `entries/` too, such as a `.gitattributes`; workflows, tools,
+   vendor, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs), because `npm ci` in `build` and `upload` runs what the
+   manifest and lock file name, with the `mirror` secrets in `upload`. Read the
    entries and revocations in the summary and the pull request. Anything unexpected: no approval.
 6. **Repair runs only** (`repair: true`): the coordinator hands over the output of a local
    `node vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` that shows the live index failing to verify. Read in the run

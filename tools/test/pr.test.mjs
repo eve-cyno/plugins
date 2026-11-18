@@ -112,8 +112,36 @@ describe('PR fixture suite', () => {
     const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'tools/check.mjs': '// new: passes everything\n' } });
     const r = await check('review', base, h, ['--author', 'example-login']);
     assert.equal(r.code, 3, r.stdout + r.stderr);
-    assert.match(r.stdout, /^FLAG maintenance C13 1 path\(s\) outside entries\/\*\* and revoked\.json: tools\/check\.mjs/m);
+    assert.match(r.stdout, /^FLAG maintenance C13 1 path\(s\) outside entries\/<id>\.json and revoked\.json: tools\/check\.mjs/m);
     assert.equal(last(r.stdout), 'NEEDS REVIEW maintenance');
+  });
+
+  test('PR-entries-dotfile: entries/.gitattributes is refused at C1 and flagged maintenance by C13', async () => {
+    const base = baseTree();
+    const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/.gitattributes': '*.json export-ignore\n' } });
+    const r = await check('refuse', base, h);
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FAIL C1 entries\/\.gitattributes: /m);
+    const v = await check('review', base, h, ['--author', 'example-login']);
+    assert.match(v.stdout, /^FLAG maintenance C13 1 path\(s\) outside entries\/<id>\.json and revoked\.json: entries\/\.gitattributes/m);
+    assert.doesNotMatch(v.stdout, /^PASS C13/m);
+  });
+
+  test('PR-entries-subfolder: a file in a folder below entries/ is refused at C1 and flagged maintenance by C13', async () => {
+    const base = baseTree();
+    const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/x/.gitattributes': '* export-ignore\n', 'entries/x/dev.example.y.json': '{}' } });
+    const r = await check('refuse', base, h);
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FAIL C1 entries\/x: /m);
+    const v = await check('review', base, h, ['--author', 'example-login']);
+    assert.match(v.stdout, /^FLAG maintenance C13 2 path\(s\) outside entries\/<id>\.json and revoked\.json: entries\/x\/\.gitattributes, entries\/x\/dev\.example\.y\.json/m);
+  });
+
+  test('PR-entries-gitkeep: a change to entries/.gitkeep or a dot .json file is maintenance, not an entry change', async () => {
+    const base = baseTree();
+    const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/.gitkeep': 'x', 'entries/.hidden.json': '{}' } });
+    const v = await check('review', base, h, ['--author', 'example-login']);
+    assert.match(v.stdout, /^FLAG maintenance C13 2 path\(s\) outside entries\/<id>\.json and revoked\.json: entries\/\.gitkeep, entries\/\.hidden\.json/m);
   });
 
   test('PR-lift: removing a revocation is flagged NEEDS REVIEW lift', async () => {

@@ -17,7 +17,7 @@ A maintainer reviews every new plugin and every version that asks for more permi
 
 ## Layout
 
-- `entries/<id>.json`: one entry per plugin or theme package.
+- `entries/<id>.json`: one entry per plugin or theme package; nothing else belongs in `entries/` but an empty `.gitkeep` (check C1).
 - `revoked.json`: the revocation list source (`[]` at first).
 - `flags.json`: reserved (`{}`).
 - `tools/`: the checks and the index build (added step by step).
