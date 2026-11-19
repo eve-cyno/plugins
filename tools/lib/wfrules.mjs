@@ -1,7 +1,8 @@
-// tools/lib/wfrules.mjs: the static rules C-WF1 to C-WF11 over .github/workflows (plan task 1.8, sections 3.4, 4.2, 4.3, 6.4 and 8).
+// tools/lib/wfrules.mjs: the static rules C-WF1 to C-WF12 over .github/workflows (plan task 1.8, sections 3.4, 4.2, 4.3, 6.4 and 8).
 // Each rule takes the loaded workflows and returns its problems, one line each; an empty list is a pass. The workflows are read with
 // the strict subset reader of yamlsub.mjs, so a file this code cannot read the way GitHub does fails every rule. The rules read the
 // files only; they run nothing.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseYaml } from './yamlsub.mjs';
@@ -49,6 +50,35 @@ const PIN_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?@[0-9a-f]{
 /** A `uses:` line as C-WF2 wants it written: the action, its 40-hex commit and the release tag as a trailing comment. */
 const USES_LINE_RE = /^ *(?:- +)?uses: +([A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?)@([0-9a-f]{40}) +# (v[0-9]+\.[0-9]+\.[0-9]+)$/;
 export const UPLOAD_IF = "!cancelled() && needs.build.result == 'success' && ((inputs.target == 'production' && needs.sign.result == 'success') || (inputs.target == 'test' && needs.sign-test.result == 'success'))";
+/** publish.yml verify's if (C-WF12): upload ran and succeeded, whichever of sign and sign-test was skipped. */
+export const VERIFY_IF = "!cancelled() && needs.upload.result == 'success'";
+/** The only runner a job may name (C-WF5): GitHub's hosted Ubuntu 24.04, never a self-hosted machine or a label list. */
+const RUNNER = 'ubuntu-24.04';
+/**
+ * C-WF7: the steps of both sign jobs, in order: each step's name and the SHA-256 of the whole step as canonical JSON (mapping keys
+ * sorted at every level, see canon), so an added, removed or moved step fails, and so does a changed run, env, with, if or uses.
+ * A change to a sign job changes this list in the same commit, and the rules a reviewer runs from a trusted checkout still hold the
+ * old list: a pull request cannot change a sign job and its pin together.
+ */
+const SIGN_STEPS = Object.freeze([
+  ['Refuse a re-run', '8ea6e265a2443446ea87f4fddd360381ee7796e64f405200a9720653eea0112c'],
+  ['Check out the pinned public keys only', 'cb29b1bbdc7a735b26a9d8e7f6f5838b06fa16e4122d0f253836b766940e668e'],
+  ['Check that nothing but the public keys is checked out', '639ad37b784da6761d76deee1a28fde5312203e188284c48204433867af60e4c'],
+  ['Download the head', 'fe25c749d019cae6983c395f5a5a2f09511eb2ec2b625c4929c8b5a39922221a'],
+  ['Check the head', '8a0d87ce6388f3144fc26c3fe3b6a1cc40b412dc8b9e79b7d89af507691b2174'],
+  ["Install minisign (Ubuntu's package)", 'e74c83aee20fa376add918ba57699f7e1852f9a74c1311c9f5cc92bc803e3cd8'],
+  ["Check that minisign is Ubuntu's", 'e5989d9baec687b69fe7aa9a51125caa3528af68cad3ff8ff16943200f706559'],
+  ['Sign with the index key', '120d06026e3722118571fe2949bbba6171d78577f3ea2fa52a593fbe0b9d1107'],
+  ['Shred the secret key file', '7276c82848efebf6e90d2632b8a3676ea1a0d5a3b7334d18cf975d1e5fe7e429'],
+  ['Verify against the pinned public key', '5d07dbb8daf6499905bc75259a00860baa377ea431026fb0b6aed7582cdeb942'],
+  ['Keep the signature (90 days)', 'acb7e8e3707bde5c119117b71dc661f5b452c85c5516274e555f68804d227861'],
+].map(Object.freeze));
+const PIN_HOW = 'a changed sign job needs its new pin in SIGN_STEPS, tools/lib/wfrules.mjs, read with the change';
+/**
+ * C-WF12: the jobs whose skip ends a run on purpose, so every job after them may keep GitHub's default if and be skipped with them:
+ * resign.yml head (check found no re-sign needed; sign, upload and verify have nothing to do). C-WF10 pins head's if.
+ */
+const RUN_GATES = Object.freeze({ 'resign.yml': ['head'] });
 
 const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const keys = (v) => (isMap(v) ? Object.keys(v) : []);
@@ -59,6 +89,11 @@ const where = (f, id, k) => `${f} job ${id}${k ? ` step ${k}` : ''}`;
 /** The expression inside `${{ }}` with its whitespace collapsed; a value without the wrapper is collapsed as it is. */
 export const expr = (v) => (typeof v === 'string' ? v.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, '$1').replace(/\s+/g, ' ').trim() : v);
 const exprs = (text) => [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+/** `v` as canonical JSON: the mapping keys sorted at every level. */
+const canon = (v) => (isMap(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`
+  : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : JSON.stringify(v ?? null));
+const sha256 = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+const orList = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
 const isUpload = (s) => isMap(s) && typeof s.uses === 'string' && s.uses.startsWith('actions/upload-artifact@');
 const isCheckout = (s) => isMap(s) && typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@');
 const stepsOf = (job) => (isMap(job) && Array.isArray(job.steps) ? job.steps : []);
@@ -198,11 +233,14 @@ function cwf4(ws) {
 /**
  * C-WF5: MINISIGN_ secrets only in jobs with environment index, R2_ secrets and variables only with environment mirror, no other
  * secret or variable, no toJSON(secrets), no secrets: inherit, nothing outside the jobs; index only on sign, mirror only on upload;
- * permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes.
+ * permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes. Every job runs on
+ * runs-on: ubuntu-24.04 itself: no container, no services, no self-hosted runner or label list; no env at workflow level (it would
+ * reach every job, the sign jobs included).
  */
 function cwf5(ws) {
   const p = [...ws.errors];
   for (const [f, w] of Object.entries(ws.wf)) {
+    if ('env' in w.doc) p.push(`${f}: env at workflow level (it reaches every job, the sign jobs included; set env on a job or a step)`);
     if (/toJSON\s*\(\s*secrets\s*\)/i.test(w.text)) p.push(`${f}: toJSON(secrets)`);
     if (/^\s*secrets\s*:\s*inherit\b/m.test(w.text)) p.push(`${f}: secrets: inherit`);
     if (/\bsecrets\s*\[/.test(w.text)) p.push(`${f}: secrets[...] (only secrets.<NAME> is read)`);
@@ -214,6 +252,8 @@ function cwf5(ws) {
     for (const e of exprs(outside)) if (/\b(secrets|vars)\b/.test(e)) p.push(`${f}: a secret or variable outside the jobs: \${{${e}}}`);
     for (const [id, job] of Object.entries(jobs)) {
       if (!isMap(job)) { p.push(`${where(f, id)}: not a mapping`); continue; }
+      for (const k of ['container', 'services']) if (k in job) p.push(`${where(f, id)}: ${k} (a job runs on GitHub's hosted runner itself, with no image in or beside it)`);
+      if (job['runs-on'] !== RUNNER) p.push(`${where(f, id)}: runs-on ${JSON.stringify(job['runs-on'] ?? null)}, expected ${RUNNER} (GitHub's hosted runner only)`);
       const env = job.environment;
       const want = JOB_ENV[f]?.[id];
       if (env !== undefined && typeof env !== 'string') p.push(`${where(f, id)}: environment must be a plain name`);
@@ -259,7 +299,8 @@ function cwf6(ws) {
 /**
  * C-WF7: the sign jobs of publish.yml and resign.yml have byte-identical steps and the same job-level env keys (HEAD_SHA256,
  * HEAD_COMMENT); they differ only in the needs job and the outputs source of that env (and publish.yml's target if, C-WF8). They
- * check out only the public keys folder and run no npm, Node or AWS CLI. Head, signature and catalog artifacts are kept 90 days.
+ * check out only the public keys folder and run no npm, Node or AWS CLI. Their steps are exactly SIGN_STEPS: each step's name and
+ * the SHA-256 of the whole step. Head, signature and catalog artifacts are kept 90 days.
  */
 function cwf7(ws) {
   const p = [...ws.errors];
@@ -279,6 +320,15 @@ function cwf7(ws) {
     if (f === 'resign.yml' && 'if' in job) p.push(`${where(f, 'sign')}: if (it runs whenever head succeeded)`);
     const steps = stepsOf(job);
     if (steps.length === 0) p.push(`${where(f, 'sign')}: no steps`);
+    if (steps.length !== SIGN_STEPS.length) p.push(`${where(f, 'sign')}: ${steps.length} steps, the pinned list has ${SIGN_STEPS.length} (${PIN_HOW})`);
+    for (let k = 0; k < Math.min(steps.length, SIGN_STEPS.length); k++) {
+      const [name, sum] = SIGN_STEPS[k];
+      const got = { name: isMap(steps[k]) ? steps[k].name ?? null : null, sum: sha256(canon(steps[k])) };
+      if (got.name !== name || got.sum !== sum) {
+        p.push(`${where(f, 'sign', k + 1)}: ${JSON.stringify(got.name)} sha256 ${got.sum}, pinned ${JSON.stringify(name)} sha256 ${sum} (${PIN_HOW})`);
+        break;
+      }
+    }
     const wantWith = { ref: SHA_EXPR, 'persist-credentials': 'false', 'sparse-checkout': KEYS_DIR, 'sparse-checkout-cone-mode': 'false' };
     const co = steps.filter(isCheckout);
     if (co.length !== 1 || !isMap(co[0].with) || !same(sorted(Object.entries(co[0].with)), sorted(Object.entries(wantWith)))) {
@@ -471,6 +521,72 @@ function cwf11(ws) {
   return p;
 }
 
+/** The top-level && terms of an expression (outside parentheses and quotes), or null with an || at the top level or bad nesting. */
+function andTerms(e) {
+  const out = [];
+  let depth = 0;
+  let from = 0;
+  for (let k = 0; k < e.length; k++) {
+    const c = e[k];
+    if (c === "'") {
+      for (k++; k < e.length && !(e[k] === "'" && e[k + 1] !== "'"); k += e[k] === "'" ? 2 : 1);
+      if (k >= e.length) return null;
+    } else if (c === '(') depth++;
+    else if (c === ')') { if (--depth < 0) return null; }
+    else if (depth === 0 && e.startsWith('||', k)) return null;
+    else if (depth === 0 && e.startsWith('&&', k)) { out.push(e.slice(from, k).trim()); from = k + 2; k++; }
+  }
+  if (depth !== 0) return null;
+  out.push(e.slice(from).trim());
+  return out;
+}
+
+/**
+ * C-WF12: GitHub gives a job without an if the default success(), which is false when any job before it in the needs chain was
+ * skipped, not only the ones it names (publish run 44491400412: sign-test signed, sign was skipped, upload ran on its own if and
+ * verify was skipped, a green run with no read-back). So a job after a job with an if keeps the default only when that job is a run
+ * gate (RUN_GATES); otherwise its own if has !cancelled() as a top-level && term, calls no always(), success() or failure(), and
+ * requires needs.<job>.result == 'success' for each job it names. Every needs names a job of the file. publish.yml verify: needs
+ * exactly [upload] and if VERIFY_IF.
+ */
+function cwf12(ws) {
+  const p = [...ws.errors];
+  for (const [f, w] of Object.entries(ws.wf)) {
+    const jobs = jobsOf(w);
+    const needsOf = (id) => listOf(isMap(jobs[id]) ? jobs[id].needs : undefined);
+    for (const [id, job] of Object.entries(jobs)) {
+      if (!isMap(job)) continue;
+      for (const n of needsOf(id)) if (!isMap(jobs[n])) p.push(`${where(f, id)}: needs ${n}, not a job of ${f}`);
+      const before = new Set();
+      for (const todo = [...needsOf(id)]; todo.length > 0;) {
+        const n = todo.pop();
+        if (before.has(n) || !isMap(jobs[n])) continue;
+        before.add(n);
+        todo.push(...needsOf(n));
+      }
+      const skippable = [...before].filter((n) => 'if' in jobs[n] && !(RUN_GATES[f] ?? []).includes(n)).sort();
+      if (skippable.length === 0) continue;
+      if (!('if' in job)) {
+        p.push(`${where(f, id)}: no if, so GitHub skips it whenever ${orList(skippable)} is skipped (give it if: \${{ !cancelled() && needs.<job>.result == 'success' }} for each job it needs)`);
+        continue;
+      }
+      const e = expr(job.if);
+      const terms = typeof e === 'string' ? andTerms(e) : null;
+      if (!terms || !terms.includes('!cancelled()')) p.push(`${where(f, id)}: if must have !cancelled() as a top-level && term (got ${JSON.stringify(e)})`);
+      const status = typeof e === 'string' ? /\b(always|success|failure)\s*\(/.exec(e) : null;
+      if (status) p.push(`${where(f, id)}: if calls ${status[1]}() (only !cancelled() decides on the jobs before it)`);
+      for (const n of needsOf(id)) {
+        if (typeof e !== 'string' || !e.includes(`needs.${n}.result == 'success'`)) p.push(`${where(f, id)}: if does not require needs.${n}.result == 'success'`);
+      }
+    }
+  }
+  const pw = ws.wf['publish.yml'];
+  if (!pw) return [...p, 'publish.yml: missing'];
+  const v = jobsOf(pw).verify;
+  if (!isMap(v) || !same(listOf(v.needs), ['upload']) || expr(v.if) !== VERIFY_IF) p.push(`publish.yml job verify: needs must be exactly [upload] and if \${{ ${VERIFY_IF} }}`);
+  return [...new Set(p)];
+}
+
 export const RULES = Object.freeze({
   'C-WF1': cwf1,
   'C-WF2': cwf2,
@@ -483,4 +599,5 @@ export const RULES = Object.freeze({
   'C-WF9': cwf9,
   'C-WF10': cwf10,
   'C-WF11': cwf11,
+  'C-WF12': cwf12,
 });

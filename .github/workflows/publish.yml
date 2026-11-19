@@ -12,10 +12,12 @@
 #   $RUNNER_TEMP and its passphrase to minisign's stdin from an unexported shell variable; an always() step shreds the key file.
 # - sign-test (target test): no environment, so no index secret can reach it; signs with a throwaway key made in the run.
 # - upload: environment mirror (main only, approved by its required reviewer); the R2 secrets reach its upload step only.
-# - verify: reads the live index back. A red verify is never re-run: re-check it locally (docs/RUNBOOK.md).
+# - verify: reads the live index back. A red verify is never re-run: re-check it locally (docs/RUNBOOK.md). It carries its own if
+#   (C-WF12): one of sign and sign-test is skipped in every run, and GitHub skips a job left with the default if whenever any job
+#   before it was skipped, even when upload succeeded.
 # - Inputs and outputs reach the scripts through env, never through an expression inside run.
 # - tools/build-index.mjs and tools/check.mjs come with plan task 1.7, tools/publish/ with task 2.4; the calls below are their
-#   command lines. tools/test/workflows.test.mjs checks the rules above on this file (C-WF1 to C-WF11).
+#   command lines. tools/test/workflows.test.mjs checks the rules above on this file (C-WF1 to C-WF12).
 name: publish
 run-name: publish ${{ inputs.target }}${{ inputs.repair && ' REPAIR' || '' }}
 
@@ -504,6 +506,7 @@ jobs:
 
   verify:
     needs: upload
+    if: ${{ !cancelled() && needs.upload.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

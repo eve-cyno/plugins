@@ -1,8 +1,9 @@
 // tools/lib/yamlsub.mjs: a strict reader for the YAML subset this repository's workflow files are written in (static tests C-WF1 to
-// C-WF11, tools/test/workflows.test.mjs). It reads block mappings, block sequences, one-line plain and quoted scalars, flow sequences
-// of plain words and literal block scalars (`|`, `|-`). It refuses everything else: tabs, carriage returns, anchors, aliases, tags,
-// flow mappings, folded scalars, scalars over several lines, duplicate keys, a sequence at its key's own indentation, document
-// markers. So a workflow written outside the subset fails the tests instead of being read one way here and another way by GitHub.
+// C-WF12, tools/test/workflows.test.mjs). It reads block mappings, block sequences, one-line plain and quoted scalars, flow sequences
+// of plain words and literal block scalars (`|`, `|-`). It refuses everything else: tabs, carriage returns, U+0085, U+2028 and
+// U+2029 (line breaks to YAML 1.1 readers such as YamlDotNet), anchors, aliases, tags, flow mappings, folded scalars, scalars over
+// several lines, duplicate keys, a sequence at its key's own indentation, document markers. So a workflow written outside the subset
+// fails the tests instead of being read one way here and another way by GitHub.
 // No dependency: the repository's only packages are the host's ajv and semver, and npm ci runs in the jobs that hold secrets.
 
 export class YamlSubsetError extends Error {}
@@ -10,6 +11,12 @@ export class YamlSubsetError extends Error {}
 const KEY_RE = /^([A-Za-z0-9_][A-Za-z0-9_.-]*):(?: +(.*))?$/;
 const WORD_RE = /^[A-Za-z0-9_.\/-]+$/;
 const isSeqItem = (text) => text === '-' || text.startsWith('- ');
+/**
+ * The characters YAML 1.1 reads as line breaks besides LF and CR (YamlDotNet's IsBreak). This reader splits at LF only, so a step
+ * written after one of them inside a comment line would be a comment here and a step to such a reader: refused on any line.
+ */
+const OTHER_BREAKS = Object.freeze({ '\u0085': 'U+0085 (next line)', '\u2028': 'U+2028 (line separator)', '\u2029': 'U+2029 (paragraph separator)' });
+const OTHER_BREAK_RE = /[\u0085\u2028\u2029]/;
 
 /**
  * Parses `src`. Returns { value, spans, lines }: `value` is the document (mappings are objects without a prototype, sequences arrays,
@@ -23,6 +30,8 @@ export function parseYaml(src) {
   raw.forEach((l, k) => {
     if (l.includes('\t')) throw new YamlSubsetError(`line ${k + 1}: a tab`);
     if (l.includes('\r')) throw new YamlSubsetError(`line ${k + 1}: a carriage return`);
+    const b = OTHER_BREAK_RE.exec(l);
+    if (b) throw new YamlSubsetError(`line ${k + 1}: ${OTHER_BREAKS[b[0]]}, a line break to some YAML readers`);
   });
   const lines = raw.map((l, k) => {
     const text = l.replace(/^ +/, '');
