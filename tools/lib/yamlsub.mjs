@@ -25,6 +25,9 @@ const unspace = (s) => s.replace(/^ +| +$/g, '');
  */
 const OTHER_BREAKS = Object.freeze({ '\u0085': 'U+0085 (next line)', '\u2028': 'U+2028 (line separator)', '\u2029': 'U+2029 (paragraph separator)' });
 const OTHER_BREAK_RE = /[\u0085\u2028\u2029]/;
+// What libyaml refuses: C0 controls but tab, LF and CR (those are handled on their own), DEL, the C1 controls (U+0085 is reported as a
+// line break first), U+FFFE and U+FFFF.
+const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ufffe\uffff]/;
 
 /**
  * Parses `src`. Returns { value, spans, lines }: `value` is the document (mappings are objects without a prototype, sequences arrays,
@@ -40,6 +43,8 @@ export function parseYaml(src) {
     if (l.includes('\r')) throw new YamlSubsetError(`line ${k + 1}: a carriage return`);
     const b = OTHER_BREAK_RE.exec(l);
     if (b) throw new YamlSubsetError(`line ${k + 1}: ${OTHER_BREAKS[b[0]]}, a line break to some YAML readers`);
+    const c = CONTROL_RE.exec(l);
+    if (c) throw new YamlSubsetError(`line ${k + 1}: a control character (U+${c[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}) that YAML readers refuse or skip`);
   });
   const lines = raw.map((l, k) => {
     const text = l.replace(/^ +/, '');
