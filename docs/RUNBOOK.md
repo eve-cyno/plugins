@@ -7,13 +7,33 @@ rules (C-WF1 to C-WF11).
 Roles:
 
 - **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
-  and `mirror`. He approves only from GitHub Mobile, after the steps in "Before every index and mirror approval".
-- **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs` and local verifications, and hands their output
-  to the owner. It sets secrets only with the commands of "Secrets and variables", which move each value on stdin and print none. It
-  never approves a deployment, never dispatches `publish.yml` with `target: production`, and never reads a secret's value.
+  and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for it, an entries-only one included
+  (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push of
+  "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. He approves only from GitHub
+  Mobile, after the steps in "Before every index and mirror approval".
+- **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs`, `tools/merge-scope.mjs`,
+  `tools/check-workflows.mjs` and local verifications, always from the trusted worktree (below), and hands their output to the owner.
+  It never merges a pull request the owner has not said "merge" for, whatever the tools print. It sets secrets only with the
+  commands of "Secrets and variables", which move each value on stdin and print none. It never approves a deployment, never
+  dispatches `publish.yml` with `target: production`, and never reads a secret's value.
 - **Agents** work with the agents' token (below). It cannot approve a deployment, dispatch a run, change an environment's protection
   rules, or delete runs or artifacts. It can write secrets and environment variables (owner decision 2026-11-18; "One account" names
   what that allows). Agents push over SSH.
+
+**The trusted worktree.** A pull request or a run's commit can change the tools themselves, so a tool run from the checkout under
+review prints whatever that change wants (a `tools/check.mjs` that never names `maintenance`, say). The coordinator therefore runs
+every `node` command of this runbook (`tools/...`, `vendor/...`) from `../eve-cyno-plugins-trusted`, a worktree of its checkout at a
+commit whose code the owner has read and approved: `<A>` (step 2 of "Before every index and mirror approval"), and before the first
+publish the commit the owner last read in full (step 4), which his list records. It has its own `npm ci --ignore-scripts` and is
+never edited; the checkout under review is only ever named as `--repo-dir`, `--dir` or `--repo`. To set it up, and to move it
+after each production run whose `sign` and `upload` succeeded and which the owner entered in his list (that run's commit is the
+next `<A>`):
+
+```
+git -C <checkout> worktree add --detach ../eve-cyno-plugins-trusted <A>   # once; later: git checkout -q --detach <A> in it
+cd <the trusted worktree> && npm ci --ignore-scripts
+git rev-parse HEAD                                                         # must print <A>; git status --porcelain prints nothing
+```
 
 **Hard rule.** No private key, passphrase or token is ever put in an argument list, an output, a file an agent writes, a log or a
 message. The commands of "Secrets and variables" move each value on stdin only. This is a rule of conduct, not a barrier: "One
@@ -210,16 +230,25 @@ This comes before **every** approval of `index` or `mirror`: both workflows, bot
 approval only). The owner (the environments' only reviewer) does the reading in a browser and approves only from GitHub Mobile.
 `<B>` is the run's single commit (`github.sha`, shown on the run page).
 
-1. **Settings.** The coordinator has run, for this run, with the agents' token and `<B>` fetched into its checkout:
+1. **Settings and workflows.** The coordinator has run, for this run, in the trusted worktree ("Roles"), with the agents' token and
+   `<B>` fetched into its checkout:
 
    ```
    node tools/check-envs.mjs --rev <B> --repo-dir <checkout>
+   node tools/base-tree.mjs --rev <B> --out <new empty folder> --repo <checkout>
+   node tools/check-workflows.mjs --dir <that folder>
    ```
 
-   and it printed `C-ENV1 PASS` (exit 0). It checks both environments (one required reviewer, the same user on both, self-review
-   prevention off, admin bypass off, `main` only, no other rule), that the reviewer's login and id appear in no path, file or commit at
-   `<B>`, and that the six probes of "The agents' token" answer as its table expects: the four refusals exactly HTTP 403 with the
-   message "Resource not accessible by personal access token" and an `x-ratelimit-remaining` above 0, the two secrets lists HTTP 200.
+   `check-workflows.mjs` runs the trusted worktree's rules (C-WF1 onwards, `tools/lib/wfrules.mjs`) over `<B>`'s workflows and the
+   files they read, in `<B>`'s tree written byte for byte as `check.yml` writes its base. It must print `WORKFLOWS PASS` (exit 0).
+   A `FAIL` line means no approval, with one exception: a commit that changes a rule together with the workflow it pins fails the
+   older rules once; then every failing line must name a workflow part that the compare view of step 5 shows changed, and the owner
+   reads that part there.
+   `check-envs.mjs` must print `C-ENV1 PASS` (exit 0). It checks both environments (one required reviewer, the same user on both,
+   self-review prevention off, admin bypass off, `main` only, no other rule), that the reviewer's login and id appear in no path,
+   file or commit at `<B>`, and that the six probes of "The agents' token" answer as its table expects: the four refusals exactly
+   HTTP 403 with the message "Resource not accessible by personal access token" and an `x-ratelimit-remaining` above 0, the two
+   secrets lists HTTP 200.
    It lists the six secrets and variables the workflows read, each in its environment with its `updated_at`: compare each date with
    the day the owner or the coordinator set that value ("One account"). It checks the two variables' values without printing them,
    and that no secret or variable named `MINISIGN_*` or `R2_*` is set at repository or organization level or in any environment
@@ -230,7 +259,7 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 2. **Find `<A>`, the last approved base.** `<A>` is the commit of the newest run of `publish.yml` or `resign.yml`, **other than the
    run under review**, that has an approval of `index` by the environment's reviewer (the owner) and whose `sign` and `upload` jobs
    both concluded `success`. Not the newest green run: a no-op re-sign ends green at `check`, a scheduled run takes `main`'s head, and
-   a `target: test` run has no `index` approval. The coordinator runs:
+   a `target: test` run has no `index` approval. The coordinator runs, in the trusted worktree:
 
    ```
    node tools/approved-base.mjs --run <run id>
@@ -249,6 +278,10 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    attempt 1, or a later attempt's `sign` or `upload` shown as succeeded), and when an approved run's attempt 1 has no `sign` job
    ("When a run is red", the `Refuse a re-run` row). The tool is a convenience: confirm on `<A>`'s run page that the `index`
    approval shown is your own.
+   The `<A>` it prints must be the trusted worktree's commit (`git -C ../eve-cyno-plugins-trusted rev-parse HEAD`; with `FIRST
+   PUBLISH`, the commit read in full of step 4). When it is not, stop: either the worktree was not moved after the last approved run
+   (move it once step 3 has confirmed `<A>` against the list, then start again at step 1), or the list does not hold that run (no
+   approval).
    The agents' token cannot write an approval record or change who may approve, so an approval by the owner's account means the
    owner approved, on his phone.
 3. **Check against your own list.** GitHub's run history can be deleted by a workflow with `actions: write`, and an agent can push
@@ -270,7 +303,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    (once that run is 90 days old, not even that: "Recovery R2", a dead end at 90 days). Read every file other
    than the `entries/<id>.json` files and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`),
    `package-lock.json` included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop
-   checkout> --rev <pinned commit>` output.
+   checkout> --rev <pinned commit>` output. With no `<A>`, this reading comes first and the tools run after it: the owner reads
+   the files, adds a line `read in full <B> <date>` to his list, the coordinator moves the trusted worktree to `<B>` ("Roles"), and
+   `vendor-host.mjs --check` and steps 1 and 2 run from there.
 5. **Check the direction, then read the change.** The compare status of `<A>` to `<B>` must be `ahead` or `identical`; `behind` or
    `diverged` means **no approval**. Then read `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change other than
    the `entries/<id>.json` files and `revoked.json`** (anything else in `entries/` too, such as a `.gitattributes`; workflows, tools,
@@ -345,21 +380,40 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
 
 ## Publishing
 
-1. Merge the entry pull requests locally on `main` and push them, one pull request at a time, and merge only the commits the checks
-   ran on. For pull request `<n>`:
+1. Merge the entry pull requests locally on `main` and push them, one pull request at a time, only after the owner has said "merge"
+   for that pull request ("Roles"), and merge only the commits the checks ran on. `<checkout>` is the coordinator's checkout where
+   the merge happens; every `node` command runs from the trusted worktree ("Roles"), never from `<checkout>`. For pull request
+   `<n>`:
    1. Read its head commit `<H>`: `gh pr view <n> --repo eve-cyno/plugins --json headRefOid --jq .headRefOid`.
    2. Find the newest `check.yml` run of `<H>`: `gh run list --repo eve-cyno/plugins --workflow check.yml --commit <H> --json
       databaseId,headSha,conclusion,createdAt`. Its `checks` job must be green and its `review` job green or reviewed by the owner.
       Both jobs print `base <B>, head <M>` (`gh run view <id> --repo eve-cyno/plugins --log | grep -m2 'base '`): `<B>` is the
-      `main` they checked against, `<M>` GitHub's merge commit of `<B>` and `<H>`.
+      `main` they checked against, `<M>` GitHub's merge commit of `<B>` and `<H>`. Both jobs run the pull request's own
+      `tools/check.mjs` and workflow file, so their green means something only when step 4a says `SCOPE ENTRIES-ONLY`.
    3. Fetch the head: `git fetch origin pull/<n>/head`; `git rev-parse FETCH_HEAD` must be `<H>` (no commit was pushed after the run).
    4. `git rev-parse main` and `git rev-parse origin/main` must both be `<B>`. When `main` moved on (an earlier merge was pushed),
       the run checked another base: do not merge; close and reopen the pull request so `check.yml` runs on the current `main`, and
       start again at step 2.
+
+      **4a, the scope, before the merge.** `node tools/merge-scope.mjs --repo-dir <checkout> --base <B> --head <H> --merge-base`
+      (what `<B>...<H>` shows; it reads git plumbing only and runs no code of the pull request).
+      - `SCOPE ENTRIES-ONLY` (exit 0): the pull request changes only regular files `entries/<id>.json` and `revoked.json`, so the
+        jobs ran `<B>`'s own tools and workflow and their results stand. The owner reads the entries and revocations in the pull
+        request and the jobs' summaries (review classes included) and says "merge", or not.
+      - `SCOPE OWNER <names>` (exit 3), an `ERROR` or any other exit: the jobs' green proves nothing. The coordinator hands the
+        output to the owner, who reads every named change in the pull request ("Files changed" at `<H>`) before he says "merge":
+        a tool, a workflow, `package.json` or `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change.
+
+      No merge without his "merge", an entries-only pull request included; nothing here merges on a tool's answer.
    5. Merge `<H>` with a merge commit (`git merge --no-ff <H>`), then confirm `git rev-parse HEAD^1` is `<B>` and
       `git rev-parse HEAD^2` is `<H>`. While GitHub still serves `<M>` (`git fetch origin pull/<n>/merge`, then
       `git rev-parse FETCH_HEAD` is `<M>`), `git rev-parse HEAD^{tree}` must equal `git rev-parse FETCH_HEAD^{tree}`: the merged
       files are the files the jobs checked. Any difference: `git reset --hard <B>`, and do not push.
+
+      **5a, the scope of the merge, before the push.** `node tools/merge-scope.mjs --repo-dir <checkout> --base <B> --head HEAD`
+      (what the merge commit changes on `<B>`, its first parent). It must print `SCOPE ENTRIES-ONLY`, or, when step 4a printed
+      `SCOPE OWNER`, a `SCOPE OWNER` line that names only paths step 4a named (the changes the owner read). Anything else, an
+      `ERROR` included: `git reset --hard <B>`, and do not push.
    6. Push `main` (`git push origin main`). The next pull request's run checked the old `main`, so step 4 sends it round again.
 2. Before the dispatch, `git rev-parse origin/main` must be the merge commit of the last step 1.5. The owner dispatches
    `publish.yml` with `target: production` (`lift` empty unless a revocation is being lifted; `repair` false), and
