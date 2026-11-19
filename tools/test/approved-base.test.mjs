@@ -98,7 +98,15 @@ describe('approved-base: <A> skips every run that is not an approved, signed and
   test('AB-skip-mirror-refused: index approved, mirror refused, upload skipped', () => skips({ run: run(256, 'resign.yml', sha('c'), '2026-12-05T06:17:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'], 'rejected')], jobs: jobs(256, [['check', 'success'], ['head', 'success'], ['sign', 'success'], ['upload', 'skipped']]) }, 'job upload concluded skipped'));
   test('AB-skip-sign-failed: index approved, sign failed', () => skips({ run: run(257, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(257, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped']]) }, 'job sign concluded failure'));
   test('AB-skip-two-sign-jobs: a run with two jobs named sign', () => skips({ run: run(258, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(258, [['sign', 'success'], ['sign', 'success'], ['upload', 'success']]) }, '2 jobs named sign'));
-  test('AB-skip-no-jobs: an approved first attempt with no jobs listed (cancelled before any started) is a skip, not an ERROR', () => skips({ run: run(259, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(259, []) }, '0 jobs named sign'));
+  test('AB-approved-no-sign: an approved run whose attempt 1 has no job sign is an ERROR (job sign is what asks for the approval)', async () => {
+    const lists = [[1, []], [1, [['build', 'success'], ['upload', 'skipped']]], [2, [['build', 'success'], ['upload', 'skipped'], ['sign', 'skipped', 2]]]];
+    for (const [attempt, list] of lists) {
+      const r = await call({ under: UNDER, others: [{ run: { ...run(259, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), run_attempt: attempt }, approvals: [approval(REVIEWER, ['index'])], jobs: jobs(259, list) }, GOOD] });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, /^ERROR: run 259 \(publish\.yml, created [^)]*\): approved, 0 jobs named sign in attempt 1/m);
+      assert.doesNotMatch(r.text, /^A /m, 'no older run becomes <A> past it');
+    }
+  });
   test('AB-order: the newest across both workflows wins', async () => {
     const resign = { run: run(260, 'resign.yml', sha('d'), '2026-12-08T06:17:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])], jobs: jobs(260, [['check', 'success'], ['head', 'success'], ['sign', 'success'], ['upload', 'success']]) };
     const r = await call({ under: UNDER, others: [GOOD, resign] });
@@ -161,13 +169,25 @@ describe('approved-base: direction and failures', () => {
       assert.equal(r.code, 0, r.text);
       assert.match(r.text, /^skip run 254 .*no approval of index by the environment's reviewer/m);
       assert.match(r.text, new RegExp(`^A ${A} from run 200 `, 'm'));
-      assert.ok(!r.calls.some((a) => a[a.length - 1] === JOBS(254)), 'no jobs are read without an index approval');
+      assert.ok(r.calls.some((a) => a[a.length - 1] === JOBS(254)), 'an unapproved re-run\'s jobs are read: its attempt 1 did not sign');
       const first = await call({ under: UNDER, others: [test2(n)] });
       assert.equal(first.code, 3, `a re-run test run does not block a first publish\n${first.text}`);
       assert.match(first.text, /^FIRST PUBLISH: /m);
     }
+  });
+  test('AB-rerun-approval-missing: a re-run that lists no index approval but whose attempt 1 signed is an ERROR (the list may show the latest attempt only)', async () => {
+    // Job sign asks for the index approval, so a sign of attempt 1 that succeeded means the approvals list lacks that approval.
+    const signed = [['build', 'success'], ['sign', 'success'], ['upload', 'success'], ['verify', 'failure'], ...LATER(2)];
+    for (const [approvals, others] of [[[], [GOOD]], [[approval(REVIEWER, ['mirror'])], [GOOD]], [[approval(777, ['index'])], [GOOD]], [[], []]]) {
+      const r = await call({ under: UNDER, others: [rerun(2, approvals, signed), ...others] });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, /^ERROR: run 254 \(publish\.yml, created [^)]*\) lists no approval of index by the environment's reviewer, yet job sign of attempt 1 concluded success/m);
+      assert.match(r.text, /read every attempt on the run page and against your own list \(docs\/RUNBOOK\.md, a re-run\)/);
+      assert.doesNotMatch(r.text, /^(A |FIRST PUBLISH)/m, 'neither an older <A> nor a first publish past it');
+    }
     const unknown = await call({ under: UNDER, others: [rerun(undefined, [], []), GOOD] });
-    assert.equal(unknown.code, 0, `no approval: skipped before its attempt is read\n${unknown.text}`);
+    assert.equal(unknown.code, 1, `no approval and no valid attempt: its jobs cannot be judged\n${unknown.text}`);
+    assert.match(unknown.text, /^ERROR: run 254 .* names no valid run_attempt \(none\)/m);
   });
   test('AB-rerun-attempt-1: an approved re-run is judged by its attempt 1, read with filter=all', async () => {
     const uploaded = await call({ under: UNDER, others: [rerun(2, BOTH, [['build', 'success'], ['sign', 'success'], ['upload', 'success'], ['verify', 'failure'], ...LATER(2)]), GOOD] });

@@ -192,7 +192,13 @@ describe('recovery R2: the candidates and the base', () => {
     const u = await collect([unapproved, H(), A()]);
     assert.equal(u.ok, true, u.text);
     assert.match(u.text, /^skip run 296 .*no approval of index by the environment's reviewer/m);
-    assert.ok(!u.calls.some((c) => c.startsWith(`${R}/actions/runs/296/jobs`)), 'no jobs are read without an index approval');
+    assert.ok(u.calls.includes(`${R}/actions/runs/296/jobs?filter=all&per_page=100`), 'an unapproved re-run\'s jobs are read: attempt 1 did not sign');
+    const hidden = runOf(298, 'publish.yml', 0.45, ix, { approvedBy: null, later: LATER });
+    hidden.run.run_attempt = 2;
+    const h = await collect([hidden, H(), A()]);
+    assert.equal(h.ok, false, h.text);
+    assert.match(h.why, /^ERROR: run 298 \(publish\.yml, created [^)]*\) lists no approval of index by the environment's reviewer, yet job sign of attempt 1 concluded success/);
+    assert.deepEqual(h.zipCalls, [], 'nothing is downloaded');
     const unreadable = runOf(297, 'publish.yml', 0.3, ix, { later: [['sign', 'success', 2]] });
     unreadable.run.run_attempt = 2;
     const e = await collect([unreadable, H(), A()]);

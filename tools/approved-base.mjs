@@ -5,8 +5,9 @@
 //   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
 //   both concluded success in attempt 1 (GET .../actions/runs/<id>/jobs?filter=all, the jobs of every attempt: every job refuses any
 //   attempt but the first, so a re-run's later attempts never sign or upload), with one "skip" line for every newer run and why it
-//   does not count; a run without that approval is skipped before its attempt is read, a re-run included; an approved re-run whose
-//   attempt 1 cannot be read from the list is an ERROR;
+//   does not count; a first attempt without that approval is skipped before its jobs are read, a re-run without it only once its
+//   jobs show attempt 1 did not sign (GitHub may list a re-run's latest approvals only: unverified, docs/RUNBOOK.md); a re-run whose
+//   attempt 1 cannot be read from the list, or signed with no approval listed, and an approved run with no sign job, are ERRORs;
 // - the compare status of <A> to <B> (GET .../compare/<A>...<B>) and the compare view to read.
 // The reviewer is the only required reviewer of environment index, read now from GitHub (tools/lib/reviewer.mjs); no login or id is
 // written in the repository, and this tool prints neither. Fail closed: any request that fails, a list that did not come back whole,
@@ -62,9 +63,13 @@ const BY_HAND = 'read every attempt on the run page and against your own list (d
  * { why: '', sign, upload }, each '' when attempt 1 of the run has exactly one job of that name and it concluded success, or why not.
  * Every job refuses any attempt but the first at its first step, so only attempt 1 can sign or upload: the jobs are read for every
  * attempt (filter=all; each job names its run_attempt) and attempt 1 is judged, so a re-run's skipped sign and upload never hide what
- * attempt 1 did. A run without the approval is skipped before its attempt or jobs are read, a re-run included. Throws { error } on a
- * failed request, and on an approved run that names no valid run_attempt, a job that names no attempt from 1 to the run's, a re-run
- * whose list holds no job of attempt 1, or a job sign or upload of a later attempt that concluded success.
+ * attempt 1 did. A first attempt without the approval is skipped before its jobs are read. A re-run without it is skipped only after
+ * its jobs show that attempt 1's sign did not succeed: whether GitHub lists the approvals of every attempt of a re-run, or of the
+ * latest only, is not verified yet (docs/RUNBOOK.md, Measurements), and job sign is what asks for the index approval, so a sign of
+ * attempt 1 that succeeded means the list lacks it. Throws { error } on a failed request, and on a re-run or approved run that names no
+ * valid run_attempt, a job that names no attempt from 1 to the run's, a re-run whose list holds no job of attempt 1, a job sign or
+ * upload of a later attempt that concluded success, a re-run whose attempt 1 signed without a listed approval, and an approved run
+ * whose attempt 1 has no job sign.
  */
 export async function reviewRun(run, id, opts) {
   const ap = await getJson(`${R}/actions/runs/${run.id}/approvals`, opts);
@@ -72,7 +77,8 @@ export async function reviewRun(run, id, opts) {
   if (!Array.isArray(ap.value)) throw { error: `${R}/actions/runs/${run.id}/approvals: the answer is not a list` };
   const approved = ap.value.some((a) => isObj(a) && a.state === 'approved' && isObj(a.user) && a.user.id === id
     && Array.isArray(a.environments) && a.environments.some((e) => isObj(e) && e.name === 'index'));
-  if (!approved) return { why: "no approval of index by the environment's reviewer" };
+  const NO_APPROVAL = { why: "no approval of index by the environment's reviewer" };
+  if (!approved && run.run_attempt === 1) return NO_APPROVAL;
   const attempt = run.run_attempt;
   if (!Number.isSafeInteger(attempt) || attempt < 1) throw { error: `${label(run)} names no valid run_attempt (${oneLine(attempt ?? 'none')}): ${BY_HAND}` };
   const all = await getAll(`${R}/actions/runs/${run.id}/jobs?filter=all&per_page=100`, 'jobs', opts);
@@ -89,11 +95,21 @@ export async function reviewRun(run, id, opts) {
     throw { error: `${label(run)}: job ${oneLine(late.name)} of attempt ${late.run_attempt} concluded success, though every job refuses any attempt but the first: ${BY_HAND}` };
   }
   const first = all.items.filter((j) => j.run_attempt === 1);
+  if (!approved) {
+    if (first.some((j) => j.name === 'sign' && j.conclusion === 'success')) {
+      // Job sign asks for that approval, so the list may show the latest attempt's approvals only (oneLine keeps 300 characters).
+      throw { error: `${label(run)} lists no approval of index by the environment's reviewer, yet job sign of attempt 1 concluded success: ${BY_HAND}` };
+    }
+    return NO_APPROVAL;
+  }
   const job = (name) => {
     const js = first.filter((j) => j.name === name);
     if (js.length !== 1) return `${js.length} jobs named ${name}`;
     return js[0].conclusion === 'success' ? '' : `job ${name} concluded ${oneLine(js[0].conclusion ?? 'nothing yet')}`;
   };
+  if (!first.some((j) => j.name === 'sign')) {
+    throw { error: `${label(run)}: approved, 0 jobs named sign in attempt 1 (job sign is what asks for the index approval): ${BY_HAND}` };
+  }
   return { why: '', sign: job('sign'), upload: job('upload') };
 }
 
