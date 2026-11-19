@@ -102,8 +102,10 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   `MINISIGN_INDEX_PASSWORD`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`), and the reviewer compares
   each with the date the owner or the coordinator set it; a later date that nobody set means no approval. C-ENV1 also checks the
   two variables' values (`R2_BUCKET` is `eve-cyno-plugins`, `R2_ACCOUNT_ID` is 32 lower-case hex; it prints only ok or fail, never
-  the value), and fails on any secret or variable named `MINISIGN_*` or `R2_*` at repository or organization level: one there
-  reaches every job of the repository without an approval of `index` or `mirror`.
+  the value), and fails on any secret or variable named `MINISIGN_*` or `R2_*` at repository or organization level, or in any
+  environment other than `index` and `mirror` (it lists the environments, then each other one's secrets and variables): one at
+  repository or organization level reaches every job of the repository without an approval of `index` or `mirror`, and one in
+  another environment reaches every job that names that environment. A list it cannot read fails closed.
 - **The key-custody residual, named exactly.** Any process of the agents' user can decrypt `signing/desktop/keys.enc.yaml` (the
   release keys included) with the age identity under `~/.config/sops/age` and sign a head offline; the phone approval guards only
   the CI copy of the key; publishing such a head would still need R2 write; the key-custody fix (a passphrase-protected age identity
@@ -131,7 +133,8 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   write, for good** (owner decision 2026-11-18): the coordinator sets secrets and environment variables with the commands of
   "Secrets and variables", and the permissions are never added for a task and taken away after it.
 - **Variables, read** is needed since 2026-11-19: C-ENV1 lists the repository's and the organization's variables to check that no
-  `MINISIGN_*` or `R2_*` is set there, and without that read it fails closed.
+  `MINISIGN_*` or `R2_*` is set there, and without that read it fails closed. It also lists the environments and each one's secrets
+  and variables other than `index` and `mirror`, with the reads above; a list it cannot read fails closed too.
 - **Off, and checked before every approval:** **Administration** (it creates and changes environments, their reviewers, branch
   rules and admin bypass), **Deployments write** (it approves or rejects a waiting run) and **Actions write** (it dispatches runs
   and deletes runs and artifacts). No Workflows permission.
@@ -207,7 +210,8 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    message "Resource not accessible by personal access token" and an `x-ratelimit-remaining` above 0, the two secrets lists HTTP 200.
    It lists the six secrets and variables the workflows read, each in its environment with its `updated_at`: compare each date with
    the day the owner or the coordinator set that value ("One account"). It checks the two variables' values without printing them,
-   and that no secret or variable named `MINISIGN_*` or `R2_*` is set at repository or organization level.
+   and that no secret or variable named `MINISIGN_*` or `R2_*` is set at repository or organization level or in any environment
+   other than `index` and `mirror` (it prints the other environments' names).
    Any other answer fails, and no option skips the probes. An `ALARM` line means the check created the environment
    `c-env1-probe-denied`: no approval until the owner has deleted it and taken Administration off the token. A pass is not proof
    that nothing changed between the check and the approval; that rests on the owner's rules above.

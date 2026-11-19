@@ -52,7 +52,11 @@ const STORED = {
   orgSecrets: `GET ${R}/actions/organization-secrets?per_page=100`,
   repoVariables: `GET ${R}/actions/variables?per_page=30`,
   orgVariables: `GET ${R}/actions/organization-variables?per_page=30`,
+  pagesSecrets: `GET ${R}/environments/github-pages/secrets?per_page=100`,
+  pagesVariables: `GET ${R}/environments/github-pages/variables?per_page=30`,
 };
+const ENVS = `GET ${R}/environments?per_page=100`;
+const envList = (names) => [{ total_count: names.length, environments: names.map((name, i) => ({ id: i + 1, node_id: `EN_${i}`, name, protection_rules: [] })) }];
 const STORED_DEFAULT = {
   indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_PASSWORD']) },
   mirrorSecrets: { stdout: secretList(['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) },
@@ -61,6 +65,8 @@ const STORED_DEFAULT = {
   orgSecrets: { stdout: secretList([]) },
   repoVariables: { stdout: variableList([['SITE', 'plugins.eve-cyno.dev']]) },
   orgVariables: { stdout: variableList([]) },
+  pagesSecrets: { stdout: secretList(['PAGES_DEPLOY_TOKEN']) },
+  pagesVariables: { stdout: variableList([['PAGES_SITE', 'plugins.eve-cyno.dev']]) },
 };
 
 function routes(o = {}) {
@@ -73,6 +79,8 @@ function routes(o = {}) {
   for (const pr of PROBES) r[probeKey(pr)] = o.probes?.[pr.key] ?? (pr.expect === 200 ? http(200) : http(403, PROBE_MESSAGE));
   r[ENV_GET] = o.probeEnvGet ?? http(404, 'Not Found');
   for (const [k, route] of Object.entries(STORED)) r[route] = o.stored?.[k] ?? STORED_DEFAULT[k];
+  r[ENVS] = o.environments ?? { stdout: envList(['index', 'mirror', 'github-pages']) };
+  Object.assign(r, o.extra ?? {});
   return r;
 }
 
@@ -325,10 +333,47 @@ describe('C-ENV1 the secrets and variables the workflows read', () => {
     assert.doesNotMatch(r.text, new RegExp(ACCOUNT), 'the account id is never printed');
     assert.doesNotMatch(r.text, /eve-cyno-plugins/, 'nor the bucket name read from the variable');
     assert.doesNotMatch(r.text, /created_at|2026-11-01/, 'only updated_at');
-    for (const what of ['repository secrets', 'organization secrets', 'repository variables', 'organization variables']) {
+    for (const what of ['repository secrets', 'organization secrets', 'repository variables', 'organization variables',
+      'environment github-pages secrets', 'environment github-pages variables']) {
       assert.match(r.text, new RegExp(`^PASS ${what}: none named MINISIGN_\\* or R2_\\*`, 'm'));
     }
-    assert.doesNotMatch(r.text, /plugins\.eve-cyno\.dev|DISCORD_WEBHOOK/, 'no other name or value is printed');
+    assert.match(r.text, /^PASS environments: 3 listed; other than index and mirror: github-pages$/m);
+    assert.doesNotMatch(r.text, /plugins\.eve-cyno\.dev|DISCORD_WEBHOOK|PAGES_/, 'no other name or value is printed');
+  });
+  test('CE-other-environments: every environment other than index and mirror is read, index and mirror not twice; none other passes', async () => {
+    const r = await run({ environments: { stdout: envList(['mirror', 'index']) } });
+    assert.equal(r.ok, true, r.text);
+    assert.match(r.text, /^PASS environments: 2 listed; other than index and mirror: none$/m);
+    const reads = r.calls.map(keyOf).filter((k) => /\/environments\/[^/]+\/(secrets|variables)\?/.test(k)).sort();
+    assert.deepEqual(reads, [STORED.indexSecrets, STORED.mirrorSecrets, STORED.mirrorVariables].sort(), 'no list of another environment, none twice');
+    const odd = 'web prod';
+    const at = `${R}/environments/web%20prod`;
+    const named = await run({ environments: { stdout: envList(['index', 'mirror', odd]) },
+      extra: { [`GET ${at}/secrets?per_page=100`]: { stdout: secretList(['R2_SECRET_ACCESS_KEY']) }, [`GET ${at}/variables?per_page=30`]: { stdout: variableList([]) } } });
+    assert.equal(named.ok, false, named.text);
+    assert.match(named.text, /^FAIL environment web prod secrets: R2_SECRET_ACCESS_KEY is set in environment web prod, not in index or mirror: /m, 'the name is encoded in the request');
+    assert.match(named.text, /^PASS environment web prod variables: none named/m);
+  });
+  test('CE-other-environment fails: MINISIGN_* or R2_* in any environment other than index and mirror', async () => {
+    const cases = [
+      ['pagesSecrets', { stdout: secretList(['PAGES_DEPLOY_TOKEN', 'MINISIGN_INDEX_KEY']) }, 'secrets', 'MINISIGN_INDEX_KEY'],
+      ['pagesSecrets', { stdout: secretList(['minisign_index_password']) }, 'secrets', 'minisign_index_password'],
+      ['pagesVariables', { stdout: variableList([['R2_BUCKET', 'eve-cyno-plugins']]) }, 'variables', 'R2_BUCKET'],
+      ['pagesVariables', { stdout: variableList([['R2_ACCOUNT_ID', ACCOUNT]]) }, 'variables', 'R2_ACCOUNT_ID'],
+    ];
+    for (const [k, answer, kind, name] of cases) {
+      const r = await fails({ stored: { [k]: answer } }, new RegExp(`^FAIL environment github-pages ${kind}: ${name} is set in environment github-pages, not in index or mirror: `
+        + 'there it reaches every job that names environment github-pages, without an approval of index or mirror', 'm'));
+      assert.doesNotMatch(r.text, new RegExp(`${ACCOUNT}|eve-cyno-plugins`), 'no value is printed');
+    }
+  });
+  test('CE-other-environments-unreadable fails closed: the environments list, or a list of one, cannot be read or is incomplete', async () => {
+    const denied = { stdout: '{"message":"Resource not accessible by personal access token","status":"403"}', exit: 1, stderr: 'gh: Resource not accessible by personal access token (HTTP 403)\n' };
+    const a = await fails({ environments: denied }, /^FAIL environments: .*HTTP 403.*\(a list that cannot be read fails closed\)$/m);
+    assert.ok(!a.calls.some((c) => keyOf(c).includes('/environments/github-pages/')), 'no environment is read from a list that failed');
+    await fails({ environments: { stdout: [{ total_count: 4, environments: envList(['index', 'mirror', 'github-pages'])[0].environments }] } }, /^FAIL environments: .*the list is incomplete/m);
+    await fails({ environments: { stdout: [{ total_count: 3, environments: [...envList(['index', 'mirror'])[0].environments, { id: 9 }] }] } }, /^FAIL environments: an environment without a name/m);
+    await fails({ stored: { pagesVariables: { stdout: [{ total_count: 2, variables: [] }] } } }, /^FAIL environment github-pages variables: .*the list is incomplete/m);
   });
   test('CE-stored-missing fails: each of the six must be set in its environment, once', async () => {
     await fails({ stored: { indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY']) } } }, /^FAIL secret MINISIGN_INDEX_PASSWORD \(environment index\): not set$/m);

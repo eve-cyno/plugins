@@ -22,8 +22,10 @@
 //   eve-cyno-plugins and R2_ACCOUNT_ID is 32 lower-case hex (ok or fail only, never the value read; a failure names the rule, and
 //   for R2_BUCKET the rule is the public bucket name docs/RUNBOOK.md lists);
 // - no secret or variable named MINISIGN_* or R2_* is set at repository or organization level (OUTSIDE): one there reaches every
-//   job of the repository without an approval of index or mirror. Listing the variables needs read access to Variables; a list
-//   that cannot be read, or did not come back whole, fails closed.
+//   job of the repository without an approval of index or mirror; nor in any environment other than index and mirror (the
+//   environments list, then each other environment's secrets and variables): one there reaches every job that names that
+//   environment, which index's and mirror's reviewer never approves. Listing the variables needs read access to Variables; a list
+//   that cannot be read, or did not come back whole, fails closed, the environments list included.
 // The agents' token was switched on 2026-11-18 (plan 4.1, Q16: T1 done), so there is no mode without the probes (the former --t2 is
 // a usage error): with one account as dispatcher and approver, the token's refusals are the safeguard.
 //
@@ -69,13 +71,22 @@ export const STORED = Object.freeze([
   { kind: 'variable', name: 'R2_ACCOUNT_ID', env: 'mirror', value: (v) => /^[0-9a-f]{32}$/.test(v), rule: 'a Cloudflare account id (32 lower-case hex)', shown: 'a Cloudflare account id (32 lower-case hex; not printed)' },
   { kind: 'variable', name: 'R2_BUCKET', env: 'mirror', value: (v) => v === 'eve-cyno-plugins', rule: 'eve-cyno-plugins', shown: 'the bucket the runbook names (not printed)' },
 ]);
+const EVERY_JOB = 'there it reaches every job of the repository without an approval of index or mirror';
 /** The lists outside the environments where no name MINISIGN_* or R2_* may be set (the repository's own and the organization's). */
 export const OUTSIDE = Object.freeze([
-  { what: 'repository secrets', endpoint: `${R}/actions/secrets?per_page=100`, key: 'secrets' },
-  { what: 'organization secrets', endpoint: `${R}/actions/organization-secrets?per_page=100`, key: 'secrets' },
-  { what: 'repository variables', endpoint: `${R}/actions/variables?per_page=30`, key: 'variables' },
-  { what: 'organization variables', endpoint: `${R}/actions/organization-variables?per_page=30`, key: 'variables' },
+  { what: 'repository secrets', endpoint: `${R}/actions/secrets?per_page=100`, key: 'secrets', where: 'outside the environments', reach: EVERY_JOB },
+  { what: 'organization secrets', endpoint: `${R}/actions/organization-secrets?per_page=100`, key: 'secrets', where: 'outside the environments', reach: EVERY_JOB },
+  { what: 'repository variables', endpoint: `${R}/actions/variables?per_page=30`, key: 'variables', where: 'outside the environments', reach: EVERY_JOB },
+  { what: 'organization variables', endpoint: `${R}/actions/organization-variables?per_page=30`, key: 'variables', where: 'outside the environments', reach: EVERY_JOB },
 ]);
+/** The secrets and variables lists of an environment other than index and mirror, where no such name may be set either. */
+export const otherEnvironmentLists = (name) => ['secret', 'variable'].map((kind) => ({
+  what: `environment ${oneLine(name)} ${kind}s`,
+  endpoint: `${R}/environments/${encodeURIComponent(name)}/${kind}s?per_page=${kind === 'secret' ? 100 : 30}`,
+  key: `${kind}s`,
+  where: `in environment ${oneLine(name)}, not in index or mirror`,
+  reach: `there it reaches every job that names environment ${oneLine(name)}, without an approval of index or mirror`,
+}));
 const OWN_NAME_RE = /^(?:MINISIGN_|R2_)/i;
 const STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const UNREADABLE = 'a list that cannot be read fails closed';
@@ -244,15 +255,27 @@ export async function checkEnvs({ rev, repoDir, env }) {
   }
   lines.push('updated_at: compare each date above with the day the owner or the coordinator set that value; a later date that nobody '
     + 'set means no approval (docs/RUNBOOK.md)');
-  for (const o of OUTSIDE) {
+  const outside = [...OUTSIDE];
+  const envs = await getAll(`${R}/environments?per_page=100`, 'environments', opts);
+  if (envs.error) fail('environments', `${oneLine(envs.error)} (${UNREADABLE})`);
+  else {
+    const names = envs.items.map((x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null));
+    if (names.includes(null)) fail('environments', 'an environment without a name');
+    else {
+      const others = names.filter((n) => !ENVIRONMENTS.includes(n));
+      lines.push(`PASS environments: ${names.length} listed; other than index and mirror: ${others.map(oneLine).join(', ') || 'none'}`);
+      for (const n of others) outside.push(...otherEnvironmentLists(n));
+    }
+  }
+  for (const o of outside) {
     const l = await getAll(o.endpoint, o.key, opts);
     if (l.error) { fail(o.what, `${oneLine(l.error)} (${UNREADABLE})`); continue; }
     const names = l.items.map((x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null));
     if (names.includes(null)) { fail(o.what, 'an item without a name'); continue; }
     const own = names.filter((n) => OWN_NAME_RE.test(n));
     if (own.length) {
-      fail(o.what, `${own.map(oneLine).join(', ')} is set outside the environments: there it reaches every job of the repository without an `
-        + 'approval of index or mirror. MINISIGN_* and R2_* belong to the environments only; the owner or the coordinator deletes it');
+      fail(o.what, `${own.map(oneLine).join(', ')} is set ${o.where}: ${o.reach}. MINISIGN_* and R2_* belong to the environments index `
+        + 'and mirror only; the owner or the coordinator deletes it');
     } else lines.push(`PASS ${o.what}: none named MINISIGN_* or R2_* (${names.length} listed; names not printed)`);
   }
   lines.push(ok ? 'C-ENV1 PASS' : 'C-ENV1 FAIL');
