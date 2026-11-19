@@ -287,15 +287,18 @@ async function entryFlags(head, base) {
       R.flag('escalation', 'C10', `${e.id}: the permissions could not be compared (${err?.message ?? 'error'})`);
       continue;
     }
+    // A catalog holds less than an entry (no summary, description, categories or source), so against one only a firstParty flip
+    // counts as a change to a first-party entry (the pull request's review read any other change).
+    const flags = base.kind === 'catalog' && be && (he.firstParty === true) === (be.firstParty === true) ? r.flags.filter(f => f !== 'first-party') : r.flags;
     const why = {
       new: 'a new entry (no entry of this id on the base)',
       escalation: 'a new version asks for more than the version before it, turns background on, or has no lower version to compare with',
       identity: 'the name, author or type changed, the provenance repository changed or was dropped, the maintainers changed, or the pull request changes the entry and its author is not a maintainer of the base entry',
-      'first-party': 'firstParty set or changed',
+      'first-party': 'the entry is first-party on the base or the head and the pull request changes it (firstParty set or dropped included)',
       engines: 'a new version\'s engines admit no host API major that a released host supports',
       revoked: 'a new version of an id that revoked.json names (on the base or the head)',
     };
-    for (const f of r.flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
+    for (const f of flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
   }
   for (const [id, b] of base.entries) {
     if (head.entries.some(e => e.id === id)) continue;

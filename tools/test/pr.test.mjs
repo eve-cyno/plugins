@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 import { ISSUER, PREDICATE } from '../lib/provenance.mjs';
+import { toListing } from '../lib/entries.mjs';
 import { zerosAtExactRatio, zerosAtMostRatio, zip } from './zipwrite.mjs';
 
 const MIB = 1024 * 1024;
@@ -24,6 +25,13 @@ after(cleanup);
 
 const tree = (spec) => writeTree(path.join(T, `t${n++}`), spec);
 const baseTree = (extra = {}) => tree({ entries: [pluginEntry([version('1.0.0', A100)])], ...extra });
+/** A live base as build-index.mjs base writes it: catalog.json with the listings of `entries` (no author URL, no maintainers). */
+function catalogBase(entries, revoked = []) {
+  const dir = path.join(T, `t${n++}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'catalog.json'), `${JSON.stringify({ plugins: entries.map(toListing), revoked })}\n`);
+  return dir;
+}
 /** A head that adds 1.1.0 (the archive `bytes`, cached) to the base entry; `pin` overrides what the entry pins. */
 function head(bytes, { pin = {}, entry = {}, ...rest } = {}) {
   cacheArchive(cache, bytes);
@@ -487,7 +495,7 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     assert.equal(last(r.stdout), 'CHECKS PASSED');
     const v = await check('review', baseTree(), ok, ['--author', 'example-login']);
     assert.equal(v.code, 3, v.stdout + v.stderr);
-    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: firstParty set or changed$/m);
+    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: the entry is first-party on the base or the head and the pull request changes it \(firstParty set or dropped included\)$/m);
     assert.equal(last(v.stdout), 'NEEDS REVIEW new first-party');
 
     // Without firstParty the id prefix is refused first (C2 leaves the entry out of C3); under another id the author is refused (C3).
@@ -532,5 +540,31 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     const same = await check('review', base, withLedger(ledger()), ['--author', 'example-login']);
     assert.equal(same.code, 0, same.stdout + same.stderr);
     assert.equal(last(same.stdout), 'NO REVIEW NEEDED');
+  });
+
+  test('PR-first-party-catalog: publish against a catalog base flags no untouched first-party entry; a firstParty flip still flags', async () => {
+    const bytes = pluginZip(manifest({ id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', version: '0.2.0' }));
+    cacheArchive(cache, bytes);
+    const ledger = pluginEntry([version('0.2.0', bytes)], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, source: null });
+    delete ledger.maintainers;
+    const intel = pluginEntry([version('1.0.0', A100)]);
+    const r = await check('publish', catalogBase([intel, ledger]), tree({ entries: [intel, ledger] }), ['--target', 'test']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^NOTE base: the live catalog \(2 listings\)$/m, 'the base is read as a catalog');
+    assert.doesNotMatch(r.stdout, /^FLAG first-party /m, 'a catalog holds less than an entry: an untouched first-party entry is no change');
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+
+    // A flip is a change a catalog does show: set (the base listing is not first-party) and dropped (the head entry is not).
+    const own = { ...intel, firstParty: true };
+    delete own.maintainers;
+    const set = await check('publish', catalogBase([intel]), tree({ entries: [own] }), ['--target', 'test']);
+    assert.equal(set.code, 0, set.stdout + set.stderr);
+    assert.match(set.stdout, /^FLAG first-party C3 dev\.example\.intel: /m, 'firstParty set against a catalog base');
+    const dropped = await check('publish', catalogBase([own]), tree({ entries: [intel] }), ['--target', 'test']);
+    assert.equal(dropped.code, 0, dropped.stdout + dropped.stderr);
+    assert.match(dropped.stdout, /^FLAG first-party C3 dev\.example\.intel: /m, 'firstParty dropped against a catalog base');
+    const added = await check('publish', catalogBase([intel]), tree({ entries: [intel, ledger] }), ['--target', 'test']);
+    assert.equal(added.code, 0, added.stdout + added.stderr);
+    assert.match(added.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'a first-party entry the catalog does not hold');
   });
 });

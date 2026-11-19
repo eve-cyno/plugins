@@ -23,7 +23,7 @@ Plugins that automate gameplay, send one input to several game clients, read the
 process or its memory, or go around the plugin API; anything against Fenris Creations' terms (client modification, botting,
 real-money trading); plugins whose name or author reads as EVE-Cyno. Only the project's own entries may set `firstParty`, and only they may use that name or
 author; a pull request from anyone else that sets `firstParty` or uses them is refused. An id that starts with `dev.evecyno.` is
-refused unless its entry sets `firstParty`, and a maintainer reviews any change to a `firstParty` entry.
+refused unless its entry sets `firstParty`; only the project changes a `firstParty` entry, and a maintainer reads every change to one.
 
 ## Mirroring
 
