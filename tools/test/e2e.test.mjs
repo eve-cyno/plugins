@@ -274,12 +274,12 @@ describe('E2E check.mjs', () => {
     assert.match(fs.readFileSync(summary, 'utf8'), /\*\*CHECKS PASSED\*\*/);
   });
 
-  test('E2E-check-review: new entries and an added revocation need review (exit 3)', async () => {
+  test('E2E-check-review: new entries (two entry files) and an added revocation need review (exit 3)', async () => {
     const r = await check('review', path.join(T, 'empty'), path.join(T, 'tree'), ['--author', 'example-login']);
     assert.equal(r.code, 3, r.stdout + r.stderr);
     assert.match(r.stdout, /^FLAG new C11 dev\.example\.intel/m);
     assert.match(r.stdout, /^PASS C13 /m);
-    assert.equal(last(r.stdout), 'NEEDS REVIEW new revocation');
+    assert.equal(last(r.stdout), 'NEEDS REVIEW new multi-entry revocation');
   });
 
   test('E2E-check-publish: against the live base the lift is information, not a refusal', async () => {

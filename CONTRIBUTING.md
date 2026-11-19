@@ -17,7 +17,7 @@
 
 ## Rules
 
-- One entry file per pull request.
+- One entry file per pull request (a pull request that changes more is held for a maintainer's review: `multi-entry`).
 - No accounts, install counts or ratings.
 - Plugins that automate gameplay, touch the game client or break Fenris Creations' terms are not listed.
 - By submitting an entry you allow EVE-Cyno to copy each listed archive, unchanged, to its mirror and serve it to users of the app.

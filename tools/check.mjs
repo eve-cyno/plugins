@@ -9,10 +9,10 @@
 //   review  --base <dir> --head <dir> [--author <login>] [--summary <file>] [--archive-cache <dir>]   check.yml, job review
 //     The review classes: first-party (C3), escalation and identity (C10: the host's delta of requested permissions, background turned
 //     on; name, author or type changed, the provenance repository changed or dropped, the maintainers changed; the background flag and
-//     optional permissions read from each archive's plugin.json), new (C11),
-//     maintenance (C13: anything changed but entries/<id>.json and revoked.json), identity (C14: the author is not a maintainer of a
-//     base entry the pull request changes or removes), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes>
-//     when any is set.
+//     optional permissions read from each archive's plugin.json), new (C11), maintenance (C13: anything changed but entries/<id>.json
+//     and revoked.json), multi-entry (C13: more than one entry file changed), identity (C14: the author is not a maintainer of a base
+//     entry the pull request changes or removes), revocation and lift (C15), engines (C17). Exit 3 with NEEDS REVIEW <classes> when
+//     any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
 //     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
@@ -316,9 +316,13 @@ function scopeFlag() {
   // An entry file sits at the top of entries/ and is no dotfile; anything else there (.gitattributes, .gitkeep, a folder) is maintenance.
   const inScope = (p) => /^entries\/[^/.][^/]*\.json$/.test(p) || p === 'revoked.json';
   const h = treeFiles(headDir), b = treeFiles(baseDir);
-  const changed = [...new Set([...h.keys(), ...b.keys()])].filter(p => !inScope(p) && h.get(p) !== b.get(p)).sort();
+  const all = [...new Set([...h.keys(), ...b.keys()])].filter(p => h.get(p) !== b.get(p)).sort();
+  const changed = all.filter(p => !inScope(p));
   if (changed.length > 0) R.flag('maintenance', 'C13', `${changed.length} path(s) outside entries/<id>.json and revoked.json: ${changed.slice(0, 10).join(', ')}${changed.length > 10 ? ', ...' : ''}`);
   else R.pass('C13', 'only entries/<id>.json and revoked.json change');
+  // One entry file per pull request (CONTRIBUTING.md): more is not refused, but read by a maintainer.
+  const entryFiles = all.filter(p => inScope(p) && p !== 'revoked.json');
+  if (entryFiles.length > 1) R.flag('multi-entry', 'C13', `${entryFiles.length} entry files change: ${entryFiles.slice(0, 10).join(', ')}${entryFiles.length > 10 ? ', ...' : ''} (one entry file per pull request)`);
 }
 
 // ---- run --------------------------------------------------------------------------------------------------------------------------------

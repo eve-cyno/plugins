@@ -203,6 +203,27 @@ describe('PR fixture suite', () => {
     assert.match(v.stdout, /^FLAG maintenance C13 2 path\(s\) outside entries\/<id>\.json and revoked\.json: entries\/\.gitkeep, entries\/\.hidden\.json/m);
   });
 
+  test('PR-multi-entry: more than one entry file changed (added, edited or removed) is flagged NEEDS REVIEW multi-entry', async () => {
+    const A110 = pluginZip(manifest({ version: '1.1.0' }));
+    const DUSK = themeZip();
+    cacheArchive(cache, DUSK);
+    const dusk = themeEntry([version('2.0.0', DUSK, {}, 'theme')]);
+    const r = await check('review', baseTree(), head(A110), ['--author', 'example-login']);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED', 'one entry file');
+    const two = tree({ entries: [pluginEntry([version('1.1.0', A110), version('1.0.0', A100)]), dusk] });
+    const v = await check('review', baseTree(), two, ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG multi-entry C13 2 entry files change: entries\/dev\.example\.dusk\.json, entries\/dev\.example\.intel\.json \(one entry file per pull request\)$/m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW new multi-entry');
+    const removed = await check('review', tree({ entries: [pluginEntry([version('1.0.0', A100)]), dusk] }), head(A110), ['--author', 'example-login']);
+    assert.match(removed.stdout, /^FLAG multi-entry C13 2 entry files change: entries\/dev\.example\.dusk\.json, entries\/dev\.example\.intel\.json/m, 'a removed entry counts');
+    const rev = [{ id: 'dev.example.intel', versions: ['1.0.0'], reason: 'Sends tokens to an unknown host.', date: today }];
+    const withRev = await check('review', baseTree(), head(A110, { revoked: rev }), ['--author', 'example-login']);
+    assert.doesNotMatch(withRev.stdout, /multi-entry/, 'revoked.json is not an entry file');
+    const withDoc = await check('review', baseTree(), head(A110, { files: { 'docs/NOTE.md': 'x' } }), ['--author', 'example-login']);
+    assert.equal(last(withDoc.stdout), 'NEEDS REVIEW maintenance', 'another path is maintenance, not an entry file');
+  });
+
   test('PR-lift: removing a revocation is flagged NEEDS REVIEW lift', async () => {
     const rev = [{ id: 'dev.example.intel', versions: ['1.0.0'], reason: 'Sends tokens to an unknown host.', date: today }];
     const base = baseTree({ revoked: rev });

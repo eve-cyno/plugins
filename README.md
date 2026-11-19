@@ -40,8 +40,8 @@ npm test
 
 ## Private sources
 
-A user can add another index (for example an alliance's) in the app. Plugins from private sources are not reviewed by EVE-Cyno; the
-app names their source on every permission prompt.
+A user can add another index (for example an alliance's) in the app, with the desktop app version that includes private sources.
+Plugins from private sources are not reviewed by EVE-Cyno; the app names their source on every permission prompt.
 
 ## Contact
 
@@ -52,8 +52,6 @@ Feedback, support and reports: Discord <https://discord.gg/XZzkH38dt9>, or in ga
 The index repository and its tools are under the MIT License. The vendored desktop modules under `vendor/eve-cyno-host/**` keep
 their own licence, PolyForm Strict 1.0.0 (`vendor/eve-cyno-host/LICENSE`). See [LICENSE](LICENSE).
 
-## Notice
+## Disclaimer
 
-(c) 2014 Fenris Creations hf. All rights reserved. "EVE", "EVE Online", "Fenris Creations", and all related logos and images are
-trademarks or registered trademarks of Fenris Creations hf. This material is used with limited permission of Fenris Creations. No
-official affiliation or endorsement by Fenris Creations is stated or implied. EVE-Cyno is not affiliated with Fenris Creations.
+EVE Online and all related materials are the property of Fenris Creations. EVE-Cyno is not affiliated with Fenris Creations.
