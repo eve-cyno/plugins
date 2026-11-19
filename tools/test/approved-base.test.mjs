@@ -1,6 +1,6 @@
 // Tests of tools/approved-base.mjs (plan 4.5 step 1 and 2): <A> is the commit of the newest other run of publish.yml or resign.yml
-// with an approval of environment index by the environment's only required reviewer and successful sign and upload jobs; the
-// compare status of <A> to <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like
+// that this repository's own dispatch or schedule started, with an approval of environment index by the environment's only
+// required reviewer and successful sign and upload jobs; the compare status of <A> to <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like
 // the REST answers of the environment, runs, approvals, jobs and compare endpoints; the reviewer is read from the environment.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -28,8 +28,15 @@ function run(id, wf, headSha, created) {
     id, name: wf.replace('.yml', ''), path: `.github/workflows/${wf}`, head_branch: 'main', head_sha: headSha,
     event: wf === 'resign.yml' ? 'schedule' : 'workflow_dispatch', status: 'completed', conclusion: 'success', run_attempt: 1,
     created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}`,
+    head_repository: { id: 901, node_id: 'R_plugins', name: 'plugins', full_name: 'eve-cyno/plugins' },
   };
 }
+/**
+ * A pull_request run of a publish.yml that a fork changed to run on pull_request: the fork's branch is named main, so the run has
+ * the path and head_branch of a run of main; its head repository is the fork.
+ */
+const forkRun = (id, created, o = {}) => ({ ...run(id, 'publish.yml', sha('f'), created), event: 'pull_request',
+  head_repository: { id: 977, node_id: 'R_fork', name: 'plugins', full_name: 'someone/plugins' }, ...o });
 const approval = (user, envs, state = 'approved') => ({
   environments: envs.map((name, i) => ({ id: i + 1, node_id: `EN_${name}`, name })), state, comment: '', user: { login: `user-${user}`, id: user, type: 'User' },
 });
@@ -118,6 +125,45 @@ describe('approved-base: <A> skips every run that is not an approved, signed and
     const r = await call({ under: UNDER, others: [twin, GOOD] });
     assert.equal(r.code, 0, r.text);
     assert.match(r.text, new RegExp(`^A ${A} from run 200 `, 'm'));
+  });
+  // A fork may change publish.yml to run on pull_request and name its branch main: such a run has the path and the head_branch of
+  // a run of main, and jobs named sign and upload of its own. Only a run that this repository's own dispatch or schedule started
+  // counts, and it is skipped before its approvals or jobs are read (a re-run of it could otherwise stop every review with an ERROR).
+  const notRead = (r, id) => {
+    for (const end of [`${R}/actions/runs/${id}/approvals`, JOBS(id)]) assert.ok(!r.calls.some((a) => a[a.length - 1] === end), `${end} is not read`);
+  };
+  test('approved-base skips a pull_request run on a fork branch named main', async () => {
+    const created = '2026-12-05T10:00:00Z';
+    for (const [x, event] of [[forkRun(270, created), 'pull_request'],
+      [forkRun(270, created, { head_repository: run(1, 'publish.yml', A, created).head_repository }), 'pull_request'],
+      [forkRun(270, created, { event: 'pull_request_target' }), 'pull_request_target'], [forkRun(270, created, { event: 'push' }), 'push'],
+      [forkRun(270, created, { event: 'workflow_run' }), 'workflow_run'], [forkRun(270, created, { event: undefined }), 'none'],
+      [forkRun(270, created, { event: 'Workflow_Dispatch' }), 'Workflow_Dispatch']]) {
+      // Approved, signed and uploaded, and newer than run 200: without the rule it would be <A>.
+      const r = await skips({ run: x, ...PUBLISHED(270) }, `started by event ${event}, not workflow_dispatch or schedule$`);
+      notRead(r, 270);
+    }
+  });
+  test('approved-base skips a run whose head repository is not eve-cyno/plugins', async () => {
+    const created = '2026-12-05T10:00:00Z';
+    const own = run(271, 'publish.yml', sha('c'), created);
+    for (const [repo, named] of [[{ id: 977, full_name: 'someone/plugins' }, 'someone/plugins'], [null, 'none'], [undefined, 'none'],
+      [{ id: 901, name: 'plugins' }, 'none'], [{ full_name: 'eve-cyno/plugins-old' }, 'eve-cyno/plugins-old'],
+      [{ full_name: 'Eve-Cyno/Plugins' }, 'Eve-Cyno/Plugins'], ['eve-cyno/plugins', 'none']]) {
+      const r = await skips({ run: { ...own, head_repository: repo }, ...PUBLISHED(271) }, `its head repository is ${named}, not eve-cyno/plugins$`);
+      notRead(r, 271);
+    }
+    const resign = { ...run(272, 'resign.yml', sha('d'), created), head_repository: { full_name: 'someone/plugins' } };
+    notRead(await skips({ run: resign, ...PUBLISHED(272) }, 'its head repository is someone/plugins, not eve-cyno/plugins$'), 272);
+  });
+  test('AB-under-review-foreign: a run under review that a fork or another repository started is an ERROR', async () => {
+    for (const [under, re] of [[forkRun(300, '2026-12-10T10:00:00Z'), /^ERROR: run 300: started by event pull_request, not workflow_dispatch or schedule$/m],
+      [{ ...UNDER.run, head_repository: { full_name: 'someone/plugins' } }, /^ERROR: run 300: its head repository is someone\/plugins, not eve-cyno\/plugins$/m]]) {
+      const r = await call({ under: { ...UNDER, run: under }, others: [GOOD] });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, re);
+      assert.equal(r.lines.length, 1, 'nothing else is read or printed');
+    }
   });
 });
 

@@ -4,7 +4,8 @@
 // 403 with the exact message "Resource not accessible by personal access token" and an x-ratelimit-remaining above 0, and the two
 // secrets lists (Secrets and Environments, granted for good on 2026-11-18) only on HTTP 200 with a list of secrets. The six secrets
 // and variables the workflows read are listed with their updated_at in their environments, the two variables' values are checked
-// and never printed, and none of the names MINISIGN_* and R2_* may be set at repository or organization level.
+// and never printed, index and mirror hold no other secret or variable (index no variable at all), and none of the names MINISIGN_*
+// and R2_* may be set at repository or organization level or in another environment.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -46,6 +47,7 @@ const secretList = (names, at = STAMP) => [{ total_count: names.length, secrets:
 const variableList = (vars, at = STAMP) => [{ total_count: vars.length, variables: vars.map(([name, value]) => ({ name, value, created_at: '2026-11-01T08:00:00Z', updated_at: at })) }];
 const STORED = {
   indexSecrets: `GET ${R}/environments/index/secrets?per_page=100`,
+  indexVariables: `GET ${R}/environments/index/variables?per_page=30`,
   mirrorSecrets: `GET ${R}/environments/mirror/secrets?per_page=100`,
   mirrorVariables: `GET ${R}/environments/mirror/variables?per_page=30`,
   repoSecrets: `GET ${R}/actions/secrets?per_page=100`,
@@ -59,6 +61,7 @@ const ENVS = `GET ${R}/environments?per_page=100`;
 const envList = (names) => [{ total_count: names.length, environments: names.map((name, i) => ({ id: i + 1, node_id: `EN_${i}`, name, protection_rules: [] })) }];
 const STORED_DEFAULT = {
   indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_PASSWORD']) },
+  indexVariables: { stdout: variableList([]) },
   mirrorSecrets: { stdout: secretList(['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) },
   mirrorVariables: { stdout: variableList([['R2_ACCOUNT_ID', ACCOUNT], ['R2_BUCKET', 'eve-cyno-plugins']]) },
   repoSecrets: { stdout: secretList(['DISCORD_WEBHOOK']) },
@@ -359,14 +362,52 @@ describe('C-ENV1 the secrets and variables the workflows read', () => {
       assert.match(r.text, new RegExp(`^PASS ${what}: none named MINISIGN_\\* or R2_\\*`, 'm'));
     }
     assert.match(r.text, /^PASS environments: 3 listed; other than index and mirror: github-pages$/m);
+    assert.match(r.text, /^PASS environment index secrets: only the secrets the workflows read \(MINISIGN_INDEX_KEY, MINISIGN_INDEX_PASSWORD\)$/m);
+    assert.match(r.text, /^PASS environment index variables: only the variables the workflows read \(none\)$/m);
+    assert.match(r.text, /^PASS environment mirror secrets: only the secrets the workflows read \(R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY\)$/m);
+    assert.match(r.text, /^PASS environment mirror variables: only the variables the workflows read \(R2_ACCOUNT_ID, R2_BUCKET\)$/m);
     assert.doesNotMatch(r.text, /plugins\.eve-cyno\.dev|DISCORD_WEBHOOK|PAGES_/, 'no other name or value is printed');
+  });
+  // index and mirror hold exactly the six: each job that names one of them can read every secret and variable in it once approved.
+  const extra = (env, kind, names) => new RegExp(`^FAIL environment ${env} ${kind}s: ${names} is set in environment ${env} besides the ${kind}s `
+    + `the workflows read \\([^)]*\\): each job that names environment ${env} can read every ${kind} of it once approved, so it holds those `
+    + 'only; the owner or the coordinator deletes it$', 'm');
+  test('C-ENV1 extra secret in index fails: index holds MINISIGN_INDEX_KEY and MINISIGN_INDEX_PASSWORD only', async () => {
+    const six = ['MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_PASSWORD'];
+    for (const [more, named] of [[['GH_RELEASE_TOKEN'], 'GH_RELEASE_TOKEN'], [['R2_SECRET_ACCESS_KEY'], 'R2_SECRET_ACCESS_KEY'],
+      [['MINISIGN_INDEX_KEY_OLD', 'ACTIONS_STEP_DEBUG'], 'MINISIGN_INDEX_KEY_OLD, ACTIONS_STEP_DEBUG'], [['minisign_index_key'], 'minisign_index_key']]) {
+      const r = await fails({ stored: { indexSecrets: { stdout: secretList([...six, ...more]) } } }, extra('index', 'secret', named));
+      assert.match(r.text, /^PASS secret MINISIGN_INDEX_KEY \(environment index\): updated_at /m, 'the six themselves still pass');
+    }
+    await fails({ stored: { indexSecrets: { stdout: [{ total_count: 3, secrets: [...secretList(six)[0].secrets, { updated_at: STAMP }] }] } } },
+      /^FAIL environment index secrets: an item without a name$/m);
+  });
+  test('C-ENV1 extra secret in mirror fails: mirror holds R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY only', async () => {
+    const two = ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'];
+    for (const [more, named] of [[['MINISIGN_INDEX_KEY'], 'MINISIGN_INDEX_KEY'], [['CLOUDFLARE_API_TOKEN'], 'CLOUDFLARE_API_TOKEN']]) {
+      await fails({ stored: { mirrorSecrets: { stdout: secretList([...two, ...more]) } } }, extra('mirror', 'secret', named));
+    }
+  });
+  test('C-ENV1 extra variable in mirror fails, and its value is not printed', async () => {
+    const vars = [['R2_ACCOUNT_ID', ACCOUNT], ['R2_BUCKET', 'eve-cyno-plugins']];
+    for (const [name, value] of [['R2_ENDPOINT', 'https://elsewhere.example.invalid'], ['ACTIONS_RUNNER_DEBUG', 'runner-debug-value'], ['PUBLIC_BASE', 'plugins.example.invalid']]) {
+      const r = await fails({ stored: { mirrorVariables: { stdout: variableList([...vars, [name, value]]) } } }, extra('mirror', 'variable', name));
+      assert.ok(!r.text.includes(value), 'the value of the extra variable is not printed');
+      assert.match(r.text, /^PASS variable R2_BUCKET \(environment mirror\): /m, 'the six themselves still pass');
+    }
+  });
+  test('C-ENV1 extra variable in index fails: the workflows read no variable of index', async () => {
+    for (const [name, value] of [['R2_BUCKET', 'eve-cyno-plugins'], ['SIGN_MODE', 'sign-mode-value']]) {
+      const r = await fails({ stored: { indexVariables: { stdout: variableList([[name, value]]) } } }, extra('index', 'variable', name));
+      assert.ok(!r.text.includes(value), 'the value is not printed');
+    }
   });
   test('CE-other-environments: every environment other than index and mirror is read, index and mirror not twice; none other passes', async () => {
     const r = await run({ environments: { stdout: envList(['mirror', 'index']) } });
     assert.equal(r.ok, true, r.text);
     assert.match(r.text, /^PASS environments: 2 listed; other than index and mirror: none$/m);
     const reads = r.calls.map(keyOf).filter((k) => /\/environments\/[^/]+\/(secrets|variables)\?/.test(k)).sort();
-    assert.deepEqual(reads, [STORED.indexSecrets, STORED.mirrorSecrets, STORED.mirrorVariables].sort(), 'no list of another environment, none twice');
+    assert.deepEqual(reads, [STORED.indexSecrets, STORED.indexVariables, STORED.mirrorSecrets, STORED.mirrorVariables].sort(), 'no list of another environment, none twice');
     const odd = 'web prod';
     const at = `${R}/environments/web%20prod`;
     const named = await run({ environments: { stdout: envList(['index', 'mirror', odd]) },

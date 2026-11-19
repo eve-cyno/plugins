@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // tools/approved-base.mjs: plan 4.5 steps 1 and 2 as a convenience for the reviewer, who still confirms every line on the run pages
 // and against the reviewer's own offline list (docs/RUNBOOK.md). Given the run under review (its commit is <B>), it prints:
-// - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that has an approval of
+// - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that this repository's own
+//   dispatch or schedule started (event workflow_dispatch or schedule, head repository eve-cyno/plugins: a fork can change
+//   publish.yml to run on pull_request and name its branch main, so path and head_branch alone do not tell) and that has an approval of
 //   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
 //   both concluded success in attempt 1 (GET .../actions/runs/<id>/jobs?filter=all, the jobs of every attempt: every job refuses any
 //   attempt but the first, so a re-run's later attempts never sign or upload), with one "skip" line for every newer run and why it
@@ -53,6 +55,21 @@ export function notOnMain(run) {
   if (!wfOf(run)) return `a run of ${oneLine(run.path)}`;
   if (run.head_branch !== 'main') return `on ${oneLine(run.head_branch)}, not on main`;
   if (typeof run.head_sha !== 'string' || !SHA_RE.test(run.head_sha)) return 'names no commit';
+  return '';
+}
+
+/** The events that start the two workflows: a dispatch (both), and resign.yml's schedule. */
+const OWN_EVENTS = ['workflow_dispatch', 'schedule'];
+
+/**
+ * Why a run is not one that this repository's own dispatch or schedule started ('' when it is one). A fork can change publish.yml
+ * to run on pull_request and name its branch main: that run has the path and the head_branch of a run of main, and jobs named sign
+ * and upload of its own; its event is pull_request and its head repository the fork (null once the fork is deleted).
+ */
+export function notOwnRun(run) {
+  if (!OWN_EVENTS.includes(run.event)) return `started by event ${oneLine(run.event ?? 'none')}, not workflow_dispatch or schedule`;
+  const repo = isObj(run.head_repository) && typeof run.head_repository.full_name === 'string' ? run.head_repository.full_name : null;
+  if (repo !== REPO) return `its head repository is ${oneLine(repo ?? 'none')}, not ${REPO}`;
   return '';
 }
 
@@ -126,6 +143,8 @@ export async function approvedBase({ runId, env }) {
     if (!wfOf(u)) return done(1, `ERROR: run ${runId} is a run of ${oneLine(u.path)}, not of publish.yml or resign.yml`);
     if (u.head_branch !== 'main') return done(1, `ERROR: run ${runId} is on ${oneLine(u.head_branch)}, not on main`);
     if (typeof u.head_sha !== 'string' || !SHA_RE.test(u.head_sha)) return done(1, `ERROR: run ${runId} names no commit`);
+    const foreign = notOwnRun(u);
+    if (foreign) return done(1, `ERROR: run ${runId}: ${foreign}`);
     const B = u.head_sha;
     lines.push(`B ${B} from ${label(u)}`);
 
@@ -137,7 +156,8 @@ export async function approvedBase({ runId, env }) {
     let signed = null; // the newest run with an approved index and a successful sign, but no successful upload
     for (const run of runs) {
       if (run.id === runId) { lines.push(`skip ${label(run)}: the run under review`); continue; }
-      const off = notOnMain(run);
+      // Skipped before its approvals or jobs are read: a foreign run is never <A>, and a re-run of one never stops the review.
+      const off = notOnMain(run) || notOwnRun(run);
       if (off) { lines.push(`skip ${wfOf(run) ? label(run) : `run ${run.id}`}: ${off}`); continue; }
       const s = await reviewRun(run, reviewer.id, opts);
       const why = s.why || s.sign || s.upload;

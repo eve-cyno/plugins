@@ -98,7 +98,7 @@ function inputOf(name, dest, { testPub = false, head } = {}) {
 }
 
 const GH = 'repos/eve-cyno/plugins';
-const ghRun = (id, sha40, created) => ({ id, path: '.github/workflows/publish.yml', head_branch: 'main', head_sha: sha40, run_attempt: 1, created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}` });
+const ghRun = (id, sha40, created) => ({ id, path: '.github/workflows/publish.yml', head_branch: 'main', head_sha: sha40, event: 'workflow_dispatch', head_repository: { full_name: 'eve-cyno/plugins' }, run_attempt: 1, created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}` });
 /**
  * gh answers for run 300 (the run under review): no other run (a first publish), an approved and uploaded run 200, an approved run
  * 200 whose sign succeeded and upload failed ('signed'), or a failing list.

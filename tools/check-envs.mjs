@@ -21,6 +21,8 @@
 //   is printed for the reviewer to compare with the day the owner or the coordinator set it (docs/RUNBOOK.md); R2_BUCKET is
 //   eve-cyno-plugins and R2_ACCOUNT_ID is 32 lower-case hex (ok or fail only, never the value read; a failure names the rule, and
 //   for R2_BUCKET the rule is the public bucket name docs/RUNBOOK.md lists);
+// - index and mirror hold no other secret or variable (OWN_LISTS; index holds no variable at all): each job that names one of the
+//   two environments can read every secret and variable of it once approved, so an extra one is named (never its value) and fails;
 // - no secret or variable named MINISIGN_* or R2_* is set at repository or organization level (OUTSIDE): one there reaches every
 //   job of the repository without an approval of index or mirror; nor in any environment other than index and mirror (the
 //   environments list, then each other environment's secrets and variables): one there reaches every job that names that
@@ -72,6 +74,15 @@ export const STORED = Object.freeze([
   { kind: 'variable', name: 'R2_ACCOUNT_ID', env: 'mirror', value: (v) => /^[0-9a-f]{32}$/.test(v), rule: 'a Cloudflare account id (32 lower-case hex)', shown: 'a Cloudflare account id (32 lower-case hex; not printed)' },
   { kind: 'variable', name: 'R2_BUCKET', env: 'mirror', value: (v) => v === 'eve-cyno-plugins', rule: 'eve-cyno-plugins', shown: 'the bucket the runbook names (not printed)' },
 ]);
+const listEndpoint = (env, kind) => `${R}/environments/${encodeURIComponent(env)}/${kind}s?per_page=${kind === 'secret' ? 100 : 30}`;
+/**
+ * The secrets and variables lists of index and mirror, each with the names STORED puts in it: the list must hold those names and
+ * no other (index's variables: none).
+ */
+export const OWN_LISTS = Object.freeze(ENVIRONMENTS.flatMap((env) => ['secret', 'variable'].map((kind) => Object.freeze({
+  env, kind, what: `environment ${env} ${kind}s`, endpoint: listEndpoint(env, kind), key: `${kind}s`,
+  names: Object.freeze(STORED.filter((s) => s.env === env && s.kind === kind).map((s) => s.name)),
+}))));
 const EVERY_JOB = 'there it reaches every job of the repository without an approval of index or mirror';
 /** The lists outside the environments where no name MINISIGN_* or R2_* may be set (the repository's own and the organization's). */
 export const OUTSIDE = Object.freeze([
@@ -83,7 +94,7 @@ export const OUTSIDE = Object.freeze([
 /** The secrets and variables lists of an environment other than index and mirror, where no such name may be set either. */
 export const otherEnvironmentLists = (name) => ['secret', 'variable'].map((kind) => ({
   what: `environment ${oneLine(name)} ${kind}s`,
-  endpoint: `${R}/environments/${encodeURIComponent(name)}/${kind}s?per_page=${kind === 'secret' ? 100 : 30}`,
+  endpoint: listEndpoint(name, kind),
   key: `${kind}s`,
   where: `in environment ${oneLine(name)}, not in index or mirror`,
   reach: `there it reaches every job that names environment ${oneLine(name)}, without an approval of index or mirror`,
@@ -92,6 +103,8 @@ const OWN_NAME_RE = /^(?:MINISIGN_|R2_)/i;
 const STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const UNREADABLE = 'a list that cannot be read fails closed';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+/** The name of a listed item (an environment, a secret, a variable), or null when it has none. */
+const nameOf = (x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null);
 
 /** The problems of one environment as GET .../environments/<name> answers it, its reviewer aside (reviewerOf). */
 function environmentProblems(doc) {
@@ -238,12 +251,9 @@ export async function checkEnvs({ rev, repoDir, env }) {
       alarms.push(`ALARM: the agents' token created the environment ${pr.creates} in ${REPO}: ${DELETE_IT} and takes Administration off the token; no approval until then`);
     }
   }
-  // ---- the six secrets and variables in their environments, and none of their names outside them
+  // ---- the six secrets and variables in their environments, nothing else in index and mirror, and none of their names outside
   const lists = new Map();
-  for (const s of STORED) {
-    const k = `${s.env} ${s.kind}`;
-    if (!lists.has(k)) lists.set(k, await getAll(`${R}/environments/${s.env}/${s.kind}s?per_page=${s.kind === 'secret' ? 100 : 30}`, `${s.kind}s`, opts));
-  }
+  for (const o of OWN_LISTS) lists.set(`${o.env} ${o.kind}`, await getAll(o.endpoint, o.key, opts));
   for (const s of STORED) {
     const what = `${s.kind} ${s.name} (environment ${s.env})`;
     const l = lists.get(`${s.env} ${s.kind}`);
@@ -257,11 +267,23 @@ export async function checkEnvs({ rev, repoDir, env }) {
   }
   lines.push('updated_at: compare each date above with the day the owner or the coordinator set that value; a later date that nobody '
     + 'set means no approval (docs/RUNBOOK.md)');
+  for (const o of OWN_LISTS) {
+    const l = lists.get(`${o.env} ${o.kind}`);
+    if (l.error) { fail(o.what, `${oneLine(l.error)} (${UNREADABLE})`); continue; }
+    const names = l.items.map(nameOf);
+    if (names.includes(null)) { fail(o.what, 'an item without a name'); continue; }
+    const extra = names.filter((n) => !o.names.includes(n));
+    const read = `the ${o.kind}s the workflows read (${o.names.join(', ') || 'none'})`;
+    if (extra.length) {
+      fail(o.what, `${extra.map(oneLine).join(', ')} is set in environment ${o.env} besides ${read}: each job that names environment `
+        + `${o.env} can read every ${o.kind} of it once approved, so it holds those only; the owner or the coordinator deletes it`);
+    } else lines.push(`PASS ${o.what}: only ${read}`);
+  }
   const outside = [...OUTSIDE];
   const envs = await getAll(`${R}/environments?per_page=100`, 'environments', opts);
   if (envs.error) fail('environments', `${oneLine(envs.error)} (${UNREADABLE})`);
   else {
-    const names = envs.items.map((x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null));
+    const names = envs.items.map(nameOf);
     if (names.includes(null)) fail('environments', 'an environment without a name');
     else {
       const others = names.filter((n) => !ENVIRONMENTS.includes(n));
@@ -272,7 +294,7 @@ export async function checkEnvs({ rev, repoDir, env }) {
   for (const o of outside) {
     const l = await getAll(o.endpoint, o.key, opts);
     if (l.error) { fail(o.what, `${oneLine(l.error)} (${UNREADABLE})`); continue; }
-    const names = l.items.map((x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null));
+    const names = l.items.map(nameOf);
     if (names.includes(null)) { fail(o.what, 'an item without a name'); continue; }
     const own = names.filter((n) => OWN_NAME_RE.test(n));
     if (own.length) {
