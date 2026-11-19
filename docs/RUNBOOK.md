@@ -194,7 +194,7 @@ starts no such run, the first push included: `check.yml` runs on pull requests o
    that is why the request rejects), and no run is approved until the owner has replaced the token.
 4. The owner then approves or rejects the waiting run from his phone, after the steps below as for any test run.
 
-Result: _(date, status line and message)_.
+Result: 2026-11-19, on `target: test` run 44491400412 (commit `6925bbf`) waiting at `mirror`: `HTTP/2.0 403 Forbidden`, `Resource not accessible by personal access token`; the run kept waiting. The request was sent from the agents' token in the coordinator's shell (typed by the owner there, since the coordinator's own call was held back by its permission check). The owner then approved `mirror` from his phone (09:51Z) and the run ended `success` (`build`, `sign-test`, `upload`; `sign` and `verify` skipped, as for every test run).
 
 ## Before every index and mirror approval
 
@@ -463,6 +463,6 @@ Recorded once, on real runs; until then they are open.
 | What | How | Result |
 |---|---|---|
 | Does a run waiting for approval hold the `index-sign` group? | a `target: test` run waiting at `mirror`, then a second dispatch | not measured yet |
-| How long does a pending approval stay open? | the same run, within the 35-day run cap | not measured yet |
+| How long does a pending approval stay open? | the same run, within the 35-day run cap | at least 57 minutes: run 44491400412 waited at `mirror` from 08:54Z (`sign-test` done) to the owner's approval at 09:51Z on 2026-11-19, still open; the upper bound is not measured |
 | Probe answers of both tokens | `tools/check-envs.mjs` after the token swap | see "The agents' token" |
 | Does `GET .../actions/runs/<id>/approvals` list the approvals of every attempt of a re-run, or of the latest attempt only? | on the first `target: test` dispatch: after its `mirror` approval and its end, the owner re-runs it once, the only exception to "No run is ever re-run" (every job fails at its first step, so nothing is built, signed or uploaded), and the coordinator reads its approvals list and its `jobs?filter=all` | not measured yet; until then the tools assume the latest attempt only (see "Before every index and mirror approval", step 2) |
