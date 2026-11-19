@@ -181,6 +181,32 @@ describe('YS: the strict YAML subset reader', () => {
     assert.equal(parseYaml('a: |\n  x\n  \n\n  y\n').value.a, 'x\n\n\ny\n');
   });
 
+  // Inside a literal block a line of spaces is blank only up to the block's indentation: the spaces beyond it are text, as they are
+  // to YAML (PyYAML and libyaml read 'a: |-\n  x\n     \n' as 'x\n   '). Read as blank, a |- if would hold its pin here and be
+  // format('{0}\n   ', ...) to GitHub, always true. A leading blank line wider than the block's first line is an error to YAML.
+  test('YS a literal block line of spaces beyond the block indentation is text, kept as YAML keeps it', () => {
+    assert.equal(parseYaml('a: |-\n  x\n     \n').value.a, 'x\n   ');
+    assert.equal(parseYaml('a: |\n  x\n     \n').value.a, 'x\n   \n');
+    assert.equal(parseYaml('a: |\n  x\n     \n  y\n').value.a, 'x\n   \ny\n');
+    assert.equal(parseYaml('a: |\n    x\n     \n').value.a, 'x\n \n');
+    assert.deepEqual(JSON.parse(JSON.stringify(parseYaml('a: |-\n  x\n     \nb: 1\n').value)), { a: 'x\n   ', b: '1' });
+    assert.equal(parseYaml('a: |\n  \n  x\n').value.a, '\nx\n', 'a leading blank line no wider than the first line is blank');
+    assert.deepEqual(jobLines('jobs:\n  a:\n    if: |-\n      x\n      \n  b:\n    c: 1\n', 'a'), { start: 2, end: 3 }, 'a blank line is no part of the job');
+    assert.deepEqual(jobLines('jobs:\n  a:\n    if: |-\n      x\n         \n  b:\n    c: 1\n', 'a'), { start: 2, end: 4 }, 'a line of text is');
+    bad('a: |\n     \n  x\n', /^line 2: a leading blank line of a block scalar wider than its first line/);
+    bad('jobs:\n  a:\n    if: |-\n          \n      ${{ x }}\n    b: 1\n', /^line 4: a leading blank line of a block scalar wider than its first line/);
+  });
+
+  // A flow sequence item loses its U+0020 spaces only: YAML reads 'a: [\u00a0build]' as ['\u00a0build'], so trim() would read a
+  // needs, a branch filter or a choice's options other than GitHub does.
+  test('YS a flow sequence item with a Unicode space other than U+0020 is refused, never trimmed', () => {
+    for (const c of UNICODE_SPACES) {
+      bad(`a: [${c}build]\n`, /^line 1: a flow sequence item that is not a plain word/);
+      bad(`a: [build, sign${c}]\n`, /^line 1: a flow sequence item that is not a plain word/);
+    }
+    assert.deepEqual(parseYaml('a: [ build ,  sign ]\n').value.a, ['build', 'sign']);
+  });
+
   test('YS U+FEFF is refused on any line, not only at the start', () => {
     bad('\ufeffa: 1\n', /^line 1: a byte order mark/);
     bad('a: 1\nb: x\ufeffy\n', /^line 2: a byte order mark/);
@@ -228,7 +254,8 @@ describe('C-WF1 triggers', () => {
   test('C-WF1 refuses pull_request_target', () => refuses('C-WF1', [{ file: 'check.yml', from: '\n  pull_request:\n', to: '\n  pull_request_target:\n' }], /pull_request_target/));
   test('C-WF1 refuses an added workflow_run trigger', () => refuses('C-WF1', [{ file: 'publish.yml', from: '\non:\n', to: '\non:\n  workflow_run:\n    workflows: [check]\n' }], /workflow_run/));
   test('C-WF1 refuses issue_comment written as a list', () => refuses('C-WF1', [{ file: 'check.yml', from: '\non:\n  pull_request:\n    branches: [main]\n', to: '\non: [pull_request, issue_comment]\n' }], /issue_comment/));
-  test('C-WF1 refuses a fourth workflow file', () => refuses('C-WF1', [{ file: 'extra.yml', text: 'name: x\non: push\npermissions:\n  actions: write\njobs: {}\n' }], /extra\.yml/));
+  test('C-WF1 reads a # after a Unicode space as text, as YAML does (no comment hides a trigger name)', () => refuses('C-WF1', [{ file: 'check.yml', from: '\npermissions:\n', to: '\nx: y\u00a0#pull_request_target\npermissions:\n' }], /^check\.yml: names pull_request_target/));
+  test('C-WF1 refuses a fourth workflow file',() => refuses('C-WF1', [{ file: 'extra.yml', text: 'name: x\non: push\npermissions:\n  actions: write\njobs: {}\n' }], /extra\.yml/));
   test('C-WF1 refuses resign.yml without its schedule', () => refuses('C-WF1', [{ file: 'resign.yml', from: "  schedule:\n    - cron: '17 6 * * 1'\n", to: '' }], /resign\.yml: triggers/));
 });
 
@@ -346,7 +373,8 @@ describe('C-WF11 no reviewer is written in the repository; it is read from the e
   const ab = (line) => ({ path: 'tools/approved-base.mjs', from: '// tools/approved-base.mjs:', to: `${line}\n// tools/approved-base.mjs:` });
   test('C-WF11 the real files pass', () => assert.deepEqual(RULES['C-WF11'](real), []));
   test('C-WF11 refuses a reviewer variable in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'upload', from: '      TARGET: ${{ inputs.target }}\n', to: '      TARGET: ${{ inputs.target }}\n      APPROVER: ${{ vars.REVIEWER_ID }}\n' }], /publish\.yml: names a reviewer outside a comment/));
-  test('C-WF11 refuses a reviewer input', () => refuses('C-WF11', [{ file: 'publish.yml', from: '      repair:\n', to: '      reviewer:\n        type: string\n      repair:\n' }], /publish\.yml: names a reviewer outside a comment/));
+  test('C-WF11 reads a # after a Unicode space as text, as YAML does (no comment hides a reviewer)', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'upload', from: '      TARGET: ${{ inputs.target }}\n', to: '      TARGET: ${{ inputs.target }}\n      APPROVER: x\u00a0# ${{ vars.REVIEWER_ID }}\n' }], /^publish\.yml: names a reviewer outside a comment/));
+  test('C-WF11 refuses a reviewer input',() => refuses('C-WF11', [{ file: 'publish.yml', from: '      repair:\n', to: '      reviewer:\n        type: string\n      repair:\n' }], /publish\.yml: names a reviewer outside a comment/));
   test('C-WF11 refuses a user id literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: '    timeout-minutes: 30\n    env:\n      OWNER_ID: 98765432\n' }], /resign\.yml: a user id or login written as a literal \(line \d+\)/));
   test('C-WF11 refuses an actor compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.actor_id == '98765432' }}\n" }], /resign\.yml: a user id or login written as a literal/));
   test('C-WF11 refuses a login compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.triggering_actor == 'someone' }}\n" }], /publish\.yml: a user id or login written as a literal/));
@@ -390,7 +418,8 @@ describe('C-WF12 a job after a job that can be skipped carries its own if', () =
     test(`C-WF12 refuses ${fn}() (GitHub reads function names in any case)`, () => refuses('C-WF12', review(`\${{ !cancelled() && needs.verify-vendor.result == 'success' && ${fn}() }}`), new RegExp(`^check\\.yml job review: if calls ${fn}\\(\\)`)));
   }
   test('C-WF12 refuses an if with text outside its ${{ }} (GitHub reads it as a string, always true)', () => refuses('C-WF12', review("${{ needs.verify-vendor.result == 'success' && !cancelled() && 'x' }} && ${{ 'y' }}"), /^check\.yml job review: if is not one expression/));
-  test('C-WF12 reads upload\'s if term by term once it is not its pin', () => refuses('C-WF12', [{ file: 'publish.yml', job: 'upload', from: "(inputs.target == 'production' && needs.sign.result == 'success')", to: "(inputs.target == 'production' && needs.sign.result == 'success' || true)" }], /^publish\.yml job upload: if does not require needs\.sign\.result == 'success' as a top-level && term/));
+  test('C-WF12 reads a pinned if other than upload\'s term by term (resign.yml head after a check that can be skipped)', () => refuses('C-WF12', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.event_name == 'schedule' }}\n" }], [/^resign\.yml job head: if must have !cancelled\(\) as a top-level && term/, /^resign\.yml job head: if does not require needs\.check\.result == 'success' as a top-level && term/]));
+  test('C-WF12 reads upload\'s if term by term once it is not its pin',() => refuses('C-WF12', [{ file: 'publish.yml', job: 'upload', from: "(inputs.target == 'production' && needs.sign.result == 'success')", to: "(inputs.target == 'production' && needs.sign.result == 'success' || true)" }], /^publish\.yml job upload: if does not require needs\.sign\.result == 'success' as a top-level && term/));
 });
 
 describe('C-WF8, C-WF10, C-WF12 a pinned if is compared as written: GitHub never trims it', () => {
@@ -407,6 +436,7 @@ describe('C-WF8, C-WF10, C-WF12 a pinned if is compared as written: GitHub never
     ['a trailing space inside quotes', (e) => `    if: "\${{ ${e} }} "\n`],
     ['a | block', (e) => `    if: |\n      \${{ ${e} }}\n`],
     ['two ${{ }} joined by &&', (e) => `    if: \${{ ${e} }} && \${{ true }}\n`],
+    ['a |- block whose last line is spaces beyond its indentation', (e) => `    if: |-\n      \${{ ${e} }}\n          \n`],
   ];
   for (const [rule, file, job, e] of PINS) {
     const from = `    if: \${{ ${e} }}\n`;

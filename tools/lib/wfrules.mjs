@@ -80,6 +80,12 @@ const PIN_HOW = 'a changed sign job needs its new pin in SIGN_STEPS, tools/lib/w
  */
 const RUN_GATES = Object.freeze({ 'resign.yml': ['head'] });
 /**
+ * C-WF12: the only job whose if, written exactly as PINNED_IFS pins it, is taken whole instead of term by term: publish.yml upload,
+ * whose pin needs sign or sign-test by target inside an ||, never both as top-level terms. Every other pinned if after a job that
+ * can be skipped is read term by term like any if.
+ */
+const WHOLE_IFS = Object.freeze({ 'publish.yml': Object.freeze(['upload']) });
+/**
  * The job ifs the rules pin (C-WF8, C-WF10, C-WF12). Each is compared with the value as written, which must be exactly
  * `${{ <pin> }}`: GitHub never trims an if, and any text outside its `${{ }}` makes it a string that is always true (see expr).
  */
@@ -219,7 +225,8 @@ function cwf1(ws) {
     if (!same(sorted(got), sorted(want))) p.push(`${f}: triggers ${got.join(', ') || 'none'}, expected exactly ${want.join(', ')}`);
   }
   for (const [f, w] of Object.entries(ws.wf)) {
-    const code = w.text.replace(/(^|\s)#.*$/gm, '$1');
+    // A comment starts at a # at the start of a line or after a space (tabs are refused): a # after U+00A0 is text to YAML.
+    const code = w.text.replace(/(^| )#.*$/gm, '$1');
     for (const t of FORBIDDEN_TRIGGERS) if (new RegExp(`(^|[^A-Za-z0-9_-])${t}($|[^A-Za-z0-9_-])`, 'm').test(code)) p.push(`${f}: names ${t}`);
   }
   return [...new Set(p)];
@@ -531,8 +538,11 @@ const LITERAL_USER_RES = [
   /\.id\s*[!=]==?\s*["']?[0-9]+|["']?[0-9]+["']?\s*[!=]==?\s*[A-Za-z_$][\w$.?]*\.id\b/,
   new RegExp(String.raw`${WHO_RE}\s*[!=]==?\s*${QUOTED_RE}|${QUOTED_RE}\s*[!=]==?\s*${WHO_RE}`),
 ];
-/** A YAML line without its comment (a `#` at the start or after whitespace). */
-const uncommented = (line) => line.replace(/(^|\s)#.*$/, '');
+/**
+ * A YAML line without its comment: a `#` at the start or after a space (U+0020; tabs are refused). A `#` after U+00A0 or another
+ * Unicode space is text to YAML, never a comment.
+ */
+const uncommented = (line) => line.replace(/(^| )#.*$/, '');
 
 /**
  * C-WF11 (plan 4.1, 4.2): no reviewer is written in the repository; the tools read it at run time from the environments'
@@ -599,9 +609,9 @@ function andTerms(e) {
  * gate (RUN_GATES); otherwise its own if is one expression (expr: text outside its `${{ }}` makes it always true), has !cancelled()
  * as a top-level && term, calls no always(), success() or failure() in any case (GitHub reads function names in any case), and has
  * needs.<job>.result == 'success' as a top-level && term for each job it names, so nothing around it (an ||, a second comparison)
- * can make it true without that job's success. A job whose if is written exactly as PINNED_IFS pins it is not read term by term:
- * its whole if is the reviewed one (upload's needs sign or sign-test by target). Every needs names a job of the file. publish.yml
- * verify: needs exactly [upload] and if exactly `${{ VERIFY_IF }}`.
+ * can make it true without that job's success. Only publish.yml upload's if, written exactly as PINNED_IFS pins it, is not read
+ * term by term (WHOLE_IFS): its whole if is the reviewed one (it needs sign or sign-test by target). Every needs names a job of
+ * the file. publish.yml verify: needs exactly [upload] and if exactly `${{ VERIFY_IF }}`.
  */
 function cwf12(ws) {
   const p = [...ws.errors];
@@ -619,7 +629,7 @@ function cwf12(ws) {
         todo.push(...needsOf(n));
       }
       const skippable = [...before].filter((n) => 'if' in jobs[n] && !(RUN_GATES[f] ?? []).includes(n)).sort();
-      if (skippable.length === 0 || hasPinnedIf(f, id, job)) continue;
+      if (skippable.length === 0 || ((WHOLE_IFS[f] ?? []).includes(id) && hasPinnedIf(f, id, job))) continue;
       if (!('if' in job)) {
         p.push(`${where(f, id)}: no if, so GitHub skips it whenever ${orList(skippable)} is skipped (give it if: \${{ !cancelled() && needs.<job>.result == 'success' }} for each job it needs)`);
         continue;

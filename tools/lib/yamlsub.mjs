@@ -3,8 +3,10 @@
 // of plain words and literal block scalars (`|`, `|-`). It refuses everything else: tabs, carriage returns, U+0085, U+2028 and
 // U+2029 (line breaks to YAML 1.1 readers such as YamlDotNet), U+FEFF (a byte order mark) on any line, anchors, aliases, tags, flow
 // mappings, folded scalars, scalars over several lines, duplicate keys, a sequence at its key's own indentation, document markers.
-// A blank line is one of spaces (U+0020) alone: any other space character is text, as it is to YAML. So a workflow written outside
-// the subset fails the tests instead of being read one way here and another way by GitHub.
+// A blank line is one of spaces (U+0020) alone: any other space character is text, as it is to YAML. Inside a literal block a line
+// of spaces is blank only up to the block's indentation, and the spaces beyond it are text, as they are to YAML; a leading blank
+// line wider than the block's first line is refused (an error to YAML). A flow sequence item loses its U+0020 spaces only. So a
+// workflow written outside the subset fails the tests instead of being read one way here and another way by GitHub.
 // No dependency: the repository's only packages are the host's ajv and semver, and npm ci runs in the jobs that hold secrets.
 
 export class YamlSubsetError extends Error {}
@@ -12,6 +14,11 @@ export class YamlSubsetError extends Error {}
 const KEY_RE = /^([A-Za-z0-9_][A-Za-z0-9_.-]*):(?: +(.*))?$/;
 const WORD_RE = /^[A-Za-z0-9_.\/-]+$/;
 const isSeqItem = (text) => text === '-' || text.startsWith('- ');
+/**
+ * `s` without its leading and trailing U+0020 spaces. Never trim(): it also strips U+00A0, U+3000 and U+2000 to U+200A, which are
+ * text to YAML.
+ */
+const unspace = (s) => s.replace(/^ +| +$/g, '');
 /**
  * The characters YAML 1.1 reads as line breaks besides LF and CR (YamlDotNet's IsBreak). This reader splits at LF only, so a step
  * written after one of them inside a comment line would be a comment here and a step to such a reader: refused on any line.
@@ -76,12 +83,12 @@ export function parseYaml(src) {
     if (s.startsWith('[')) {
       const close = s.indexOf(']');
       if (close < 0) fail(L, 'an unterminated flow sequence');
-      const body = s.slice(1, close).trim();
+      const body = unspace(s.slice(1, close));
       rest(s.slice(close + 1));
       if (/[\[\]{}'"#]/.test(body)) fail(L, 'a flow sequence of anything but plain words');
       if (body === '') return [];
       return body.split(',').map((w) => {
-        const t = w.trim();
+        const t = unspace(w);
         if (!WORD_RE.test(t)) fail(L, `a flow sequence item that is not a plain word: ${JSON.stringify(t)}`);
         return t;
       });
@@ -96,20 +103,31 @@ export function parseYaml(src) {
     return v;
   }
 
-  /** A literal block scalar whose header is on line i (inside a mapping at `indent`). */
+  /**
+   * A literal block scalar whose header is on line i (inside a mapping at `indent`). Its indentation is its first text line's. As
+   * to YAML (libyaml, PyYAML), a line of spaces alone is blank when it is no wider than that indentation and text beyond it, so
+   * 'a: |-\n  x\n     \n' is 'x\n   '. A blank line before the first text line and wider than it is refused: YAML takes its
+   * spaces as the indentation, so the block ends before its text and the document is an error.
+   */
   function literal(i, indent, header) {
     const m = /^\|(-?)(?: +#.*)?$/.exec(header);
     if (!m) fail(lines[i], `a block scalar header this reader does not read: ${JSON.stringify(header)}`);
     const body = [];
     let contentIndent = null;
+    let widest = null;
     let last = i;
     let j = i + 1;
     for (; j < lines.length; j++) {
       const L = lines[j];
       // Spaces alone, never trim(): it also strips U+00A0, U+3000, U+2000 to U+200A and U+FEFF, which are text to YAML.
-      if (/^ *$/.test(L.raw)) { body.push(''); continue; }
+      if (/^ *$/.test(L.raw) && (contentIndent === null || L.raw.length <= contentIndent)) {
+        if (contentIndent === null && (widest === null || L.raw.length > widest.raw.length)) widest = L;
+        body.push('');
+        continue;
+      }
       if (contentIndent === null) {
         if (L.indent <= indent) break;
+        if (widest !== null && widest.raw.length > L.indent) fail(widest, 'a leading blank line of a block scalar wider than its first line (YAML takes its spaces as the indentation)');
         contentIndent = L.indent;
       }
       if (L.indent < contentIndent) {
