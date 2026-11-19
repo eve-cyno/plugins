@@ -468,4 +468,39 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     const noAuthor = await check('review', base, h);
     assert.doesNotMatch(noAuthor.stdout, /C14 dev\.example\.dusk/);
   });
+
+  // POLICY.md: the EVE-Cyno name or author is reserved for entries marked firstParty, which only the project merges.
+  test('PR-first-party-author: a new first-party entry authored EVE-Cyno passes refuse and needs review new first-party', async () => {
+    // The head adds one entry beside the base's; `firstParty: undefined` leaves the key out of the file (JSON.stringify).
+    const project = (id, extra = {}) => {
+      const author = extra.author ?? 'EVE-Cyno';
+      const bytes = pluginZip(manifest({ id, name: 'Mining Ledger', author, version: '0.2.0' }));
+      cacheArchive(cache, bytes);
+      const e = pluginEntry([version('0.2.0', bytes)], { id, name: 'Mining Ledger', author, firstParty: true, source: null, ...extra });
+      if (!('maintainers' in extra)) delete e.maintainers;
+      return tree({ entries: [pluginEntry([version('1.0.0', A100)]), e] });
+    };
+    const ok = project('dev.evecyno.miningledger');
+    const r = await check('refuse', baseTree(), ok);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /^FAIL /m);
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+    const v = await check('review', baseTree(), ok, ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: firstParty set or changed$/m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW new first-party');
+
+    const unset = await check('refuse', baseTree(), project('dev.evecyno.miningledger', { firstParty: undefined }));
+    assert.equal(unset.code, 1, unset.stdout + unset.stderr);
+    assert.match(unset.stdout, /^FAIL C3 name or author of dev\.evecyno\.miningledger is reserved or not allowed$/m);
+    const third = await check('refuse', baseTree(), project('dev.example.tools', { firstParty: undefined, author: 'EVE-Cyno Tools', maintainers: ['example-login'] }));
+    assert.equal(third.code, 1, third.stdout + third.stderr);
+    assert.match(third.stdout, /^FAIL C3 name or author of dev\.example\.tools is reserved or not allowed$/m, 'a third party');
+    const listed = await check('refuse', baseTree(), project('dev.evecyno.miningledger', { maintainers: ['example-login'] }));
+    assert.equal(listed.code, 1, listed.stdout + listed.stderr);
+    assert.match(listed.stdout, /^FAIL C3 first-party entry dev\.evecyno\.miningledger lists maintainers$/m);
+    const host = await check('refuse', baseTree(), project('eve-cyno.host.miningledger'));
+    assert.equal(host.code, 1, host.stdout + host.stderr);
+    assert.match(host.stdout, /^FAIL C2 .*the id prefix eve-cyno\.host\. is reserved for the host/m);
+  });
 });

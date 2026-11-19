@@ -199,6 +199,10 @@ describe('EN C2 id', () => {
   test('EN-c2-host-prefix: eve-cyno.host. is reserved', () => {
     assert.ok(has(checkIds([f('eve-cyno.host.x.json', entry({ id: 'eve-cyno.host.x' }))]), 'C2', /reserved/));
   });
+  test('EN-c2-host-prefix-first-party: firstParty does not open the host prefix', () => {
+    const e = entry({ id: 'eve-cyno.host.miningledger', author: 'EVE-Cyno', firstParty: true }); delete e.maintainers;
+    assert.ok(has(checkIds([f('eve-cyno.host.miningledger.json', e)]), 'C2', /reserved/));
+  });
   test('EN-c2-device-name: a Windows device name as first segment', () => {
     for (const id of ['nul.example.intel', 'com1.example.intel', 'con.example.intel']) {
       assert.ok(has(checkIds([f(`${id}.json`, entry({ id }))]), 'C2', /device/), id);
