@@ -3,9 +3,10 @@
 // and against the reviewer's own offline list (docs/RUNBOOK.md). Given the run under review (its commit is <B>), it prints:
 // - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that has an approval of
 //   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
-//   both concluded success (GET .../actions/runs/<id>/jobs, the run's latest attempt), with one "skip" line for every newer run and
-//   why it does not count; a newer run on a later attempt than its first (a re-run) is an ERROR, since the jobs list shows only that
-//   attempt;
+//   both concluded success in attempt 1 (GET .../actions/runs/<id>/jobs?filter=all, the jobs of every attempt: every job refuses any
+//   attempt but the first, so a re-run's later attempts never sign or upload), with one "skip" line for every newer run and why it
+//   does not count; a run without that approval is skipped before its attempt is read, a re-run included; an approved re-run whose
+//   attempt 1 cannot be read from the list is an ERROR;
 // - the compare status of <A> to <B> (GET .../compare/<A>...<B>) and the compare view to read.
 // The reviewer is the only required reviewer of environment index, read now from GitHub (tools/lib/reviewer.mjs); no login or id is
 // written in the repository, and this tool prints neither. Fail closed: any request that fails, a list that did not come back whole,
@@ -54,28 +55,42 @@ export function notOnMain(run) {
   return '';
 }
 
+const BY_HAND = 'read every attempt on the run page and against your own list (docs/RUNBOOK.md, a re-run)';
+
 /**
  * A run's review state: { why } when it has no approval of environment index by the user `id` (the environment's reviewer), else
- * { why: '', sign, upload }, each '' when the run has exactly one job of that name and it concluded success, or why not. Throws
- * { error } on a failed request, and on a run whose run_attempt is not 1 (a re-run): GitHub lists the jobs of a run's latest attempt
- * only, and a later attempt fails at its first step, so an earlier attempt that signed and uploaded would read as skipped.
+ * { why: '', sign, upload }, each '' when attempt 1 of the run has exactly one job of that name and it concluded success, or why not.
+ * Every job refuses any attempt but the first at its first step, so only attempt 1 can sign or upload: the jobs are read for every
+ * attempt (filter=all; each job names its run_attempt) and attempt 1 is judged, so a re-run's skipped sign and upload never hide what
+ * attempt 1 did. A run without the approval is skipped before its attempt or jobs are read, a re-run included. Throws { error } on a
+ * failed request, and on an approved run that names no valid run_attempt, a job that names no attempt from 1 to the run's, a re-run
+ * whose list holds no job of attempt 1, or a job sign or upload of a later attempt that concluded success.
  */
 export async function reviewRun(run, id, opts) {
-  if (run.run_attempt !== 1) {
-    throw { error: `${label(run)} is attempt ${oneLine(run.run_attempt ?? 'unknown')} of that run, not its first: GitHub lists the jobs of `
-      + "a run's latest attempt only, so whether an earlier attempt signed or uploaded cannot be read here. Read every attempt on the run "
-      + 'page and against your own list (docs/RUNBOOK.md, a re-run)' };
-  }
   const ap = await getJson(`${R}/actions/runs/${run.id}/approvals`, opts);
   if (ap.error) throw ap;
   if (!Array.isArray(ap.value)) throw { error: `${R}/actions/runs/${run.id}/approvals: the answer is not a list` };
   const approved = ap.value.some((a) => isObj(a) && a.state === 'approved' && isObj(a.user) && a.user.id === id
     && Array.isArray(a.environments) && a.environments.some((e) => isObj(e) && e.name === 'index'));
   if (!approved) return { why: "no approval of index by the environment's reviewer" };
-  const jobs = await getAll(`${R}/actions/runs/${run.id}/jobs?per_page=100`, 'jobs', opts);
-  if (jobs.error) throw jobs;
+  const attempt = run.run_attempt;
+  if (!Number.isSafeInteger(attempt) || attempt < 1) throw { error: `${label(run)} names no valid run_attempt (${oneLine(attempt ?? 'none')}): ${BY_HAND}` };
+  const all = await getAll(`${R}/actions/runs/${run.id}/jobs?filter=all&per_page=100`, 'jobs', opts);
+  if (all.error) throw all;
+  for (const j of all.items) {
+    const n = isObj(j) ? j.run_attempt : undefined;
+    if (!Number.isSafeInteger(n) || n < 1 || n > attempt) throw { error: `${label(run)}: a job names attempt ${oneLine(n ?? 'none')}, not one from 1 to ${attempt}: ${BY_HAND}` };
+  }
+  if (attempt > 1 && !all.items.some((j) => j.run_attempt === 1)) {
+    throw { error: `${label(run)} is attempt ${attempt} of that run, and its jobs list holds no job of attempt 1, so what attempt 1 signed or uploaded cannot be read here: ${BY_HAND}` };
+  }
+  const late = all.items.find((j) => j.run_attempt > 1 && (j.name === 'sign' || j.name === 'upload') && j.conclusion === 'success');
+  if (late) {
+    throw { error: `${label(run)}: job ${oneLine(late.name)} of attempt ${late.run_attempt} concluded success, though every job refuses any attempt but the first: ${BY_HAND}` };
+  }
+  const first = all.items.filter((j) => j.run_attempt === 1);
   const job = (name) => {
-    const js = jobs.items.filter((j) => isObj(j) && j.name === name);
+    const js = first.filter((j) => j.name === name);
     if (js.length !== 1) return `${js.length} jobs named ${name}`;
     return js[0].conclusion === 'success' ? '' : `job ${name} concluded ${oneLine(js[0].conclusion ?? 'nothing yet')}`;
   };

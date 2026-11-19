@@ -3,7 +3,8 @@
 // their own. A live index that does not verify is never a base: the base comes from GitHub, never from the mirror.
 // - The candidates: the runs of publish.yml and resign.yml on main other than the run under review, newest first (by created_at, then
 //   id), created less than 90 days ago, that have an approval of environment index by the environment's only required reviewer (read
-//   now, tools/lib/reviewer.mjs) and exactly one job sign that concluded success, from the newest down to <A> (the newest of them whose
+//   now, tools/lib/reviewer.mjs) and exactly one job sign that concluded success in attempt 1 (reviewRun reads the jobs of every
+//   attempt; a re-run's later attempts never sign), from the newest down to <A> (the newest of them whose
 //   upload job also succeeded; tools/approved-base.mjs); runs before <A> are no candidates. A run created 90 days ago or more is never
 //   one: its artifacts are past their retention.
 // - Each candidate's head, signature and catalog artifacts come from the artifacts API (GET .../actions/runs/<id>/artifacts, then

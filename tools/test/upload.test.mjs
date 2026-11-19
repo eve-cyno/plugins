@@ -115,12 +115,12 @@ function ghRoutes(kind) {
   };
   if (kind === 'approved') {
     r[`GET ${GH}/actions/runs/200/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
-    r[`GET ${GH}/actions/runs/200/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success' }, { id: 2, name: 'upload', conclusion: 'success' }] }] };
+    r[`GET ${GH}/actions/runs/200/jobs?filter=all&per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success', run_attempt: 1 }, { id: 2, name: 'upload', conclusion: 'success', run_attempt: 1 }] }] };
     r[`GET ${GH}/compare/${'a'.repeat(40)}...${'b'.repeat(40)}`] = { stdout: { status: 'ahead' } };
   }
   if (kind === 'signed') {
     r[`GET ${GH}/actions/runs/200/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
-    r[`GET ${GH}/actions/runs/200/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success' }, { id: 2, name: 'upload', conclusion: 'failure' }] }] };
+    r[`GET ${GH}/actions/runs/200/jobs?filter=all&per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success', run_attempt: 1 }, { id: 2, name: 'upload', conclusion: 'failure', run_attempt: 1 }] }] };
   }
   return r;
 }
@@ -140,7 +140,7 @@ function repairRoutes({ drop = {}, older = 'A' } = {}) {
   };
   for (const [id, name, upload] of [[290, 'HR', 'failure'], [280, older, 'success']]) {
     r[`GET ${GH}/actions/runs/${id}/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
-    r[`GET ${GH}/actions/runs/${id}/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: id * 10, name: 'sign', conclusion: 'success' }, { id: id * 10 + 1, name: 'upload', conclusion: upload }] }] };
+    r[`GET ${GH}/actions/runs/${id}/jobs?filter=all&per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: id * 10, name: 'sign', conclusion: 'success', run_attempt: 1 }, { id: id * 10 + 1, name: 'upload', conclusion: upload, run_attempt: 1 }] }] };
     const catFile = fs.readdirSync(path.join(ix[name].dir, 'catalog'))[0];
     const files = { head: ['index.json', ix[name].head], signature: ['index.json.minisig', ix[name].sig], catalog: [catFile, fs.readFileSync(path.join(ix[name].dir, 'catalog', catFile))] };
     const arts = Object.keys(files).filter(n => !(drop[id] ?? []).includes(n)).map((n, i) => ({ id: id * 10 + i + 1, name: n, size_in_bytes: 100, expired: false }));

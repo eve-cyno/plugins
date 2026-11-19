@@ -33,7 +33,9 @@ function run(id, wf, headSha, created) {
 const approval = (user, envs, state = 'approved') => ({
   environments: envs.map((name, i) => ({ id: i + 1, node_id: `EN_${name}`, name })), state, comment: '', user: { login: `user-${user}`, id: user, type: 'User' },
 });
-const jobs = (runId, list) => [{ total_count: list.length, jobs: list.map(([name, conclusion], i) => ({ id: runId * 10 + i, run_id: runId, name, status: 'completed', conclusion, run_attempt: 1 })) }];
+/** The jobs of every attempt of a run (GET .../jobs?filter=all): [name, conclusion, attempt (default 1)]. */
+const jobs = (runId, list) => [{ total_count: list.length, jobs: list.map(([name, conclusion, attempt = 1], i) => ({ id: runId * 10 + i, run_id: runId, name, status: 'completed', conclusion, run_attempt: attempt })) }];
+const JOBS = (id) => `${R}/actions/runs/${id}/jobs?filter=all&per_page=100`;
 const PUBLISHED = (id) => ({ approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])], jobs: jobs(id, [['build', 'success'], ['sign', 'success'], ['sign-test', 'skipped'], ['upload', 'success'], ['verify', 'success']]) });
 
 /** The runs a case lists: [{ run, approvals, jobs }]; `under` is the run under review. */
@@ -50,7 +52,7 @@ function routes({ under, others, compare = 'ahead', publishPages, environment, e
   };
   for (const x of all) {
     r[`GET ${R}/actions/runs/${x.run.id}/approvals`] ??= { stdout: x.approvals ?? [] };
-    r[`GET ${R}/actions/runs/${x.run.id}/jobs?per_page=100`] ??= { stdout: x.jobs ?? jobs(x.run.id, []) };
+    r[`GET ${JOBS(x.run.id)}`] ??= { stdout: x.jobs ?? jobs(x.run.id, []) };
   }
   for (const x of others) r[`GET ${R}/compare/${x.run.head_sha}...${B}`] = { stdout: { status: compare, ahead_by: 1, behind_by: 0, total_commits: 1, files: [] } };
   return r;
@@ -96,6 +98,7 @@ describe('approved-base: <A> skips every run that is not an approved, signed and
   test('AB-skip-mirror-refused: index approved, mirror refused, upload skipped', () => skips({ run: run(256, 'resign.yml', sha('c'), '2026-12-05T06:17:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'], 'rejected')], jobs: jobs(256, [['check', 'success'], ['head', 'success'], ['sign', 'success'], ['upload', 'skipped']]) }, 'job upload concluded skipped'));
   test('AB-skip-sign-failed: index approved, sign failed', () => skips({ run: run(257, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(257, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped']]) }, 'job sign concluded failure'));
   test('AB-skip-two-sign-jobs: a run with two jobs named sign', () => skips({ run: run(258, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(258, [['sign', 'success'], ['sign', 'success'], ['upload', 'success']]) }, '2 jobs named sign'));
+  test('AB-skip-no-jobs: an approved first attempt with no jobs listed (cancelled before any started) is a skip, not an ERROR', () => skips({ run: run(259, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index'])], jobs: jobs(259, []) }, '0 jobs named sign'));
   test('AB-order: the newest across both workflows wins', async () => {
     const resign = { run: run(260, 'resign.yml', sha('d'), '2026-12-08T06:17:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])], jobs: jobs(260, [['check', 'success'], ['head', 'success'], ['sign', 'success'], ['upload', 'success']]) };
     const r = await call({ under: UNDER, others: [GOOD, resign] });
@@ -146,21 +149,57 @@ describe('approved-base: direction and failures', () => {
     const unsigned = { ...failed, jobs: jobs(255, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped']]) };
     assert.equal((await call({ under: UNDER, others: [unsigned] })).code, 3, 'a failed sign signed nothing: still a first publish');
   });
-  test('AB-rerun-error: a listed run on a later attempt is an ERROR, never a skip (GitHub lists the jobs of the latest attempt only)', async () => {
-    // Attempt 1 may have signed and uploaded; attempt 2 fails at its first step, so its jobs list shows sign and upload skipped.
-    const rerun = (attempt, approvals) => ({ run: { ...run(254, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), run_attempt: attempt }, approvals,
-      jobs: jobs(254, [['build', 'failure'], ['sign', 'skipped'], ['upload', 'skipped'], ['verify', 'skipped']]) });
-    const approved = [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])];
-    for (const x of [rerun(2, approved), rerun(3, []), rerun(undefined, approved)]) {
-      const r = await call({ under: UNDER, others: [x, GOOD] });
-      assert.equal(r.code, 1, r.text);
-      assert.match(r.text, new RegExp(`^ERROR: run 254 \\(publish\\.yml, created [^)]*\\) is attempt ${x.run.run_attempt ?? 'unknown'} of that run, not its first: `, 'm'));
-      assert.match(r.text, /the jobs of a run's latest attempt only/);
-      assert.doesNotMatch(r.text, /^A /m, 'no older run becomes <A> past a re-run');
-      assert.ok(!r.calls.some((a) => a[a.length - 1].startsWith(`${R}/actions/runs/254/`)), 'nothing of the re-run is read');
+  // A re-run: every job refuses any attempt but the first at its first step, so only attempt 1 can sign or upload. The jobs are read
+  // for every attempt (filter=all), and attempt 1 is judged; a later attempt's skipped sign and upload never hide what attempt 1 did.
+  const rerun = (attempt, approvals, list) => ({ run: { ...run(254, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), run_attempt: attempt }, approvals, jobs: jobs(254, list) });
+  const LATER = (n) => [['build', 'failure', n], ['sign', 'skipped', n], ['upload', 'skipped', n], ['verify', 'skipped', n]];
+  const BOTH = [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])];
+  test('AB-rerun-unapproved-skip: a re-run of a run with no index approval (a target test run) is skipped and never blocks', async () => {
+    const test2 = (n) => rerun(n, [approval(REVIEWER, ['mirror'])], [['build', 'success'], ['sign', 'skipped'], ['sign-test', 'success'], ['upload', 'success'], ['verify', 'failure'], ...LATER(n)]);
+    for (const n of [2, 3]) {
+      const r = await call({ under: UNDER, others: [test2(n), GOOD] });
+      assert.equal(r.code, 0, r.text);
+      assert.match(r.text, /^skip run 254 .*no approval of index by the environment's reviewer/m);
+      assert.match(r.text, new RegExp(`^A ${A} from run 200 `, 'm'));
+      assert.ok(!r.calls.some((a) => a[a.length - 1] === JOBS(254)), 'no jobs are read without an index approval');
+      const first = await call({ under: UNDER, others: [test2(n)] });
+      assert.equal(first.code, 3, `a re-run test run does not block a first publish\n${first.text}`);
+      assert.match(first.text, /^FIRST PUBLISH: /m);
     }
+    const unknown = await call({ under: UNDER, others: [rerun(undefined, [], []), GOOD] });
+    assert.equal(unknown.code, 0, `no approval: skipped before its attempt is read\n${unknown.text}`);
+  });
+  test('AB-rerun-attempt-1: an approved re-run is judged by its attempt 1, read with filter=all', async () => {
+    const uploaded = await call({ under: UNDER, others: [rerun(2, BOTH, [['build', 'success'], ['sign', 'success'], ['upload', 'success'], ['verify', 'failure'], ...LATER(2)]), GOOD] });
+    assert.equal(uploaded.code, 0, uploaded.text);
+    assert.match(uploaded.text, new RegExp(`^A ${sha('c')} from run 254 `, 'm'), 'attempt 1 signed and uploaded: the re-run is <A>');
+    assert.ok(uploaded.calls.some((a) => a[a.length - 1] === JOBS(254)), 'the jobs of every attempt are read');
+    const signed = await call({ under: UNDER, others: [rerun(3, BOTH, [['build', 'success'], ['sign', 'success'], ['upload', 'failure'], ...LATER(2), ...LATER(3).slice(0, 2)])] });
+    assert.equal(signed.code, 1, signed.text);
+    assert.match(signed.text, /^NOT A FIRST PUBLISH: run 254 /m, 'attempt 1 signed: no first publish');
+    const unsigned = await call({ under: UNDER, others: [rerun(2, BOTH, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped'], ...LATER(2)]), GOOD] });
+    assert.equal(unsigned.code, 0, unsigned.text);
+    assert.match(unsigned.text, /^skip run 254 .*job sign concluded failure/m);
     const under = await call({ under: { ...UNDER, run: { ...UNDER.run, run_attempt: 2 } }, others: [GOOD] });
     assert.equal(under.code, 0, `the run under review is not reviewed here (its own first step refuses a re-run)\n${under.text}`);
+  });
+  test('AB-rerun-unreadable: an approved re-run whose attempt 1 cannot be read is an ERROR, never a skip', async () => {
+    const cases = [
+      [rerun(undefined, BOTH, [['sign', 'success'], ['upload', 'success']]), /names no valid run_attempt \(none\)/],
+      [rerun(0, BOTH, [['sign', 'success'], ['upload', 'success']]), /names no valid run_attempt \(0\)/],
+      [rerun(2, BOTH, LATER(2)), /is attempt 2 of that run, and its jobs list holds no job of attempt 1/],
+      [rerun(2, BOTH, [['build', 'success'], ['sign', 'success'], ['upload', 'success', 3], ...LATER(2)]), /a job names attempt 3, not one from 1 to 2/],
+      [{ ...rerun(2, BOTH, []), jobs: [{ total_count: 1, jobs: [{ id: 1, name: 'sign', conclusion: 'success' }] }] }, /a job names attempt none, not one from 1 to 2/],
+      [rerun(2, BOTH, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped'], ['sign', 'success', 2], ['upload', 'skipped', 2]]), /job sign of attempt 2 concluded success/],
+      [rerun(2, BOTH, [['build', 'success'], ['sign', 'success'], ['upload', 'failure'], ['upload', 'success', 2]]), /job upload of attempt 2 concluded success/],
+    ];
+    for (const [x, re] of cases) {
+      const r = await call({ under: UNDER, others: [x, GOOD] });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, new RegExp(`^ERROR: run 254 \\(publish\\.yml, created [^)]*\\)[: ].*${re.source}`, 'm'));
+      assert.match(r.text, /read every attempt on the run page and against your own list \(docs\/RUNBOOK\.md, a re-run\)/);
+      assert.doesNotMatch(r.text, /^A /m, 'no older run becomes <A> past it');
+    }
   });
   test('AB-pagination-incomplete: a run list that did not complete fails closed', async () => {
     const r = await call({ under: UNDER, others: [GOOD], publishPages: [{ total_count: 150, workflow_runs: [UNDER.run, GOOD.run] }] });

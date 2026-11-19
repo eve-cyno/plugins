@@ -58,14 +58,15 @@ const wfRun = (id, wf, daysAgo) => ({
   event: 'workflow_dispatch', status: 'completed', run_attempt: 1, created_at: stamp(NOW - daysAgo * DAY), html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}`,
 });
 const approval = (user, env) => ({ environments: [{ id: 1, name: env }], state: 'approved', comment: '', user: { login: `user-${user}`, id: user, type: 'User' } });
-const jobsOf = (id, list) => [{ total_count: list.length, jobs: list.map(([name, conclusion], i) => ({ id: id * 10 + i, run_id: id, name, status: 'completed', conclusion })) }];
+/** The jobs of every attempt of a run (GET .../jobs?filter=all): [name, conclusion, attempt (default 1)]. */
+const jobsOf = (id, list) => [{ total_count: list.length, jobs: list.map(([name, conclusion, attempt = 1], i) => ({ id: id * 10 + i, run_id: id, name, status: 'completed', conclusion, run_attempt: attempt })) }];
 
 /**
  * One run of a case: `ix` its index (artifacts), `upload` the upload job's conclusion, `sign` the sign job's, `approvedBy` the user
  * whose approval of index it has (null: none), `drop` the artifacts it lacks, `expired` the ones listed with expired: true.
  */
-function runOf(id, wf, daysAgo, ix, { upload = 'success', sign = 'success', approvedBy = WHO.id, drop = [], expired = [] } = {}) {
-  return { run: wfRun(id, wf, daysAgo), ix, upload, sign, approvedBy, drop, expired };
+function runOf(id, wf, daysAgo, ix, { upload = 'success', sign = 'success', approvedBy = WHO.id, drop = [], expired = [], later = [] } = {}) {
+  return { run: wfRun(id, wf, daysAgo), ix, upload, sign, approvedBy, drop, expired, later };
 }
 const ARTS = { head: (ix) => zip([{ name: 'index.json', data: ix.head }]), signature: (ix) => zip([{ name: 'index.json.minisig', data: ix.sig }]),
   catalog: (ix) => zip([{ name: `${sha(ix.catalog)}.json`, data: ix.catalog }]) };
@@ -85,7 +86,7 @@ function routes(runs, { extra = {}, zips = {} } = {}) {
   for (const x of runs) {
     const id = x.run.id;
     r[`GET ${R}/actions/runs/${id}/approvals`] = { stdout: x.approvedBy === null ? [] : [approval(x.approvedBy, 'index'), approval(x.approvedBy, 'mirror')] };
-    r[`GET ${R}/actions/runs/${id}/jobs?per_page=100`] = { stdout: jobsOf(id, [['build', 'success'], ['sign', x.sign], ['upload', x.upload], ['verify', x.upload === 'success' ? 'success' : 'skipped']]) };
+    r[`GET ${R}/actions/runs/${id}/jobs?filter=all&per_page=100`] = { stdout: jobsOf(id, [['build', 'success'], ['sign', x.sign], ['upload', x.upload], ['verify', x.upload === 'success' ? 'success' : 'skipped'], ...x.later]) };
     const arts = ['head', 'signature', 'catalog'].filter((n) => !x.drop.includes(n)).map((name) => ({
       id: artId(id, name), node_id: 'MDg6QXJ0aWZhY3Q=', name, size_in_bytes: 100, expired: x.expired.includes(name),
       created_at: x.run.created_at, expires_at: stamp(Date.parse(x.run.created_at) + 90 * DAY), workflow_run: { id, head_branch: 'main', head_sha: x.run.head_sha },
@@ -177,14 +178,27 @@ describe('recovery R2: the candidates and the base', () => {
     assert.deepEqual(unionKeys(r), [revKey(R1), revKey(R2)].sort());
   });
 
-  test('PB-repair-rerun-error: a run on a later attempt is an ERROR, never a skipped candidate (its earlier attempt may have signed)', async () => {
-    const rerun = runOf(295, 'publish.yml', 0.5, index(NOW - DAY / 2, [R0]), { sign: 'skipped', upload: 'skipped' });
-    rerun.run.run_attempt = 2;
-    const r = await collect([rerun, H(), A()]);
-    assert.equal(r.ok, false, r.text);
-    assert.match(r.why, /^ERROR: run 295 \(publish\.yml, created [^)]*\) is attempt 2 of that run, not its first: /);
-    assert.deepEqual(r.zipCalls, [], 'nothing is downloaded');
-    assert.ok(!r.calls.some((c) => c.startsWith(`${R}/actions/runs/295/`)), 'nothing of the re-run is read');
+  test('PB-repair-rerun: a re-run is judged by its attempt 1 (jobs of every attempt), so one that signed there stays a candidate', async () => {
+    const LATER = [['build', 'failure', 2], ['sign', 'skipped', 2], ['upload', 'skipped', 2], ['verify', 'skipped', 2]];
+    const ix = index(NOW - DAY / 2, [R0]);
+    const signed = runOf(295, 'publish.yml', 0.5, ix, { upload: 'failure', later: LATER });
+    signed.run.run_attempt = 2;
+    const r = await collect([signed, H(), A()]);
+    assert.equal(r.ok, true, r.text);
+    assert.deepEqual(r.candidates.map((c) => c.run), [295, 290, 280], 'attempt 1 signed: a candidate, its revocations counted');
+    assert.deepEqual(unionKeys(r), [revKey(R0), revKey(R1), revKey(R2)].sort());
+    const unapproved = runOf(296, 'publish.yml', 0.4, null, { approvedBy: null, sign: 'skipped', later: LATER });
+    unapproved.run.run_attempt = 2;
+    const u = await collect([unapproved, H(), A()]);
+    assert.equal(u.ok, true, u.text);
+    assert.match(u.text, /^skip run 296 .*no approval of index by the environment's reviewer/m);
+    assert.ok(!u.calls.some((c) => c.startsWith(`${R}/actions/runs/296/jobs`)), 'no jobs are read without an index approval');
+    const unreadable = runOf(297, 'publish.yml', 0.3, ix, { later: [['sign', 'success', 2]] });
+    unreadable.run.run_attempt = 2;
+    const e = await collect([unreadable, H(), A()]);
+    assert.equal(e.ok, false, e.text);
+    assert.match(e.why, /^ERROR: run 297 \(publish\.yml, created [^)]*\): job sign of attempt 2 concluded success/);
+    assert.deepEqual(e.zipCalls, [], 'nothing is downloaded');
   });
 
   test('PB-repair-90-days: a run created 90 days ago or more is never a candidate, so its expired artifacts do not stop the repair', async () => {
