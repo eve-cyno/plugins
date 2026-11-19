@@ -14,8 +14,11 @@ const { foldName } = require(path.join(DIST, 'market', 'names.js'));
 const { listingAdmit } = require(path.join(DIST, 'market', 'admit.js'));
 const { HOST_API } = require(path.join(DIST, 'manifest.js'));
 
-/** What C10 reads of one version: the permissions of the entry's copy, plus `background` when the caller read it from the archive. */
-const asManifest = (v) => ({ permissions: v.permissions ?? {}, ...(v.optionalPermissions ? { optionalPermissions: v.optionalPermissions } : {}) });
+/**
+ * What C10 reads of one version: its permissions, the optional ones in permissions.optional (check.mjs puts the archive's plugin.json
+ * permissions and `background` in place of the entry's copy).
+ */
+const asManifest = (v) => ({ permissions: v.permissions ?? {} });
 
 /**
  * C10 for one pair. `escalation`: the new version asks for something the old one did not (host `delta` of `requested`, not empty).

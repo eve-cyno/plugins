@@ -337,6 +337,12 @@ describe('E2E check.mjs', () => {
     assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.intel 1\.0\.0/m);
     assert.doesNotMatch(r.stdout, /^FLAG identity/m, 'a catalog names no maintainers or provenance: they are not compared');
     assert.equal(last(r.stdout), 'CHECKS PASSED');
+    // The tree the live catalog was built from: intel 1.0.0 is revoked, so the catalog leaves it out, but it was merged, not added.
+    const steady = await check('publish', path.join(T, 'base'), path.join(T, 'tree'), ['--target', 'production']);
+    assert.equal(steady.code, 0, steady.stdout + steady.stderr);
+    assert.doesNotMatch(steady.stdout, /^FLAG /m, 'nothing changed since the live catalog: no review class');
+    assert.doesNotMatch(steady.stdout, /^NOTE review classes/m);
+    assert.equal(last(steady.stdout), 'CHECKS PASSED');
   });
 
   test('E2E-check-publish-repair: a repair base is named as such, and its lifts count against the union of revocations', async () => {
@@ -517,6 +523,7 @@ describe('E2E check.mjs', () => {
     assert.equal(r.code, 0, r.stdout + r.stderr);
     assert.equal(last(r.stdout), 'CHECKS PASSED');
     assert.doesNotMatch(r.stdout, /could not be read/, 'an unlisted version is never an added one for C10');
+    assert.doesNotMatch(r.stdout, /^FLAG /m, 'a revoked, an unlisted version and an entry with none listed were merged, not added: no review class');
     // A live catalog cannot tell a version listed again from an added one; the pull request's checks against the base tree refuse it.
   });
 

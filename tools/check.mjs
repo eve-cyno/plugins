@@ -9,7 +9,7 @@
 //   review  --base <dir> --head <dir> [--author <login>] [--summary <file>] [--archive-cache <dir>]   check.yml, job review
 //     The review classes: first-party (C3), escalation and identity (C10: the host's delta of requested permissions, background turned
 //     on, or no lower version to compare with on a known id; name, author or type changed, the provenance repository changed or
-//     dropped, the maintainers changed; the background flag and optional permissions read from each archive's plugin.json), new (C11),
+//     dropped, the maintainers changed; the permissions and the background flag read from each archive's plugin.json), new (C11),
 //     maintenance (C13: anything changed but entries/<id>.json and revoked.json), multi-entry (C13: more than one entry file changed),
 //     identity (C14: the author is not a maintainer of a base entry the pull request changes or removes), revocation and lift (C15),
 //     revoked (C15: an added version of an id that revoked.json names, on the base or the head), engines (C17). Exit 3 with
@@ -133,6 +133,18 @@ const onBase = (b, version) => (b?.versions ?? []).some(v => v?.version === vers
 const revokedOn = (base, id, version) => base.revoked.some(r => isObj(r) && r.id === id
   && (r.versions === '*' || (Array.isArray(r.versions) && r.versions.includes(version))));
 
+/**
+ * Against a live catalog: the base entry that C8 and C10 hold head entry `e` to (`b`: its listing in the catalog, or null). A catalog
+ * names no author URL, and it leaves out the versions its revocations name, the unlisted ones and an entry with no version left; such a
+ * head version was merged before (the pull request's checks held it to the base tree), so it counts as on the base as the head holds it
+ * (C4-C7 still check a revoked one here, since the live catalog does not list it). Null when no version of `e` is on the base.
+ */
+function liveBase(e, b, base) {
+  const live = (b?.versions ?? []).map(v => ({ ...v, url: e.versions.find(x => x.version === v.version)?.url }));
+  const kept = e.versions.filter(v => !onBase(b, v.version) && (revokedOn(base, e.id, v.version) || !isListed(v)));
+  return b || kept.length > 0 ? { ...(b ?? e), versions: [...live, ...kept] } : null;
+}
+
 // ---- C4-C7, C12: the archive of every listed version not on the base ----------------------------------------------------------------------
 async function checkArchives(head, base) {
   for (const e of head.entries) {
@@ -162,16 +174,8 @@ function checkRules(head, base) {
   const before = R.failed;
   for (const e of head.entries) {
     let b = base.entries.get(e.id) ?? null;
-    // A live catalog names no author URL: C8 holds a live version to its SHA-256 and size (plan 4.2). It also leaves out the versions
-    // its revocations name and the unlisted ones, and an entry with no version left; such a head version was merged before, so C8
-    // counts it as on the base with its own pins (the PR checks held it to C8 against the base tree; C4-C7 still check a revoked one
-    // here, since the live catalog does not list it).
-    if (base.kind === 'catalog') {
-      const live = (b?.versions ?? []).map(v => ({ ...v, url: e.versions.find(x => x.version === v.version)?.url }));
-      const kept = e.versions.filter(v => !onBase(b, v.version) && (revokedOn(base, e.id, v.version) || !isListed(v)))
-        .map(v => ({ version: v.version, url: v.url, sha256: v.sha256, size: v.size, ...(isListed(v) ? {} : { unlisted: true }) }));
-      if (b || kept.length > 0) b = { ...(b ?? { id: e.id }), versions: [...live, ...kept] };
-    }
+    // A live catalog names no author URL: C8 holds a live version to its SHA-256 and size (plan 4.2).
+    if (base.kind === 'catalog') b = liveBase(e, b, base);
     for (const p of checkVersionRules(e, b)) R.fail(p.check, p.message);
     for (const why of checkNames(e, base.entries.get(e.id) ?? null, head.entries)) R.fail('C3', why.replace(/^C3 /, ''));
   }
@@ -225,7 +229,7 @@ async function checkWholeIndex() {
 
 // ---- review classes ---------------------------------------------------------------------------------------------------------------------
 /**
- * The background flag and optional permissions of a version's plugin.json, read from its archive after the C5-C7 checks, or null.
+ * The plugin.json of a version (C10 compares its permissions and background flag), read from its archive after the C5-C7 checks, or null.
  * `live`: the version is on the base, so the mirror is read before its author's URL. An unlisted version (the version before an added
  * one when no lower one is listed) is read as a listing of its own, as the app reads one back (entries.mjs): the entry's listing leaves
  * it out.
@@ -242,11 +246,12 @@ async function manifestOf(entry, v, live) {
 }
 async function entryFlags(head, base) {
   for (const e of head.entries) {
-    const b = base.entries.get(e.id) ?? null;
+    let b = base.entries.get(e.id) ?? null;
+    if (base.kind === 'catalog') b = liveBase(e, b, base);
     let he = e, be = b;
     if (e.type === 'plugin') {
-      // C10 reads `background` and optional permissions from the archives of each added version and of the version before it
-      // (diff.mjs versionBefore: the greatest lower listed one, else the greatest lower one on the base; the head says which are unlisted).
+      // C10 reads the permissions and `background` from the archives of each added version and of the version before it (diff.mjs
+      // versionBefore: the greatest lower listed one, else the greatest lower one on the base; the head says which are unlisted).
       const need = new Set();
       for (const v of e.versions) {
         if (onBase(b, v.version) || !isListed(v) || !semver.valid(v.version)) continue; // an unlisted version is never added (C8)
@@ -259,12 +264,14 @@ async function entryFlags(head, base) {
       for (const ver of need) {
         const hv = e.versions.find(x => x.version === ver);
         const m = hv ? await manifestOf(e, hv, onBase(b, ver)) : (b && base.kind === 'tree' ? await manifestOf(b, b.versions.find(x => x.version === ver), true) : null);
-        if (m === null) R.flag('escalation', 'C10', `${e.id} ${ver}: its plugin.json could not be read to compare background and optional permissions`);
+        if (m === null) R.flag('escalation', 'C10', `${e.id} ${ver}: its plugin.json could not be read to compare its permissions and background flag`);
         read.set(ver, m);
       }
+      // The archive's permissions (the optional ones in permissions.optional), never the entry copy's: an unlisted version's archive is
+      // not checked again (C4-C7 check a version when it is added), so its entry copy is only what the last pull request wrote there.
       const deco = (v) => {
         const m = read.get(v?.version);
-        return m ? { ...v, background: m.background === true, ...(m.optionalPermissions ? { optionalPermissions: m.optionalPermissions } : {}) } : v;
+        return m ? { ...v, permissions: m.permissions, background: m.background === true } : v;
       };
       he = { ...e, versions: e.versions.map(deco) };
       be = b ? { ...b, versions: b.versions.map(deco) } : null;

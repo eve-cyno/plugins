@@ -220,7 +220,33 @@ describe('PR fixture suite', () => {
     assert.equal(last(v.stdout), 'NEEDS REVIEW escalation');
   });
 
-  test('ESC-base-version-not-semver: a base version that is not semver leaves C10 nothing to compare: review escalation, not a crash', async () => {
+  // Trust check of the fix above (2026-11-19): C10 read the permissions of the version before from the entry, which no check holds to the
+  // archive once the version is unlisted. A first pull request unlists 1.0.0 and widens its entry permissions; a second adds 2.0.0 with
+  // those permissions and puts 1.0.0's back, so its archive reads again. Both needed no review.
+  test('ESC-widen-unlisted-then-add: the version before an added one is compared by its archive\'s plugin.json, never by its entry copy', async () => {
+    const Z200 = pluginZip(manifest({ version: '2.0.0', permissions: MORE }));
+    const A110 = pluginZip(manifest({ version: '1.1.0' }));
+    for (const z of [Z200, A110]) cacheArchive(cache, z);
+    const add = (older) => tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), ...older])] });
+    const widened = tree({ entries: [pluginEntry([version('1.0.0', A100, { unlisted: true, permissions: MORE })])] });
+    const widened2 = tree({ entries: [pluginEntry([version('1.1.0', A110, { unlisted: true, permissions: MORE }), version('1.0.0', A100, { unlisted: true })])] });
+    const cases = [
+      ['1.0.0 put back', widened, add([version('1.0.0', A100, { unlisted: true })]), true],
+      ['an unlisted 1.1.0 above an unlisted 1.0.0, put back', widened2, add([version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100, { unlisted: true })]), true],
+      ['1.0.0 left widened (its plugin.json disagrees with the entry: the read fails closed)', widened, add([version('1.0.0', A100, { unlisted: true, permissions: MORE })]), false],
+    ];
+    for (const [label, base, h, read] of cases) {
+      const v = await check('review', base, h, ['--author', 'example-login']);
+      assert.equal(v.code, 3, `${label}\n${v.stdout}${v.stderr}`);
+      if (read) {
+        assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: /m, label);
+        assert.doesNotMatch(v.stdout, /could not be read/, `${label}: compared with the archive`);
+      } else assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel 1\.0\.0: its plugin\.json could not be read/m, label);
+      assert.equal(last(v.stdout), 'NEEDS REVIEW escalation', label);
+    }
+  });
+
+  test('ESC-base-version-not-semver:a base version that is not semver leaves C10 nothing to compare: review escalation, not a crash', async () => {
     const A110 = pluginZip(manifest({ version: '1.1.0' }));
     const base = tree({ entries: [pluginEntry([version('1.0.0', A100), { ...version('1.0.0', A100), version: 'one' }])] });
     const v = await check('review', base, head(A110), ['--author', 'example-login']);
