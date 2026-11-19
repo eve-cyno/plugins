@@ -894,7 +894,7 @@ describe('recovery R2 (repair: true)', () => {
     assert.match(s.last, /^UNCHANGED: the live index still does not verify/);
   });
 
-  // Fable finding 4: one definition of "the live index verifies" (liveVerifies in tools/lib/indexbuild.mjs: the head, its signature and
+  // One definition of "the live index verifies" (liveVerifies in tools/lib/indexbuild.mjs: the head, its signature and
   // the catalog the head names) in build-index.mjs base, with and without repair, and in upload.mjs, so no state is refused by one step
   // and taken by the other.
   describe('one definition of "the live index verifies"', () => {

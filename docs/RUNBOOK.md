@@ -1,16 +1,18 @@
 # Runbook: publishing the plugin index
 
 How the index at `plugins.eve-cyno.dev` is published, re-signed, revoked and repaired, and what must be true before anyone approves a
-run. The workflows are `.github/workflows/publish.yml`, `resign.yml` and `check.yml`; `tools/test/workflows.test.mjs` holds their
-rules (C-WF1 to C-WF12).
+run. The workflows are `.github/workflows/publish.yml`, `resign.yml` and `check.yml`; `tools/lib/wfrules.mjs` holds their
+rules (C-WF1 to C-WF12; `tools/test/workflows.test.mjs` tests them).
 
 Roles:
 
 - **The owner** (his own GitHub account) decides every merge, dispatches runs, and is the **only required reviewer** of the environments `index`
   and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for its head commit (all 40 hex
   digits of it, "Publishing" step 1.4a), an entries-only
-  one included (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push
-  of "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. He approves only from
+  one included (owner ruling of 2026-11-19); the coordinator then makes the local merge and the push
+  of "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. `merge-scope` does not look for the owner's own
+  login or numeric id, which `tools/check-envs.mjs` refuses anywhere in the history or tree (step 1.5a); before he says "merge" the
+  owner or the coordinator also greps the pull request (commit messages, authors, every changed file) for that identity. He approves only from
   GitHub Mobile, after the steps in "Before every index and mirror approval".
 - **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs`, `tools/merge-scope.mjs`,
   `tools/check-workflows.mjs` and local verifications, always from the trusted worktree (below), and hands their output to the owner.
@@ -27,7 +29,10 @@ config, hooks, every `.git` directory (`info/grafts`, `shallow`, local refs), th
 of scope: anything that needs write access on the workstation or control of the caller's environment. So the tools do not guard
 against `GIT_GRAFT_FILE` or `info/grafts`, `GIT_SHALLOW_FILE`, `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT`, git config, hooks,
 local replace refs, or the index that `tools/check.mjs` lists with `git ls-files` in a checkout; the variables that
-`tools/lib/gitsafe.mjs` removes and its replace refs switch stay as hardening.
+`tools/lib/gitsafe.mjs` removes and its replace refs switch stay as hardening. The writer of the R2 bucket or the edge is a third
+party the gates do not stop from writing; its reach is limited to availability (the index goes missing or stale) and rollback (an
+older signed state is served), and the defense is the signed head with REPLAYED and swapped-row detection and the live checks of
+`tools/publish/upload.mjs` (lines 191-212).
 
 **The trusted worktree.** A pull request or a run's commit can change the tools themselves, so a tool run from the checkout under
 review prints whatever that change wants (a `tools/check.mjs` that never names `maintenance`, say). The coordinator therefore runs
@@ -106,7 +111,7 @@ Both `index` and `mirror` have exactly these settings (created by the coordinato
 
 Repository settings (2026-11-18): Actions limited to the selected actions `actions/checkout`, `actions/setup-node`,
 `actions/upload-artifact` and `actions/download-artifact`, with SHA pinning required; default workflow permissions read, and
-workflows may not approve pull request reviews; fork pull request workflows need approval for all external contributors; a ruleset
+workflows may not approve pull request reviews; fork pull request workflows need approval for all external contributors (the owner or the coordinator, whoever clicks "Approve and run" on a fork pull request's `check.yml` run, first runs `merge-scope --merge-base` on `<H>`, step 4a of "Publishing"; on `SCOPE OWNER` the owner reads the workflow change at the compare link first and only then approves the run); a ruleset
 on `main` (no deletion, no non-fast-forward, updates restricted; organization admins may bypass). Settings, Actions, General,
 "Artifact and log retention" stays at 90 days: the workflows ask for 90 days on the `head`, `signature` and `catalog` artifacts, GitHub
 caps every artifact at the repository setting, and recovery R2 needs them.
@@ -536,6 +541,14 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
       4a printed `SCOPE OWNER`, a `read <H>` line and `SCOPE OWNER` (exit 3). Anything else (`SCOPE OWNER` after an entries-only
       step 4a, `SCOPE UNREAD`, exit 4, for a path the owner did not read at `<H>`, an `ERROR`): `git reset --hard <B>`, do not push,
       and start again at step 1.
+
+      Also before the push, the identity check on the merge result: `node ../eve-cyno-plugins-trusted/tools/check-envs.mjs --rev
+      $(git rev-parse HEAD) --repo-dir <checkout>`. `scope` passes a commit message such as "thanks @login" or a version field
+      (`changes`, `url`, `size`) that holds the owner's login or numeric id, but `check-envs.mjs` fails at every later approval,
+      revocations included, on any such hit in the author, committer or message of a reachable commit or in a file at `<B>`;
+      `main`'s history cannot be rewritten and a frozen version field cannot be edited. There is no identity-only mode: the tool
+      runs in full and needs `gh` with the agents' token in its environment (it reads both environments) and the commit in
+      `<checkout>`. Any `FAIL identity` line: `git reset --hard <B>`, do not push, and the author rewords or removes the text.
    6. Push `main` (`git push origin main`). The next pull request's run checked the old `main`, so step 4 sends it round again.
 2. Before the dispatch, `git rev-parse origin/main` must be the merge commit of the last step 1.5. The owner dispatches
    `publish.yml` with `target: production` (`lift` empty unless a revocation is being lifted; `repair` false), and
@@ -671,6 +684,9 @@ Found in review, accepted, and named here so nobody counts on more than the tool
   installer's folder keys). Carried to the desktop.
 - Any edit of the `sign` job, an action pin bump included, needs its new pin in `SIGN_STEPS` in `tools/lib/wfrules.mjs` in the same
   commit; the error prints the new hash.
+- `tools/lib/repairbase.mjs` filters runs with `notOnMain` only, so an own-repo run of another event (a push, say) with approved
+  `index`, `sign` and `upload` can be recovery R2's `<A>`, while `approved-base` never makes it `<A>`. It needs an owner approval
+  that step 2's `ERROR` forbids; low impact.
 - C-WF1 and C-WF11 treat ` #` inside a `run:` block as a comment; C-ENV1 backstops C-WF11 only. For C-WF1 the backstop is its parsed `on:` check (`tools/lib/wfrules.mjs`, the triggers rule).
 
 ## Measurements

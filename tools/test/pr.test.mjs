@@ -175,7 +175,7 @@ describe('PR fixture suite', () => {
     assert.equal(last(r.stdout), 'NO REVIEW NEEDED', 'background was on in 1.0.0, the listed version before 1.2.0');
   });
 
-  // Fable check 2026-11-19, finding 2 (fixture forkp/insert2.txt): with no listed version below an added one, C10 skipped the comparison.
+  // Regression: with no listed version below an added one, C10 skipped the comparison.
   const MORE = { characters: 'selected', network: ['https://api.example.com', 'https://collect.example.net'] };
   test('ESC-unlist-all-same-pr: a new version with more permissions and background, every older version unlisted in the same pull request, needs review escalation', async () => {
     const Z200 = pluginZip(manifest({ version: '2.0.0', permissions: MORE, background: true }));
