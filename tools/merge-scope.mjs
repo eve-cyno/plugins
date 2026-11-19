@@ -8,9 +8,11 @@
 //     included), a deletion, a link, a submodule, an executable file, a mode or type change. The owner reads those changes in the
 //     pull request before he says "merge"; a green job proves nothing about them.
 //   SCOPE UNREAD <names> (exit 4, only with --read <H>): an owner path of <head> that the owner did not read at <H> (step 1.5a, after
-//     the merge): <head> does not hold the object <H> names at that path (a force-push after his reading, a file main changed too,
-//     a path only the merge commit holds), or <H> holds it as the merge base of <base> and <H> did, so the compare view
-//     <merge base>...<H> of step 1.4a never showed it. The objects are compared, never the printed names.
+//     the merge): <head> does not hold the object <H> names at that path (a file main changed too, a path only the merge commit
+//     holds), or <H> holds it as the merge base of <base> and <H> did, so the compare view <merge base>...<H> of step 1.4a never
+//     showed it. The objects are compared, never the printed names. Before that, <head> must be the merge of <H> on <base>, with
+//     exactly the parents <base> and <H> in that order, as its commit object names them; anything else (a fast-forward, a squash,
+//     an octopus, swapped parents, the merge of another head than <H>) is an error.
 // It reads git plumbing only (rev-parse, merge-base, diff-tree of two commits: no worktree, no index, no diff driver, no
 // .gitattributes, no .gitmodules, no replace refs, no rename detection), imports nothing from the candidate repository and runs
 // none of its code: run it from the trusted worktree of docs/RUNBOOK.md "Roles", never from the checkout under review. With
@@ -25,6 +27,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { gitArgs, gitEnv } from './lib/gitsafe.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const M = createRequire(import.meta.url)(path.join(ROOT, 'vendor', 'eve-cyno-host', 'host', 'dist', 'manifest.js'));
@@ -59,12 +62,10 @@ export function ownerReason(r) {
 
 /**
  * Runs git without a shell in `repoDir`, minus the variables that redirect it and with replace refs off (a refs/replace entry
- * would show another commit or tree in place of the one named): { out: Buffer } or { why }.
+ * would show another commit or tree in place of the one named; tools/lib/gitsafe.mjs): { out: Buffer } or { why }.
  */
 function git(repoDir, args, env) {
-  const childEnv = { ...env, GIT_NO_REPLACE_OBJECTS: '1' };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_REPLACE_REF_BASE']) delete childEnv[k];
-  const r = spawnSync('git', ['--no-replace-objects', '-C', repoDir, ...args], { env: childEnv, maxBuffer: MAX_BUFFER, timeout: 120_000, windowsHide: true });
+  const r = spawnSync('git', gitArgs(repoDir, args), { env: gitEnv(env), maxBuffer: MAX_BUFFER, timeout: 120_000, windowsHide: true });
   if (r.error) return { why: `git could not run (${r.error.code ?? r.error.message})` };
   if (r.status !== 0) return { why: `git ${args[0]} exited ${r.status ?? r.signal}: ${oneLine(r.stderr.toString('utf8').trim().split('\n')[0] ?? '')}` };
   return { out: r.stdout };
@@ -96,6 +97,23 @@ function changesOf(repoDir, from, to, env) {
     changes.push({ srcMode: h[1], dstMode: h[2], status: h[5], path: Buffer.from(fields[i + 1], 'latin1').toString('utf8'), raw: fields[i + 1] });
   }
   return { changes };
+}
+
+/**
+ * The parents of commit `oid` as its own object names them, in order: { parents } or { why }. It reads the commit object (git
+ * cat-file commit, replace refs off), so a graft or a refs/replace entry cannot change the list.
+ */
+function parentsOf(repoDir, oid, env) {
+  const r = git(repoDir, ['cat-file', 'commit', oid], env);
+  if (r.why) return r;
+  const text = r.out.toString('latin1');
+  const end = text.indexOf('\n\n');
+  const parents = [];
+  for (const l of (end < 0 ? text : text.slice(0, end)).split('\n')) {
+    const m = /^parent ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(l);
+    if (m) parents.push(m[1]);
+  }
+  return { parents };
 }
 
 /** The one merge base of commits `a` and `b`: { oid } or { why }; more than one is an error (RUNBOOK 1.4a: rebase, then step 1). */
@@ -142,6 +160,19 @@ export function mergeScope({ repoDir, base, head, mergeBase = false, read = null
   if (read !== null) {
     const r = commitOf(repoDir, read, env);
     if (r.why) return { ok: false, why: r.why };
+    // Step 1.5 makes the merge with `git merge --no-ff <H>` on <B>: exactly the parents <B> and <H>, in that order. A fast-forward,
+    // a squash, an octopus (another branch's change rides along) or swapped parents is no merge of what the owner read.
+    const p = parentsOf(repoDir, h.oid, env);
+    if (p.why) return { ok: false, why: p.why };
+    if (p.parents.length !== 2 || p.parents[0] !== b.oid || p.parents[1] !== r.oid) {
+      const n = p.parents.length;
+      return {
+        ok: false,
+        why: '--head is not the merge of --read on --base: git reset --hard <B>, do not push, and start again at step 1 of "Publishing" '
+          + `(${h.oid} has ${n} parent${n === 1 ? '' : 's'}${n ? ` ${p.parents.map((x) => x.slice(0, 12)).join(' ')}` : ''}; `
+          + `step 1.5 makes exactly ${b.oid.slice(0, 12)} then ${r.oid.slice(0, 12)})`,
+      };
+    }
     const mb = oneMergeBase(repoDir, b.oid, r.oid, env);
     if (mb.why) return { ok: false, why: mb.why };
     const notAsRead = changesOf(repoDir, r.oid, h.oid, env);

@@ -35,6 +35,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { gitArgs, gitEnv } from './lib/gitsafe.mjs';
 import { REPO, getAll, getJson, oneLine, probe } from './lib/github.mjs';
 import { reviewerOf } from './lib/reviewer.mjs';
 
@@ -137,13 +138,14 @@ export function probeProblem(answer, pr) {
   return '';
 }
 
-/** Runs git without a shell in `repoDir`, with the caller's environment minus the variables that redirect it. Never rejects. */
+/**
+ * Runs git without a shell in `repoDir`, with the caller's environment minus the variables that redirect it and with replace refs
+ * off (tools/lib/gitsafe.mjs: a refs/replace entry would show a clean commit, tree or file in place of <B>'s). Never rejects.
+ */
 function git(repoDir, args, env) {
-  const childEnv = { ...env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) delete childEnv[k];
   return new Promise((resolve) => {
-    execFile('git', ['-C', repoDir, '-c', 'log.showSignature=false', '-c', 'core.quotePath=false', ...args],
-      { env: childEnv, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true },
+    execFile('git', gitArgs(repoDir, ['-c', 'log.showSignature=false', '-c', 'core.quotePath=false', ...args]),
+      { env: gitEnv(env), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000, windowsHide: true },
       (err, stdout) => resolve(err ? { code: typeof err.code === 'number' ? err.code : -1, stdout: stdout ?? '' } : { code: 0, stdout }));
   });
 }

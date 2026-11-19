@@ -7,15 +7,20 @@
 //       never a write to the desktop checkout), installs the host's locked dependencies from the local npm cache (`npm ci --offline
 //       --ignore-scripts`), runs the host's product build, and replaces vendor/eve-cyno-host with the import closure of the modules
 //       below, the index scripts, the pinned index keys, the app's LICENSE and NOTICE, and MANIFEST.json.
-//   node tools/vendor-host.mjs --check --from <desktop git dir> --rev <40-hex commit>
-//       The same make into the temp folder only; prints every difference from vendor/eve-cyno-host and exits 1 on any.
+//   node tools/vendor-host.mjs --check --from <desktop git dir> --rev <40-hex commit> [--root <dir>]
+//       First confirms that the commit is on desktop main (an ancestor of, or equal to, refs/remotes/origin/main of the desktop
+//       checkout; `git -C <desktop> fetch origin main` first) and stops with exit 1 before anything is exported or built otherwise:
+//       the make runs the desktop's own build scripts at that commit, which only desktop main vouches for. Then the same make into
+//       the temp folder only; prints every difference from <root>/vendor/eve-cyno-host (default: this repository's) and exits 1 on
+//       any. With --root, the vendored tree of another commit is checked (docs/RUNBOOK.md: a tree written by tools/base-tree.mjs).
 //   node tools/vendor-host.mjs --verify [--root <dir>]
 //       Needs no desktop: every vendored file against its SHA-256 in MANIFEST.json, no file missing or extra, package.json and
 //       package-lock.json hold the host's ajv and semver, the vendored PRODUCT_KEYS.index equal the vendored .pub files, and the
 //       vendored build is a product build (no test key).
 //
 // Exit codes: 0 pass, 1 a difference or a failed check, 2 usage or a step that could not run. Child processes get fixed argument
-// lists and never a shell; this tool makes no network request (npm runs offline).
+// lists and never a shell; this tool makes no network request (npm runs offline). git runs with replace refs off and without the
+// variables that redirect it (tools/lib/gitsafe.mjs).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,6 +28,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire, isBuiltin } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { gitArgs, gitEnv } from './lib/gitsafe.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VENDOR_DIR = 'vendor/eve-cyno-host';
@@ -167,18 +173,37 @@ const readOut = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', shell: false, stdio: ['ignore', 'pipe', 'pipe'], ...opts });
   return r.status === 0 ? r.stdout.trim() : null;
 };
+/** `git <args>` in the desktop checkout `from`, replace refs off and no redirecting variable; its trimmed output, or null. */
+const gitOut = (from, args) => readOut('git', gitArgs(from, args), { env: gitEnv(process.env) });
+
+/** The desktop's main as the desktop checkout knows it, named in full (a branch or tag named origin/main cannot stand in). */
+export const DESKTOP_MAIN = 'refs/remotes/origin/main';
+
+/**
+ * Whether desktop commit `rev` is on desktop main in the checkout `from`: an ancestor of DESKTOP_MAIN, or that commit. Returns
+ * { on, main } (main: the commit DESKTOP_MAIN names); refuses when the checkout has no DESKTOP_MAIN or git cannot tell.
+ */
+export function onDesktopMain(from, rev) {
+  const main = gitOut(from, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${DESKTOP_MAIN}^{commit}`]);
+  if (!main || !SHA_RE.test(main)) refuse(`${from} has no ${DESKTOP_MAIN}: git -C <desktop> fetch origin main, then run the check again`);
+  if (gitOut(from, ['cat-file', '-t', `${rev}^{commit}`]) !== 'commit') refuse(`${rev} is not a commit in ${from}`);
+  const r = spawnSync('git', gitArgs(from, ['merge-base', '--is-ancestor', rev, main]), { env: gitEnv(process.env), shell: false, stdio: 'ignore' });
+  if (r.status === 0) return { on: true, main };
+  if (r.status === 1) return { on: false, main };
+  return refuse(`git merge-base --is-ancestor ${rev.slice(0, 12)} ${DESKTOP_MAIN} exited ${r.status ?? r.signal}`);
+}
 
 /**
  * Makes the vendored tree for desktop `rev` into `<work>/out` and returns {out, manifest, closure}. Steps: whole-tree `git archive`,
  * `npm ci --offline --ignore-scripts` in host/, the host's product build, the closure, the copies, MANIFEST.json.
  */
 function make(from, rev, work) {
-  if (readOut('git', ['-C', from, 'cat-file', '-t', `${rev}^{commit}`]) !== 'commit') refuse(`${rev} is not a commit in ${from}`);
+  if (gitOut(from, ['cat-file', '-t', `${rev}^{commit}`]) !== 'commit') refuse(`${rev} is not a commit in ${from}`);
   const tree = path.join(work, 'tree');
   fs.mkdirSync(tree);
   const tar = path.join(work, 'tree.tar');
   console.log(`vendor-host: git archive ${rev.slice(0, 12)} (whole tree) into a temp folder`);
-  run('git', ['-C', from, 'archive', '--format=tar', `--output=${tar}`, rev]);
+  run('git', gitArgs(from, ['archive', '--format=tar', `--output=${tar}`, rev]), { env: gitEnv(process.env) });
   run('tar', ['-x', '-f', tar, '-C', tree, '--no-same-owner']);
   fs.rmSync(tar);
   const env = { ...process.env, ELECTRON_SKIP_BINARY_DOWNLOAD: '1', npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false' };
@@ -313,7 +338,7 @@ export function verifyVendor(root) {
 function usage(msg) {
   console.error(`vendor-host: ${msg}`);
   console.error('usage: node tools/vendor-host.mjs --from <desktop git dir> --rev <40-hex commit>\n'
-    + '       node tools/vendor-host.mjs --check --from <desktop git dir> --rev <40-hex commit>\n'
+    + '       node tools/vendor-host.mjs --check --from <desktop git dir> --rev <40-hex commit> [--root <dir>]\n'
     + '       node tools/vendor-host.mjs --verify [--root <dir>]');
   process.exit(2);
 }
@@ -350,6 +375,17 @@ function main() {
   const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'eve-cyno-vendor-'));
   try {
     if (inside(o.from, work) || inside(fs.realpathSync(o.root), work)) refuse('the temp folder is inside a repository; set TMPDIR to a folder outside every repository');
+    if (o.mode === 'check') {
+      // Before the make, which runs the desktop's npm ci and build scripts at o.rev: only a commit of desktop main is built.
+      const d = onDesktopMain(o.from, o.rev);
+      if (!d.on) {
+        console.error(`FAIL desktop ${o.rev} is not on desktop main (${DESKTOP_MAIN} ${d.main}): nothing was exported or built; `
+          + 'the check builds only a desktop commit of main');
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`vendor-host: desktop ${o.rev.slice(0, 12)} is on desktop main (${DESKTOP_MAIN} ${d.main.slice(0, 12)})`);
+    }
     const { out, closure } = make(o.from, o.rev, work);
     console.log(`vendor-host: closure host/dist ${closure.files} files, ${closure.bytes} bytes; vendored tree ${closure.allFiles} files, ${closure.allBytes} bytes`);
     const target = path.join(o.root, VENDOR_DIR);

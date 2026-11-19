@@ -120,6 +120,46 @@ describe('base tree (check.yml)', () => {
     }
   });
 
+  test('BT-replace-objects: a refs/replace entry cannot write another commit\'s tree in place of the one named', async () => {
+    const { dir, rev } = repo();
+    // A commit whose tree holds one other file, put in place of <rev> for every git command that honours replace refs.
+    const t = spawnSync('git', ['-C', dir, 'mktree'], { input: `100644 blob ${git(dir, 'rev-parse', `${rev}:revoked.json`)}\tonly.json\n`, encoding: 'utf8', env: ENV });
+    assert.equal(t.status, 0, t.stderr);
+    const fake = git(dir, 'commit-tree', t.stdout.trim(), '-m', 'fake');
+    git(dir, 'replace', rev, fake);
+    for (const env of [{}, { GIT_REPLACE_REF_BASE: 'refs/elsewhere/' }]) {
+      if (env.GIT_REPLACE_REF_BASE) {
+        // The same replacement under another namespace, which GIT_REPLACE_REF_BASE names.
+        git(dir, 'update-ref', `refs/elsewhere/${rev}`, fake);
+        git(dir, 'update-ref', '-d', `refs/replace/${rev}`);
+      }
+      const out = path.join(tempDir('out'), 'base');
+      const r = await run('tools/base-tree.mjs', ['--repo', dir, '--rev', rev, '--out', out], { env });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, new RegExp(`^BASE TREE ${rev}: 9 paths`, 'm'));
+      assert.equal(fs.existsSync(path.join(out, 'only.json')), false, 'not the replacement\'s tree');
+      for (const [p, text] of Object.entries(FILES)) assert.equal(fs.readFileSync(path.join(out, p), 'utf8'), text, p);
+    }
+  });
+
+  test('BT-git-env: GIT_DIR or GIT_OBJECT_DIRECTORY in the caller\'s environment cannot point git at another repository', async () => {
+    const { dir, rev } = repo();
+    // Another repository that does not hold <rev> (a second repo() made in the same second would hold the very same commit).
+    const other = { dir: tempDir('other') };
+    git(other.dir, 'init', '-q');
+    fs.writeFileSync(path.join(other.dir, 'other.txt'), 'other\n');
+    git(other.dir, 'add', '-A');
+    git(other.dir, 'commit', '-q', '-m', 'other');
+    assert.throws(() => git(other.dir, 'cat-file', '-e', `${rev}^{commit}`), 'the premise: the other repository lacks <rev>');
+    for (const env of [{ GIT_DIR: path.join(other.dir, '.git') }, { GIT_OBJECT_DIRECTORY: path.join(other.dir, '.git', 'objects') }]) {
+      const out = path.join(tempDir('out'), 'base');
+      const r = await run('tools/base-tree.mjs', ['--repo', dir, '--rev', rev, '--out', out], { env });
+      assert.equal(r.code, 0, `${Object.keys(env)[0]}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stdout, new RegExp(`^BASE TREE ${rev}: 9 paths`, 'm'));
+      assert.equal(fs.existsSync(path.join(out, 'other.txt')), false);
+    }
+  });
+
   test('BT-usage: a full commit id is required, and it must name a commit of the repository', async () => {
     const { dir } = repo();
     const out = path.join(tempDir('out'), 'base');

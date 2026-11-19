@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { closureOf, scriptClosureOf, releaseLibRoots } from '../vendor-host.mjs';
+import * as vendorHost from '../vendor-host.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = path.join(ROOT, 'tools', 'vendor-host.mjs');
@@ -154,6 +155,68 @@ describe('vendor-host --verify', () => {
       rewriteConsistently(t, 'host/dist/buildinfo.js', s => s.replace(from, to));
       assertFails(verify(t), /^FAIL keys host\/dist\/buildinfo\.js is not a product build/m);
     }
+  });
+});
+
+describe('vendor-host --check: desktop main first', () => {
+  const ENV = {
+    ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test',
+    GIT_COMMITTER_EMAIL: 'test@example.invalid', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+  };
+  const git = (dir, ...a) => {
+    const r = spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: ENV });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  /** A desktop repository: main m1 then m2 (refs/remotes/origin/main at m2), and a commit `side` off m1 that main never took. */
+  function desktop() {
+    const dir = tempDir();
+    git(dir, 'init', '-q', '-b', 'main');
+    const at = (msg) => { fs.writeFileSync(path.join(dir, 'f.txt'), `${msg}\n`); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
+    const m1 = at('main 1');
+    const m2 = at('main 2');
+    git(dir, 'checkout', '-q', '-b', 'side', m1);
+    const side = at('side');
+    git(dir, 'checkout', '-q', 'main');
+    git(dir, 'update-ref', 'refs/remotes/origin/main', m2);
+    return { dir, m1, m2, side };
+  }
+  const check = (d, rev) => spawnSync(process.execPath, [TOOL, '--check', '--from', d.dir, '--rev', rev], { encoding: 'utf8', timeout: 60_000 });
+  /** The --check run stopped at the main check: exit 1, the FAIL line, and nothing exported or built. */
+  const assertOffMain = (r, d, rev) => {
+    assert.equal(r.status, 1, `exit ${r.status}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`^FAIL desktop ${rev} is not on desktop main \\(refs/remotes/origin/main ${d.m2}\\)`, 'm'));
+    assert.doesNotMatch(r.stdout, /git archive|npm/, 'nothing was exported or built');
+  };
+
+  test('VD-check-main: --check builds only a desktop commit of main; one off main fails before anything is exported or built', () => {
+    const d = desktop();
+    assertOffMain(check(d, d.side), d, d.side);
+    assert.equal(typeof vendorHost.onDesktopMain, 'function');
+    assert.deepEqual(vendorHost.onDesktopMain(d.dir, d.m1), { on: true, main: d.m2 });
+    assert.deepEqual(vendorHost.onDesktopMain(d.dir, d.m2), { on: true, main: d.m2 });
+    assert.deepEqual(vendorHost.onDesktopMain(d.dir, d.side), { on: false, main: d.m2 });
+  });
+
+  test('VD-check-main-ref: a branch or tag named origin/main, or a replace ref, does not put a commit on desktop main', () => {
+    const d = desktop();
+    git(d.dir, 'branch', 'origin/main', d.side);
+    git(d.dir, 'tag', 'origin/main', d.side);
+    assertOffMain(check(d, d.side), d, d.side);
+    // A commit with m2's tree and the parents m1 and side, put in place of m2 by a replace ref: side would read as an ancestor.
+    git(d.dir, 'replace', d.m2, git(d.dir, 'commit-tree', '-p', d.m1, '-p', d.side, '-m', 'main 2', `${d.m2}^{tree}`));
+    assert.equal(spawnSync('git', ['-C', d.dir, 'merge-base', '--is-ancestor', d.side, d.m2], { env: ENV }).status, 0, 'the premise: git honours it');
+    assertOffMain(check(d, d.side), d, d.side);
+    assert.deepEqual(vendorHost.onDesktopMain(d.dir, d.side), { on: false, main: d.m2 });
+  });
+
+  test('VD-check-main-missing: a desktop checkout without refs/remotes/origin/main cannot tell, so the check stops (exit 2)', () => {
+    const d = desktop();
+    git(d.dir, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const r = check(d, d.m1);
+    assert.equal(r.status, 2, `exit ${r.status}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stderr, /has no refs\/remotes\/origin\/main: git -C <desktop> fetch origin main/);
+    assert.doesNotMatch(r.stdout, /git archive|npm/);
   });
 });
 

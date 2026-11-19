@@ -5,16 +5,19 @@
 // link is written as a link, except at or under .github, which refuses: tools/check-workflows.mjs reads that folder of a written
 // tree (RUNBOOK approval step 1), and a link there could point out of it. A submodule or any other mode refuses (fail closed).
 // After writing, the folder must hold exactly the tree's paths, each hashed again as a git object equal to the one the tree names.
+// git runs with replace refs off and without the variables that redirect it (tools/lib/gitsafe.mjs): a refs/replace entry would
+// write another commit's tree under the id named, and GIT_DIR or GIT_OBJECT_DIRECTORY would read another repository.
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { gitArgs, gitEnv } from './gitsafe.mjs';
 
 const MAX_BUFFER = 1024 * 1024 * 1024;
 const MODES = { 100644: 'file', 100755: 'exec', 120000: 'link' };
 
 function git(repo, args, input) {
-  const r = spawnSync('git', ['-C', repo, ...args], { input, maxBuffer: MAX_BUFFER });
+  const r = spawnSync('git', gitArgs(repo, args), { input, maxBuffer: MAX_BUFFER, env: gitEnv(process.env) });
   if (r.error) return { why: `git could not run (${r.error.code ?? r.error.message})` };
   if (r.status !== 0) return { why: `git ${args[0]} exited ${r.status}` };
   return { out: r.stdout };

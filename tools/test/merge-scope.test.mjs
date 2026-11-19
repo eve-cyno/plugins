@@ -308,23 +308,7 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
     assertEntriesOnly(await readGate(e));
   });
 
-  test('SCOPE-read-different-blob: a tool that is not the object <H> names is unread (a force-push, or main changed it too)', async () => {
-    // The review's case: the owner read <H2> (harmless), the coordinator merged <H> (the one fetched before the force-push).
-    const r = repo();
-    git(r.dir, 'checkout', '-q', '-b', 'pr');
-    write(r.dir, { 'tools/x.mjs': "process.exit(0); // malicious\n" });
-    const h = commit(r.dir, 'pull request');
-    write(r.dir, { 'tools/x.mjs': "console.log('harmless');\n" });
-    git(r.dir, 'commit', '-q', '-a', '--amend', '-m', 'pull request');
-    const h2 = git(r.dir, 'rev-parse', 'HEAD');
-    git(r.dir, 'checkout', '-q', 'main');
-    git(r.dir, 'merge', '-q', '--no-ff', '--no-edit', h);
-    const m = { dir: r.dir, base: r.base, head: h, merge: git(r.dir, 'rev-parse', 'HEAD') };
-    assertOwner(await readGate(m), ['tools/x.mjs']);
-    const res = await readGate(m, h2);
-    assertUnread(res, ['tools/x.mjs']);
-    assert.match(res.stdout, new RegExp(`^unread A tools/x\\.mjs: not the object ${h2} names$`, 'm'));
-
+  test('SCOPE-read-different-blob: a tool that is not the object <H> names is unread (main changed it too)', async () => {
     // main changed the same tool (another hunk): git merges both, so the merged file is neither <H>'s nor main's. revoked.json,
     // merged the same way, is an entry path and is not compared.
     const n = merged({
@@ -364,6 +348,77 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
     const res = await readGate(m);
     assertUnread(res, ['tools/check.mjs']);
     assert.match(res.stdout, new RegExp(`^unread M tools/check\\.mjs: unchanged from the merge base ${m.mb} to ${m.head}, so not in the compare view$`, 'm'));
+  });
+
+  test('SCOPE-read-parents: the merge must have exactly the parents <B> and <H>, in that order, else an ERROR and no SCOPE', async () => {
+    /** The ERROR of a --head that is not `git merge --no-ff <H>` on <B>, naming its parent count. */
+    const assertNotTheMerge = (res, m, count) => {
+      assert.equal(res.code, 1, res.stdout + res.stderr);
+      assert.match(res.stderr, /^ERROR --head is not the merge of --read on --base: git reset --hard <B>, do not push, and start again at step 1 of "Publishing" \(/m);
+      assert.match(res.stderr, new RegExp(`\\(${m.merge} has ${count} parents?[ ;]`));
+      assert.doesNotMatch(res.stdout, /^SCOPE/m);
+    };
+    const prFiles = { 'entries/dev.example.new.json': entry('dev.example.new') };
+    // A fast-forward: HEAD is <H> itself, with the one parent <B>. Its diff from <B> is entries only all the same.
+    const ff = merged({ prFiles, change: (d, head) => git(d, 'merge', '-q', '--ff-only', head) });
+    assert.equal(ff.merge, ff.head, 'the premise: a fast-forward');
+    assertNotTheMerge(await readGate(ff), ff, 1);
+    // A squash: one parent <B>, <H>'s files.
+    const sq = merged({ prFiles, change: (d, head) => { git(d, 'merge', '-q', '--squash', head); commit(d, 'squash'); } });
+    assertNotTheMerge(await readGate(sq), sq, 1);
+    // A squash whose message holds a line "parent <H>": only the commit's header names parents.
+    const sm = merged({ prFiles, change: (d, head) => { git(d, 'merge', '-q', '--squash', head); commit(d, `squash\n\nparent ${head}`); } });
+    assertNotTheMerge(await readGate(sm), sm, 1);
+    // An octopus: a second branch's entry rides along, read by nobody and checked by no job of <H>.
+    const oc = merged({
+      prFiles,
+      change: (d, head) => {
+        git(d, 'checkout', '-q', '-b', 'other', 'main');
+        write(d, { 'entries/dev.example.rider.json': entry('dev.example.rider') });
+        const other = commit(d, 'another pull request');
+        git(d, 'checkout', '-q', 'main');
+        git(d, 'merge', '-q', '--no-ff', '--no-edit', head, other);
+      },
+    });
+    assertNotTheMerge(await readGate(oc), oc, 3);
+    // The parents swapped: main merged into the pull request's branch.
+    const sw = merged({
+      prFiles: { 'tools/check.mjs': "console.log('v2');\n" },
+      mainFiles: { 'entries/dev.example.other.json': entry('dev.example.other') },
+      change: (d) => { git(d, 'checkout', '-q', 'pr'); git(d, 'merge', '-q', '--no-ff', '--no-edit', 'main'); },
+    });
+    assertNotTheMerge(await readGate(sw), sw, 2);
+    // A merge on a stale main: parents <MB> and <H>, so <B>'s own change (an entry) is undone, and its diff from <B> is entries only.
+    const st = merged({
+      prFiles,
+      mainFiles: { 'entries/dev.example.intel.json': entry('dev.example.intel', '1.1.0') },
+      change: (d, head) => { git(d, 'checkout', '-q', '-b', 'stale', 'main~1'); git(d, 'merge', '-q', '--no-ff', '--no-edit', head); },
+    });
+    assertNotTheMerge(await readGate(st), st, 2);
+    // The owner read <H2>; the coordinator merged <H>, fetched before a force-push. The merge is of <H>, not of <H2>.
+    const r = repo();
+    git(r.dir, 'checkout', '-q', '-b', 'pr');
+    write(r.dir, { 'tools/x.mjs': "process.exit(0); // malicious\n" });
+    const h = commit(r.dir, 'pull request');
+    write(r.dir, { 'tools/x.mjs': "console.log('harmless');\n" });
+    git(r.dir, 'commit', '-q', '-a', '--amend', '-m', 'pull request');
+    const h2 = git(r.dir, 'rev-parse', 'HEAD');
+    git(r.dir, 'checkout', '-q', 'main');
+    git(r.dir, 'merge', '-q', '--no-ff', '--no-edit', h);
+    const m = { dir: r.dir, base: r.base, head: h, merge: git(r.dir, 'rev-parse', 'HEAD') };
+    assertOwner(await readGate(m), ['tools/x.mjs']);
+    assertNotTheMerge(await readGate(m, h2), m, 2);
+  });
+
+  test('SCOPE-read-parents-replace: a refs/replace entry cannot make another commit look like the merge of <H> on <B>', async () => {
+    const ff = merged({ prFiles: { 'entries/dev.example.new.json': entry('dev.example.new') }, change: (d, head) => git(d, 'merge', '-q', '--ff-only', head) });
+    // A commit with <H>'s tree and the parents <B> and <H>, put in place of the fast-forwarded HEAD (<H> itself) by a replace ref.
+    const fake = git(ff.dir, 'commit-tree', '-p', ff.base, '-p', ff.head, '-m', 'a merge', `${ff.head}^{tree}`);
+    const other = git(ff.dir, 'commit-tree', '-p', ff.base, '-m', 'the head', `${ff.head}^{tree}`);
+    git(ff.dir, 'replace', other, fake);
+    const res = await scope(['--repo-dir', ff.dir, '--base', ff.base, '--head', other, '--read', ff.head]);
+    assert.equal(res.code, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, new RegExp(`\\(${other} has 1 parent[ ;]`));
   });
 
   test('SCOPE-read-errors: --read names a commit; an unknown one is an error, one that reads as an option a usage error', async () => {

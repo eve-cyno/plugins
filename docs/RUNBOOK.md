@@ -7,7 +7,8 @@ rules (C-WF1 to C-WF11).
 Roles:
 
 - **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
-  and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for its head commit, an entries-only
+  and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for its head commit (all 40 hex
+  digits of it, "Publishing" step 1.4a), an entries-only
   one included (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push
   of "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. He approves only from
   GitHub Mobile, after the steps in "Before every index and mirror approval".
@@ -28,9 +29,11 @@ first production run whose `sign` and `upload` succeeded, `<X>`, the commit of t
 list ("Owner steps before the first production publish", step 0, which comes before the first merge and the first tool run). The
 commands are written for a shell in `<checkout>`: `node ../eve-cyno-plugins-trusted/tools/...` runs the trusted copy, and the
 checkout under review is only ever named as `--repo-dir`, `--dir` or `--repo`, never run. The worktree has its own
-`npm ci --ignore-scripts` and is never edited. To set it up at `<X>`, to move it to a later commit read in full (step 4 of "Before
-every index and mirror approval"), and to move it after each production run whose `sign` and `upload` succeeded and which the owner
-entered in his list (that run's commit is the next `<A>`):
+`npm ci --ignore-scripts` and is never edited. It moves only to a commit the owner has read: never to the commit under review while
+he reads it (the vendor check of "Owner steps before the first production publish", step 0.2, reads that commit's tree from the
+unmoved worktree). To set it up at `<X>`, to move it to a later commit read in full once its `read in full` line is written (step 4
+of "Before every index and mirror approval"), and to move it after each production run whose `sign` and `upload` succeeded and
+which the owner entered in his list (that run's commit is the next `<A>`):
 
 ```
 git -C <checkout> worktree add --detach ../eve-cyno-plugins-trusted <X>   # once
@@ -315,9 +318,10 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    `<X>`, read `<B>` in full in the order of "Owner steps before the first production publish", step 0, with `<B>` as `<Y>`: the
    compare status of `<X>` to `<B>` `ahead` or `identical`, and every change of
    `https://github.com/eve-cyno/plugins/compare/<X>...<B>` other than the `entries/<id>.json` files, `revoked.json` and `vendor/`,
-   `package-lock.json` included; then the coordinator moves the worktree to `<B>` and hands over its `vendor-host.mjs --check`
-   output; then you read `vendor/` against that output and add `read in full <B> <date>`. Steps 1 and 2 then run again from the
-   moved worktree. For a first publish this reading is step 5.
+   `package-lock.json` included; then the coordinator runs the vendor check of step 0.2 there for `<B>` from the unmoved worktree
+   (still at `<X>`) and hands over its output; then you read `vendor/` against that output and add `read in full <B> <date>`.
+   Only then does the coordinator move the worktree to `<B>` ("Roles"), and steps 1 and 2 run again from it. For a first publish
+   this reading is step 5.
 5. **Check the direction, then read the change** (after `FIRST PUBLISH`, step 4 is this step). The compare status of `<A>` to
    `<B>` must be `ahead` or `identical`; `behind` or `diverged` means **no approval**. Then read
    `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change other than the `entries/<id>.json` files and
@@ -325,6 +329,10 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    vendor, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs), because `npm ci` in `build` and `upload` runs what the
    manifest and lock file name, with the `mirror` secrets in `upload`. Read the
    entries and revocations in the summary and the pull request. Anything unexpected: no approval.
+   A change under `vendor/` (generated code, not read line by line) is read as step 0 of "Owner steps before the first
+   production publish" reads it, with `<B>` in place of `<Y>` and the worktree left at `<A>`: first every other change of the
+   compare view, then the coordinator runs the vendor check of step 0.2 for `<B>` and hands over its output, then you read
+   `vendor/` against it as step 0.3 says. A failed check, or a desktop commit you do not accept: no approval.
 6. **Repair runs only** (`repair: true`): the coordinator hands over the output of a local
    `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` that shows the live index
    failing to verify. Read in the run
@@ -367,17 +375,32 @@ below. O1 is the owner's alone.
       files, `revoked.json` and `vendor/`: tools, workflows, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs. For
       `<Y>`: the compare status of the newest `read in full` commit to `<Y>` is `ahead` or `identical`, and he reads every such
       change of `https://github.com/eve-cyno/plugins/compare/<that commit>...<Y>`.
-   2. The coordinator (for `<Y>`, after `git -C ../eve-cyno-plugins-trusted checkout -q --detach <Y>`) runs
-      `(cd ../eve-cyno-plugins-trusted && npm ci --ignore-scripts)`, then `node ../eve-cyno-plugins-trusted/tools/vendor-host.mjs
-      --check --from <desktop checkout> --rev <the desktop commit that vendor/eve-cyno-host/MANIFEST.json names there>`, and hands
-      over its output. That check compares files and loads no vendored module; no other tool runs from the worktree until the
-      owner has read `vendor/`.
-   3. The owner reads `vendor/` against that output: the check passes (no difference from a fresh make), and the desktop commit it
-      names is one of desktop `main` that he accepts. Any doubt, or a failed check: no line, and the coordinator moves the worktree
-      back to the newest `read in full` commit (or removes it when there is none).
+   2. **The vendor check.** The worktree does not move: for `<Y>` it stays at the commit whose code the owner read last (the
+      newest `read in full` commit, or `<A>`), and the commit under review is only read, as a tree written into a new empty folder
+      `<T>` outside every repository. The coordinator reads the desktop commit `<D>` that `<T>/vendor/eve-cyno-host/MANIFEST.json`
+      names (`desktop.commit`, 40 hex; read as data, nothing of `<T>` runs), and runs in `<checkout>`:
+
+      ```
+      (cd ../eve-cyno-plugins-trusted && npm ci --ignore-scripts)    # for <X> only, once
+      node ../eve-cyno-plugins-trusted/tools/base-tree.mjs --rev <X or Y> --out <T> --repo <checkout>
+      git -C <desktop checkout> fetch origin main
+      node ../eve-cyno-plugins-trusted/tools/vendor-host.mjs --check --from <desktop checkout> --rev <D> --root <T>
+      ```
+
+      and hands over the output of the last command. It first confirms that `<D>` is on desktop `main` (an ancestor of
+      `refs/remotes/origin/main` of the desktop checkout, or that commit), and otherwise stops with `FAIL desktop <D> is not on
+      desktop main` before it exports or builds anything: the make runs the desktop's own `npm ci` and build scripts at `<D>`,
+      which only desktop `main` vouches for. Then it compares `<T>`'s `vendor/eve-cyno-host` with a fresh make, file by file.
+      `base-tree.mjs` and this check load no vendored module; no other tool runs from the worktree until the owner has read
+      `vendor/`. When the commit under review changes `tools/vendor-host.mjs` or `tools/lib/gitsafe.mjs`, the trusted copy can
+      report differences that the new tool explains: then, once the owner has read that tool change, the coordinator runs the
+      same command with `node <T>/tools/vendor-host.mjs` in place of the trusted copy and hands over both outputs.
+   3. The owner reads `vendor/` against that output: the check passes (`<D>` is on desktop `main`, and no difference from a fresh
+      make), and `<D>` is a desktop commit he accepts. Any doubt, or a failed check: no line (for `<X>`, the coordinator removes
+      the worktree).
    4. He adds `read in full <X> <date>` to his list (outside GitHub and the workstation, "Before every index and mirror approval"
       step 3). Until the first production run whose `sign` and `upload` succeeded, the newest such line names the trusted
-      worktree's commit.
+      worktree's commit. For `<Y>`, the coordinator moves the worktree to `<Y>` only after that line is written ("Roles").
 1. The environments exist with the settings above; the written confirmation in "One account" is filled in.
 2. The token is switched (O2, done): `node ../eve-cyno-plugins-trusted/tools/check-envs.mjs --rev <main's head> --repo-dir
    <checkout>` passes, the probe table is filled in, and the empirical approve check is recorded with a refusal.
@@ -400,9 +423,9 @@ below. O1 is the owner's alone.
    view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
    `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
-   in the checkout that holds the change (the coordinator's gate on its own change, not a reading). The owner reads the new
-   `vendor/` against the trusted worktree's check, in the order of step 0 (or of step 4 of "Before every index and mirror
-   approval").
+   in the checkout that holds the change (the coordinator's gate on its own change, not a reading; the check fails on a desktop
+   commit that is not on desktop `main`). The owner reads the new `vendor/` against the vendor check of step 0.2, run from the
+   unmoved trusted worktree, in the order of step 0 (or of step 4 or 5 of "Before every index and mirror approval").
 7. **Free tier.** The R2 free-tier table (storage, Class A, Class B headroom) in the infra repository's hosting runbook holds the
    owner's dashboard reading of 2026-11-19 (confirmed; billable usage $0.00 then). Storage beyond the free
    10 GB-month is accepted (owner, 2026-11-18); another paid product, Infrequent Access, a cache purge token or a monthly R2 bill
@@ -447,21 +470,37 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
         and the jobs' summaries (review classes included).
       - `SCOPE OWNER <names>` (exit 3): the jobs' green proves nothing. The owner reads every change at the link: the entries and
         revocations as above, and every other change (the lines marked `owner`: a tool, a workflow, `package.json` or
-        `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change).
+        `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change), each ticked off as below.
       - An `ERROR` or any other exit: no merge, and nothing to read. The pull request is rebased or fixed (two merge bases: rebase
         it on `main`), then start again at step 1.
 
-      Then he says "merge" with the first 12 hex digits of `<H>` ("merge 0123456789ab"), or not. A "merge" without them, or with
-      other digits (he read another head), is no "merge" for this `<H>`: start again at step 1. No merge without his "merge", an
-      entries-only pull request included; nothing here merges on a tool's answer.
+      **What counts as read.** When step 5a says a path was in the compare view, it means git's answer (the path changed from
+      `<MB>` to `<H>`), not that GitHub showed it. GitHub can show less than the change: it cuts the file list of a large
+      compare, hides a diff behind "Load diff", collapses a file that a `.gitattributes` marks `linguist-generated`, and prints
+      "Binary file not shown" for a binary file. None of those is a reading. So the owner ticks off each `owner` line of the
+      output in the compare view: he finds that path in the list, opens its diff (every "Load diff" and every collapsed file),
+      and reads all of it. A text file whose diff GitHub does not show he reads in full at
+      `https://github.com/eve-cyno/plugins/blob/<H>/<path>`, with `<H>` as all 40 hex digits. A binary file, a path missing
+      from the list, or an output that cuts its own list (`... more changes`) cannot be ticked off: no "merge"; the pull
+      request is changed or split, then start again at step 1.
+
+      Then he says "merge" with the full commit id of `<H>`, all 40 hex digits ("merge
+      0123456789abcdef0123456789abcdef01234567"), or not. A "merge" without them, with fewer digits, or with other digits (he
+      read another head) is no "merge" for this `<H>`: start again at step 1. A prefix is not enough: whoever makes both commits
+      can make two with the same first 12 digits (48 bits, about 2^24 hashes), show the owner one and have the other merged. A
+      "merge" counts only for the handoff it answers: every start again at step 1, for whatever reason and even with the same
+      `<H>`, needs a new handoff of this step and a new "merge"; the coordinator never reuses an earlier one. No merge without
+      his "merge", an entries-only pull request included; nothing here merges on a tool's answer.
    5. Merge `<H>` with a merge commit (`git merge --no-ff <H>`), then confirm `git rev-parse HEAD^1` is `<B>` and
       `git rev-parse HEAD^2` is `<H>`. Then `git fetch origin pull/<n>/merge`: `git rev-parse FETCH_HEAD` must still be `<M>`, and
       `git rev-parse HEAD^{tree}` must equal `git rev-parse FETCH_HEAD^{tree}`: the merged files are the files the jobs checked.
       This check is never skipped. When GitHub serves another merge commit (`<M>` moved: a push to the pull request or to `main`),
-      or the trees differ: `git reset --hard <B>`, do not push, and start again at step 1.
+      or the trees differ: `git reset --hard <B>`, do not push, and start again at step 1 (with a new "merge", step 4a).
 
       **5a, the scope of the merge, before the push.** `node ../eve-cyno-plugins-trusted/tools/merge-scope.mjs --repo-dir
-      <checkout> --base <B> --head HEAD --read <H>` (what the merge commit changes on `<B>`, its first parent). With `--read`, every
+      <checkout> --base <B> --head HEAD --read <H>` (what the merge commit changes on `<B>`, its first parent). With `--read`, the
+      tool first reads `HEAD`'s commit object: its parents must be exactly `<B>` and `<H>`, in that order (a fast-forward, a
+      squash, an octopus or swapped parents is an `ERROR`). Then every
       path it marks `owner` must be the object `<H>` names there, and a path that `<H>` changed from `<MB>`, so the link of step 4a
       showed it; the tool compares git objects, not the printed names. It must print `SCOPE ENTRIES-ONLY` (exit 0), or, when step
       4a printed `SCOPE OWNER`, a `read <H>` line and `SCOPE OWNER` (exit 3). Anything else (`SCOPE OWNER` after an entries-only
@@ -569,9 +608,11 @@ not a phone approval, decides who can sign an index head.
 As in the desktop repository's `docs/release-checklist.md`, "Key compromise and rotation": the app pins a primary and a standby
 index key, and a rotation is an app release that pins the new pair. In addition, for this repository: after
 `rotate.sh promote index ...` the new primary goes into the `index` environment of `eve-cyno/plugins` with the command of
-"Secrets and variables" (`--repo eve-cyno/plugins`), and the vendor pin moves to the desktop commit with the new `.pub` files
-(`node tools/vendor-host.mjs --check` passes in the checkout of that change, a gate on it; the owner reads the change at the next
-approval, step 5 of "Before every index and mirror approval"). Both index keys lost is not fatal (checklist, "Keys lost, not leaked").
+"Secrets and variables" (`--repo eve-cyno/plugins`), and the vendor pin moves to the desktop commit on desktop `main` with the new
+`.pub` files (`node tools/vendor-host.mjs --check` passes in the checkout of that change, a gate on it; the owner reads the change
+at the next approval, step 5 of "Before every index and mirror approval", step 4 for a first publish, with `vendor/` read against
+the vendor check of "Owner steps before the first production publish", step 0.2, from the unmoved trusted worktree). Both index
+keys lost is not fatal (checklist, "Keys lost, not leaked").
 
 ## Measurements
 

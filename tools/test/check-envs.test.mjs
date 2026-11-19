@@ -222,6 +222,27 @@ describe('C-ENV1 the reviewer\'s login and id appear nowhere at <B>', () => {
     const repo = repoWith({ 'a.txt': 'x\n' }, temps, { later: { 'a.txt': `${REVIEWER.login}\n` } });
     assert.equal((await run({}, { repo })).ok, true);
   });
+  test('CE-identity-replace-objects: a refs/replace entry cannot show a clean commit in place of <B>', async () => {
+    const repo = repoWith({ 'docs/RUNBOOK.md': `Approved by ${REVIEWER.login} from the phone.\n` }, temps, { author });
+    const git = (input, ...a) => {
+      const r = spawnSync('git', ['-C', repo.dir, ...a], { input, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' } });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    // A commit with a clean tree and message, put in place of <B> for every git command that honours replace refs.
+    const blob = git('clean\n', 'hash-object', '-w', '--stdin');
+    const fake = git(undefined, 'commit-tree', git(`100644 blob ${blob}\tREADME.md\n`, 'mktree'), '-m', 'B');
+    git(undefined, 'replace', repo.rev, fake);
+    const r = await fails({}, /FAIL identity: .*in 1 file \(docs\/RUNBOOK\.md\)/, { repo });
+    assert.doesNotMatch(r.text, /PASS identity/);
+    // GIT_REPLACE_REF_BASE names another namespace with the same replacement: the same answer.
+    git(undefined, 'update-ref', `refs/elsewhere/${repo.rev}`, fake);
+    git(undefined, 'update-ref', '-d', `refs/replace/${repo.rev}`);
+    const { env } = stubEnv(BIN, routes(), temps);
+    const e = await checkEnvs({ rev: repo.rev, repoDir: repo.dir, env: { ...env, GIT_REPLACE_REF_BASE: 'refs/elsewhere/' } });
+    assert.equal(e.ok, false);
+    assert.match(e.lines.join('\n'), /FAIL identity: .*in 1 file \(docs\/RUNBOOK\.md\)/);
+  });
   test('CE-identity-rev-missing fails', async () => {
     await fails({}, /FAIL identity: the commit 0{40} could not be read/, { rev: '0'.repeat(40) });
   });
