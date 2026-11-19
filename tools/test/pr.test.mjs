@@ -230,18 +230,35 @@ describe('PR fixture suite', () => {
     const add = (older) => tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), ...older])] });
     const widened = tree({ entries: [pluginEntry([version('1.0.0', A100, { unlisted: true, permissions: MORE })])] });
     const widened2 = tree({ entries: [pluginEntry([version('1.1.0', A110, { unlisted: true, permissions: MORE }), version('1.0.0', A100, { unlisted: true })])] });
+    // C10 reads the version before by the base's copy of it (ESC-repin-then-add), and the widened base copy disagrees with its archive's
+    // plugin.json, so each read fails closed: a review, whatever the second pull request writes back.
     const cases = [
-      ['1.0.0 put back', widened, add([version('1.0.0', A100, { unlisted: true })]), true],
-      ['an unlisted 1.1.0 above an unlisted 1.0.0, put back', widened2, add([version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100, { unlisted: true })]), true],
-      ['1.0.0 left widened (its plugin.json disagrees with the entry: the read fails closed)', widened, add([version('1.0.0', A100, { unlisted: true, permissions: MORE })]), false],
+      ['1.0.0 put back', widened, add([version('1.0.0', A100, { unlisted: true })]), '1.0.0'],
+      ['an unlisted 1.1.0 above an unlisted 1.0.0, put back', widened2, add([version('1.1.0', A110, { unlisted: true }), version('1.0.0', A100, { unlisted: true })]), '1.1.0'],
+      ['1.0.0 left widened', widened, add([version('1.0.0', A100, { unlisted: true, permissions: MORE })]), '1.0.0'],
     ];
-    for (const [label, base, h, read] of cases) {
+    for (const [label, base, h, unread] of cases) {
       const v = await check('review', base, h, ['--author', 'example-login']);
       assert.equal(v.code, 3, `${label}\n${v.stdout}${v.stderr}`);
-      if (read) {
-        assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: /m, label);
-        assert.doesNotMatch(v.stdout, /could not be read/, `${label}: compared with the archive`);
-      } else assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel 1\.0\.0: its plugin\.json could not be read/m, label);
+      assert.match(v.stdout, new RegExp(`^FLAG escalation C10 dev\\.example\\.intel ${unread.replaceAll('.', '\\.')}: its plugin\\.json could not be read`, 'm'), label);
+      assert.equal(last(v.stdout), 'NEEDS REVIEW escalation', label);
+    }
+  });
+
+  // Re-review of the fix above (2026-11-19): for the version before an added one, C10 read the head's pin of it. One pull request that
+  // re-pins 1.0.0 (listed or unlisted) to a wider archive and adds 2.0.0 with the wider permissions needed no review; only the checks
+  // job (C8) refused it. The review job reads the base's pin of a version the base holds, so it holds without the checks job.
+  test('ESC-repin-then-add: the version before an added one is read by the base\'s pin, never by the head\'s', async () => {
+    const B100 = pluginZip(manifest({ version: '1.0.0', permissions: MORE }));
+    const Z200 = pluginZip(manifest({ version: '2.0.0', permissions: MORE }));
+    for (const z of [B100, Z200]) cacheArchive(cache, z);
+    for (const unl of [{}, { unlisted: true }]) {
+      const label = `1.0.0 re-pinned ${JSON.stringify(unl)}`;
+      const h = tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), version('1.0.0', B100, { permissions: MORE, ...unl })])] });
+      const v = await check('review', baseTree(), h, ['--author', 'example-login']);
+      assert.equal(v.code, 3, `${label}\n${v.stdout}${v.stderr}`);
+      assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: /m, label);
+      assert.doesNotMatch(v.stdout, /could not be read/, `${label}: the base's 1.0.0 is read and compared`);
       assert.equal(last(v.stdout), 'NEEDS REVIEW escalation', label);
     }
   });

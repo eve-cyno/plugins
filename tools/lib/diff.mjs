@@ -15,8 +15,9 @@ const { listingAdmit } = require(path.join(DIST, 'market', 'admit.js'));
 const { HOST_API } = require(path.join(DIST, 'manifest.js'));
 
 /**
- * What C10 reads of one version: its permissions, the optional ones in permissions.optional (check.mjs puts the archive's plugin.json
- * permissions and `background` in place of the entry's copy).
+ * What C10 reads of one version: its permissions (check.mjs puts the archive's plugin.json permissions and `background` in place of
+ * the entry's copy). Only the required permissions are compared: host `requested()` leaves out permissions.optional (it reads them
+ * only to decide whether `chatlogs` counts), and the app asks for an optional one again when the plugin requests it (plan C10, R29).
  */
 const asManifest = (v) => ({ permissions: v.permissions ?? {} });
 

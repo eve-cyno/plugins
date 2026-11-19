@@ -263,8 +263,11 @@ async function entryFlags(head, base) {
       }
       const read = new Map();
       for (const ver of need) {
+        // Against a tree, a version the base holds is read by the base's pin (its url, sha256 and size), never by the head's: a pull
+        // request that re-pins it to a wider archive would otherwise set what C10 compares with (only C8, in the checks job, refuses that).
+        const bv = b && base.kind === 'tree' && onBase(b, ver) ? b.versions.find(x => x?.version === ver) : null;
         const hv = e.versions.find(x => x.version === ver);
-        const m = hv ? await manifestOf(e, hv, onBase(b, ver)) : (b && base.kind === 'tree' ? await manifestOf(b, b.versions.find(x => x.version === ver), true) : null);
+        const m = bv ? await manifestOf(b, bv, true) : hv ? await manifestOf(e, hv, onBase(b, ver)) : null;
         if (m === null) R.flag('escalation', 'C10', `${e.id} ${ver}: its plugin.json could not be read to compare its permissions and background flag`);
         read.set(ver, m);
       }
