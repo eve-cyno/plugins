@@ -20,7 +20,10 @@ message. The commands of "Secrets and variables" move each value on stdin only. 
 account" names what any process of the agents' user can still do with the keys.
 
 **The owner never runs a decrypt command.** Every command below that decrypts a backup is run by the coordinator; the owner only
-types a value into a password dialog that a command opens.
+types a value into a password dialog that a command opens. The key backup opens only with a passphrase-protected age identity: its
+passphrase goes into one password window per run, and only into a window whose title names the script and the operation that the
+coordinator announced first, for an operation the owner asked for in this session. Any other window: Cancel and report. A passphrase
+typed into an unannounced window counts as leaked.
 
 ## Secrets and variables
 
@@ -106,14 +109,19 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   environment other than `index` and `mirror` (it lists the environments, then each other one's secrets and variables): one at
   repository or organization level reaches every job of the repository without an approval of `index` or `mirror`, and one in
   another environment reaches every job that names that environment. A list it cannot read fails closed.
-- **The key-custody residual, named exactly.** Any process of the agents' user can decrypt `signing/desktop/keys.enc.yaml` (the
-  release keys included) with the age identity under `~/.config/sops/age` and sign a head offline. The same identity decrypts the
-  infra repository's `infra/terraform/prod/secrets.enc.yaml`, encrypted to the same age recipient. That file holds no R2 key, but
-  its Cloudflare API token (`cloudflare_api_token`, which Terraform uses for the `eve-cyno-plugins` bucket) can write to the bucket.
-  So that user can reach both halves of a forged index today, the signature and the write, with no approval on the way: the phone
-  approval guards only the CI copy of the key, and needing write access to the bucket is no barrier. The fix is a
-  passphrase-protected age identity for `signing/desktop` only, so that forging needs that passphrase as well as that token; it is
-  the owner's decision. Until then the hard rule above is a rule of conduct for the agents, not a barrier.
+- **The key-custody residual, named exactly.** Since 2026-11-19 the key backup (`signing/desktop/keys.enc.yaml` in the infra
+  repository) is encrypted to an age identity of its own, protected by a passphrase that only the owner types, into a window. The
+  agents' user can no longer decrypt the backup with the age key it uses for the prod files. What remains: (1) the infra repository's
+  git history and every old clone still hold the previous backup, encrypted to the old recipient, so the keys that existed before
+  the re-key stay readable with the old identity until they are rotated (planned with the next desktop release; that rotation closes
+  this part); (2) the agents' user is the owner's user, so a process of it could show a look-alike window, edit the helper script, or read
+  the clipboard or memory while a run holds the identity, then sign a head offline: what stops it is that the owner types only into
+  announced windows, and a passphrase typed elsewhere counts as leaked; (3) the identity file can be copied, and its passphrase can
+  then be guessed offline, so its strength matters. The infra repository's Cloudflare API token (`cloudflare_api_token`, which
+  Terraform uses for the `eve-cyno-plugins` bucket) can still write to the bucket, so write access to the bucket is no barrier: a forged
+  index needs the signature, which needs the passphrase, but a stale signed head can be replayed or an index deleted without it
+  (availability and rollback, not a forgery). A hardware key for the identity is a later step. The phone approval guards only the CI
+  copy of the key. Until the keys have rotated, the hard rule above is a rule of conduct for the agents for those keys, not a barrier.
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
