@@ -319,9 +319,10 @@ Three steps come first; each is repeated in the list below. O1 is the owner's al
    view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
    `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass.
-7. **Free tier.** The R2 free-tier table (storage, Class A, Class B headroom) in the infra repository's hosting runbook is filled in
-   from the Cloudflare dashboard. The first production publish waits for it. Anything that would leave the free tier goes to the
-   owner first; the owner looks at the bucket's R2 metrics once a month.
+7. **Free tier.** The R2 free-tier table (storage, Class A, Class B headroom) in the infra repository's hosting runbook holds the
+   dashboard reading of 2026-11-18; the first production publish waits until the owner has confirmed it. Storage beyond the free
+   10 GB-month is accepted (owner, 2026-11-18); another paid product, Infrequent Access, a cache purge token or a monthly R2 bill
+   above 1 USD goes to the owner first. The owner looks at the bucket's R2 metrics once a month.
 8. **Q10, no empty head.** The first production head goes out with the first approved entry, never empty: any verified head shows the
    Marketplace to every product build.
 9. **The schedule** of `resign.yml` on this public repository is approved (owner, 2026-11-18). If it is ever withdrawn, `resign.yml`
