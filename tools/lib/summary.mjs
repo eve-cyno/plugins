@@ -1,5 +1,5 @@
 // The job summary of tools/check.mjs and tools/build-index.mjs (plan 3.2, 3.4). Every line starts with a fixed word, so text from an
-// entry, an archive or a server (a manifest field, a URL) never starts a line and never starts a workflow command (`::...`):
+// entry, an archive or a server (a manifest field, a URL) never starts a line and never holds a workflow command (`::...`, `##[...`):
 //   PASS <check> <text>          a check passed
 //   FAIL <check> <text>          a check refused (the job fails)
 //   FLAG <class> <check> <text>  a review class is set (tools/check.mjs review fails with NEEDS REVIEW <classes>)
@@ -15,8 +15,11 @@ export const CLASSES = ['new', 'escalation', 'identity', 'first-party', 'engines
 // literal separator can end up in this file.
 const UNPRINTABLE = new RegExp(`[${[[0x00, 0x1f], [0x7f, 0x9f], [0x200e, 0x200f], [0x2028, 0x202e], [0x2066, 0x2069]]
   .map(([a, b]) => `\\u${a.toString(16).padStart(4, '0')}-\\u${b.toString(16).padStart(4, '0')}`).join('')}]+`, 'g');
-/** One printable line: control characters, line and paragraph separators and bidirectional controls become spaces. */
-export const clean = (s) => String(s).replace(UNPRINTABLE, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+/**
+ * One printable line: control characters, line and paragraph separators and bidirectional controls become spaces, and every `##[`
+ * becomes `# #[` (the runner reads that older command form anywhere in a line, not only at its start as it reads `::`).
+ */
+export const clean = (s) => String(s).replace(UNPRINTABLE, ' ').replace(/\s+/g, ' ').replace(/##\[/g, '# #[').trim().slice(0, 500);
 /** Markdown text that renders as the characters it holds (no link, emphasis, code span, HTML or table cell). */
 export const md = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/([\\`*_{}[\]()#+!|~])/g, '\\$1');
 /** A workflow command's message or property, escaped as the runner unescapes it. */

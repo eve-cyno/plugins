@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, describe, test } from 'node:test';
-import { getAll, getJson, parseHttp } from '../lib/github.mjs';
+import { getAll, getJson, oneLine, parseHttp, printableLine } from '../lib/github.mjs';
 import { makeGhStub, stubEnv } from './ghstub.mjs';
 
 const temps = [];
@@ -55,5 +55,16 @@ describe('github.mjs', () => {
     assert.match(parseHttp('HTTP/2.0 403 Forbidden\r\n\r\n{}\r\n\r\nHTTP/2.0 200 OK\r\n\r\n[]').error, /more than one/);
     assert.match(parseHttp('garbage\r\n\r\n{}').error, /not an HTTP status line/);
     assert.equal(parseHttp('HTTP/2.0 403 Forbidden\r\n\r\nnot json').body, null);
+  });
+  test('GH-printable: one printable line with no "##[" anywhere (the runner\'s older command form, found anywhere in a line); "::" stays on its line', () => {
+    for (const s of ['a ##[error]x', '###[warning]y', '##[##[z', '#\n#[add-mask]w', '##[set-output name=a;]b ##[error]c']) {
+      assert.ok(!printableLine(s).includes('##['), `${JSON.stringify(s)} -> ${JSON.stringify(printableLine(s))}`);
+      assert.ok(!oneLine(s).includes('##['), JSON.stringify(s));
+    }
+    assert.equal(printableLine('a ##[error]x'), 'a # #[error]x');
+    assert.equal(printableLine('x\n::error::y\r\n::warning::z'), 'x ::error::y ::warning::z');
+    assert.equal(printableLine('  #[ok] # [ok] ## [ok]  '), '#[ok] # [ok] ## [ok]');
+    const long = oneLine(`${'#'.repeat(299)}[error]`);
+    assert.ok(long.length <= 300 && !long.includes('##['), long);
   });
 });

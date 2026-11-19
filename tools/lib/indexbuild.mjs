@@ -13,6 +13,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { checkEntry, checkIds, readEntries, toIndexSource } from './entries.mjs';
 import { downloadArchive } from './archives.mjs';
+import { oneLine } from './github.mjs';
 import { customKeys, fetchCapped, prefixProblem } from '../../vendor/eve-cyno-host/scripts/release-lib.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,9 +54,12 @@ export function runVendored(script, args, { timeoutMs = 1_800_000 } = {}) {
       (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' }));
   });
 }
-/** The lines of a vendored tool's output that say why it refused (REFUSED, FAIL, usage), at most `max`. */
+/**
+ * The lines of a vendored tool's output that say why it refused (REFUSED, FAIL, usage), at most `max`, each one oneLine (at most 300
+ * printable characters): the output may hold up to 64 MiB, and a refusal quotes these lines whole.
+ */
 export const refusalLines = (r, max = 20) => `${r.stderr}\n${r.stdout}`.split('\n').map(l => l.trim())
-  .filter(l => /^(REFUSED|FAIL|INDEX VERIFY FAILED|usage|--)/.test(l)).slice(0, max);
+  .filter(l => /^(REFUSED|FAIL|INDEX VERIFY FAILED|usage|--)/.test(l)).slice(0, max).map(oneLine);
 
 /** Every mirror read of this process shares one pace (plan 6.2: at most 50 requests per 10 s). */
 let mirrorPace = null;
@@ -214,14 +218,20 @@ const servedAnswer = (why) => why === 'HTTP 404' || /^more than \d+ bytes$/.test
 /**
  * The index served under `prefix` now, read as the app reads it: {status: 'missing'} (the head answers 404), {status: 'unreadable',
  * why} (the head, the signature or the catalog cannot be read: a failure that is not servedAnswer, so no verdict on the index;
- * "dispatch again later"), {status: 'unverified', headBytes, sigBytes?, why} (a signature or catalog that answers 404 or is over its
- * cap, and anything the keys or the app's parsers refuse; headBytes and sigBytes: the head and the signature as served, unverified, for
- * recovery R2's floor and the upload step's compare with the pair in R2 only), or {status: 'ok', headBytes, sigBytes, head,
- * catalogName, catalogBytes, catalog}. Whether the live index verifies is liveVerifies() of this answer, nothing else.
+ * "dispatch again later"), {status: 'unverified', headBytes?, sigBytes?, why} (a head over its cap, a signature or catalog that
+ * answers 404 or is over its cap, and anything the keys or the app's parsers refuse; headBytes and sigBytes: the head and the
+ * signature as served, unverified, for recovery R2's floor and the upload step's compare with the pair in R2 only; no headBytes for a
+ * head over its cap), or {status: 'ok', headBytes, sigBytes, head, catalogName, catalogBytes, catalog}. Whether the live index
+ * verifies is liveVerifies() of this answer, nothing else.
  */
 export async function readLive({ prefix, keys, pace = pacer() }) {
   const h = await getLive(`${prefix}index.json`, I.MAX_HEAD_BYTES, pace);
-  if (!h.ok) return h.why === 'HTTP 404' ? { status: 'missing' } : { status: 'unreadable', why: `index.json: ${h.why}` };
+  if (!h.ok) {
+    if (h.why === 'HTTP 404') return { status: 'missing' };
+    // A head over its cap is served (the app refuses it): a verdict, so recovery R2 opens; any other failure is none.
+    const why = `index.json: ${h.why}`;
+    return servedAnswer(h.why) ? { status: 'unverified', why } : { status: 'unreadable', why };
+  }
   const s = await getLive(`${prefix}index.json.minisig`, I.MAX_INDEX_SIG_BYTES, pace);
   if (!s.ok) {
     const why = `index.json.minisig: ${s.why}`;

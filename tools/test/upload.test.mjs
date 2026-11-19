@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { throwawaySigner } from '../lib/throwaway.mjs';
-import { LIFETIME_MS } from '../lib/indexbuild.mjs';
+import { LIFETIME_MS, refusalLines } from '../lib/indexbuild.mjs';
 import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 import { makeStubBin, md5Etag, object, pointStub, readAwsLog, readBucket, s3Calls, serveBucket, writeBucket } from './awsstub.mjs';
 import { stubEnv } from './ghstub.mjs';
@@ -407,7 +407,8 @@ describe('upload: refusals before any write', () => {
 
   test('REFUSED-one-line: a refusal whose text holds line breaks is one REFUSED line in build-index.mjs and upload.mjs; no line starts a workflow command', async () => {
     // A local path is text the tools print in a refusal: the output folder of build-index.mjs, a --key file of upload.mjs.
-    const evil = 'x\n::error title=injected::injected\r\n::warning::second';
+    // The runner reads its older command form, ##[...], anywhere in a line, so that never reaches the log either.
+    const evil = 'x\n::error title=injected::injected\r\n::warning::second ##[error]legacy';
     const dir = tempDir('oneline');
     const out = path.join(dir, `out${evil}`);
     fs.mkdirSync(out);
@@ -420,9 +421,10 @@ describe('upload: refusals before any write', () => {
     for (const [name, r, tail] of [['build-index.mjs', b, 'exists: write into a new folder'], ['upload.mjs', u, 'cannot be read']]) {
       const lines = `${r.stdout}\n${r.stderr}`.split(/\r\n|\r|\n/);
       assert.ok(lines.every(l => !l.trimStart().startsWith('::')), `${name}: no line starts a workflow command: ${JSON.stringify(lines)}`);
+      assert.ok(lines.every(l => !l.includes('##[')), `${name}: no line holds the older command form: ${JSON.stringify(lines)}`);
       const refused = r.stderr.split('\n').filter(l => l.startsWith('REFUSED: '));
       assert.equal(refused.length, 1, `${name}: ${JSON.stringify(r.stderr)}`);
-      assert.match(refused[0], new RegExp(`injected .*second.*${esc(tail)}`), `${name}: the whole refusal on its one line`);
+      assert.match(refused[0], new RegExp(`injected .*second # #\\[error\\]legacy.*${esc(tail)}`), `${name}: the whole refusal on its one line`);
     }
   });
 });
@@ -940,6 +942,49 @@ describe('recovery R2 (repair: true)', () => {
       assert.match(next.stdout, /^BASE live /m, 'the live index verifies again: the next run is a normal one');
     });
 
+    test('LIVE-head-over-cap: a live head over its cap (an R2 writer\'s) is LIVE UNVERIFIED on a normal run and opens the repair in build and upload', async () => {
+      const big = object(Buffer.alloc(I.MAX_HEAD_BYTES + 1, 0x20), 'application/json', 'no-cache');
+      const sc = scenario({ live: { ...objectsOf('A'), [HEAD]: big }, input: 'NR', routes: repairRoutes() });
+      const nb = await normalBase(sc, path.join(sc.dir, 'normal'));
+      assert.equal(nb.code, 1, nb.stdout + nb.stderr);
+      assert.match(nb.stderr, new RegExp(`^REFUSED: LIVE UNVERIFIED: index\\.json: more than ${I.MAX_HEAD_BYTES} bytes; recovery R2 `, 'm'));
+      const nu = await upload(sc);
+      assert.equal(nu.code, 1, nu.out);
+      assert.match(nu.out, /^REFUSED: LIVE UNVERIFIED: the live head and signature do not verify .*; recovery R2 /m);
+      assert.equal(nu.puts.length, 0);
+      assert.doesNotMatch(nb.stderr + nu.out, /dispatch again later/, 'a head over its cap is a verdict, never "dispatch again later"');
+      const out = path.join(sc.dir, 'base');
+      const b = await base(sc, out);
+      assert.equal(b.code, 0, b.stdout + b.stderr);
+      assert.match(b.stdout, new RegExp(`^NOTE REPAIR: the live index does not verify \\(index\\.json: more than ${I.MAX_HEAD_BYTES} bytes\\)`, 'm'));
+      assert.match(b.stdout, /^BASE REPAIR run 290 /m);
+      const c = await compare(sc, out, 'NR', '\n');
+      assert.equal(c.code, 0, c.stdout + c.stderr);
+      const u = await upload(sc, 'repair');
+      assert.equal(u.code, 0, u.out);
+      assert.match(u.last, /^PUBLISHED .*REPAIR/);
+      assert.deepEqual(u.puts.slice(-2).map(p => [p.key, p.ifMatch]), [[SIG, objectsOf('A')[SIG].etag], [HEAD, big.etag]], 'the pair, on the live ETags (the head\'s from its size check)');
+      assert.deepEqual(bytesOf(u.bucket, HEAD), ix.NR.head);
+    });
+
+    test('LIVE-catalog-over-cap: a live catalog over the size its head names is LIVE UNVERIFIED in build and upload and opens the repair', async () => {
+      const key = catKeyOf('A');
+      const A = objectsOf('A');
+      const over = object(Buffer.concat([bytesOf(A, key), Buffer.from(' ')]), 'application/json', IMMUTABLE);
+      const sc = scenario({ live: { ...A, [key]: over }, input: 'NR', routes: repairRoutes() });
+      const want = new RegExp(`^REFUSED: LIVE UNVERIFIED: ${esc(key.slice(3))}: more than ${bytesOf(A, key).length} bytes; recovery R2 `, 'm');
+      const nb = await normalBase(sc, path.join(sc.dir, 'normal'));
+      assert.equal(nb.code, 1, nb.stdout + nb.stderr);
+      assert.match(nb.stderr, want);
+      const nu = await upload(sc);
+      assert.equal(nu.code, 1, nu.out);
+      assert.match(nu.out, want, 'the upload step refuses on the same definition, with the same way out');
+      assert.equal(nu.puts.length, 0);
+      const b = await base(sc, path.join(sc.dir, 'base'));
+      assert.equal(b.code, 0, b.stdout + b.stderr);
+      assert.match(b.stdout, /^BASE REPAIR run 290 /m);
+    });
+
     test('LIVE-archive-swapped: other bytes under a live archive leave the index verifying: upload refuses swapped, repair is NOT BROKEN; once the owner deletes the object a normal run restores it', async () => {
       const key = `v1/archives/${sha(A100)}.zip`;
       const live = objectsOf('A');
@@ -1013,7 +1058,7 @@ describe('recovery R2 (repair: true)', () => {
     test('LIVE-edge-not-bucket: an index served that is not the pair in R2 (an edge behind the bucket, or one serving other bytes) is "dispatch again later" for a publish and a re-sign; nothing is written', async () => {
       const A0 = objectsOf('A0');
       const live = { ...objectsOf('A'), [catKeyOf('A0')]: A0[catKeyOf('A0')] }; // A0's pair, served alone, verifies over its catalog
-      const want = /^REFUSED: the index served over the prefix is not the head and signature in R2 .*dispatch again later$/m;
+      const want = /^REFUSED: the index served over the prefix is not the head and signature in R2 .*dispatch again later(; if it persists past ~10 min: a security event \(docs\/RUNBOOK\.md, REPLAYED\))?$/m;
       for (const edge of [{ [HEAD]: A0[HEAD], [SIG]: A0[SIG] }, { [SIG]: A0[SIG] }, { [HEAD]: null }, { [SIG]: null }]) {
         const what = JSON.stringify(Object.keys(edge));
         const u = await upload(scenario({ live, input: 'B', edge }));
@@ -1026,6 +1071,39 @@ describe('recovery R2 (repair: true)', () => {
         assert.match(r.out, want, what);
         assert.equal(r.puts.length, 0, what);
       }
+    });
+
+    test('LIVE-edge-older-pair: an older pair that verifies, served in place of the pair in R2, names both generated times and the security event; over a broken R2 pair it never sends the owner round LIVE UNVERIFIED -> repair -> NOT BROKEN', async () => {
+      const A0 = objectsOf('A0');
+      const edge = { [HEAD]: A0[HEAD], [SIG]: A0[SIG] };
+      const g = (name) => esc(JSON.parse(ix[name].head).generated);
+      const security = '; if it persists past ~10 min: a security event \\(docs/RUNBOOK\\.md, REPLAYED\\)$';
+      const served = `\\(served: a pair that verifies, the head generated ${g('A0')}; R2: `;
+      // The pair in R2 verifies: a publish waits for the edge, and is told when waiting is no longer the answer.
+      const ok = await upload(scenario({ live: { ...objectsOf('A'), [catKeyOf('A0')]: A0[catKeyOf('A0')] }, input: 'B', edge }));
+      assert.equal(ok.code, 1, ok.out);
+      assert.match(ok.out, new RegExp(`^REFUSED: the index served over the prefix is not the head and signature in R2 ${served}the head generated ${g('A')}\\): .*dispatch again later${security}`, 'm'));
+      assert.equal(ok.puts.length, 0);
+      // The pair in R2 does not verify (HR's head, A's signature): the same refusal, not LIVE UNVERIFIED and recovery R2, which the build
+      // job (it reads the index served only) would refuse as NOT BROKEN.
+      const live = { ...broken(), [catKeyOf('A0')]: A0[catKeyOf('A0')] };
+      const want = new RegExp(`^REFUSED: the index served over the prefix is not the head and signature in R2 ${served}the head generated ${g('HR')}, `
+        + `a pair that does not verify\\): .*dispatch again later${security}`, 'm');
+      const n = await upload(scenario({ live, input: 'B', edge }));
+      assert.equal(n.code, 1, n.out);
+      assert.match(n.out, want);
+      assert.doesNotMatch(n.out, /LIVE UNVERIFIED/);
+      assert.equal(n.puts.length, 0);
+      const rs = scenario({ live, input: 'NR', routes: repairRoutes(), edge });
+      const rb = await base(rs, path.join(rs.dir, 'base'));
+      assert.equal(rb.code, 1, rb.stdout + rb.stderr);
+      assert.match(rb.stderr, /^REFUSED: NOT BROKEN: /m, 'the build job reads the index served only');
+      const ru = await upload(rs, 'repair');
+      assert.equal(ru.code, 1, ru.out);
+      assert.match(ru.out, want, 'the upload step compares the index served with R2 before NOT BROKEN');
+      assert.doesNotMatch(ru.out, /NOT BROKEN/);
+      assert.equal(ru.puts.length, 0);
+      assert.equal(rs.ghLog().length, 0, 'GitHub is not asked');
     });
 
     test('PB-resign-catalog-edge-only: a live catalog gone from R2 but still served from the edge cache is never re-signed; other bytes under its name are swapped', async () => {
@@ -1075,6 +1153,17 @@ describe('long refusals and usage errors', () => {
       assert.ok(at < line.indexOf('revocation on main only: dev.example.bad *'), `${name}: the way out comes before the differences: ${line}`);
       assert.match(line, /; 2 more\)$/, `${name}: the differences, five and a count of the rest, at the end`);
     }
+  });
+
+  test('REFUSED-vendored-capped: each line of a vendored tool\'s refusal is cut to 300 printable characters, so one line of its output never fills the REFUSED line', () => {
+    const huge = `REFUSED: ${'x'.repeat(1024 * 1024)}`;
+    const lines = refusalLines({ stderr: `${huge}\nnoise\n`, stdout: `FAIL ##[error]legacy ${'y'.repeat(1000)}\nINDEX VERIFY FAILED: short\n` });
+    assert.equal(lines.length, 3, JSON.stringify(lines.map(l => l.slice(0, 40))));
+    assert.ok(lines.every(l => l.length <= 300), `every line at most 300 characters: ${lines.map(l => l.length)}`);
+    assert.match(lines[0], /^REFUSED: x+$/);
+    assert.match(lines[1], /^FAIL # #\[error\]legacy y+$/);
+    assert.equal(lines[2], 'INDEX VERIFY FAILED: short');
+    assert.ok(refusalLines({ stderr: Array.from({ length: 30 }, () => huge).join('\n'), stdout: '' }).join(' | ').length <= 20 * 303, 'at most 20 lines of at most 300');
   });
 
   test('USAGE-one-line: a usage error whose text holds line breaks prints no line that starts a workflow command, in build-index.mjs and upload.mjs', async () => {

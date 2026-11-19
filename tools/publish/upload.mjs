@@ -22,7 +22,10 @@
 //     the app reads them), and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). The index served must be the
 //     pair just read from R2, byte for byte (an edge behind the bucket, or one serving other bytes, is no verdict on it), and a read
 //     over the prefix that fails for another reason than HTTP 404 or more bytes than its cap (a 429 or 503, a network error, a
-//     time-out, a redirect) is none either: "dispatch again later", in every mode, repair included. A
+//     time-out, a redirect) is none either: "dispatch again later", in every mode, repair included. An index served that verifies
+//     but is not the pair in R2 (whether that pair verifies or not) names both generated times and, past ~10 minutes, is a security
+//     event (REPLAYED); never LIVE UNVERIFIED or NOT BROKEN, which would send the owner round recovery R2, whose build job reads only
+//     the index served. A
 //     missing head is a first publish only when GitHub shows no run with an approved index and a successful sign (a signed head
 //     may have gone live; tools/approved-base.mjs, fail closed; never for resign). Resign: the new head names the live head's catalog, and that catalog
 //     is the one main builds (MAIN DIVERGES otherwise: re-signing a replayed older head would make it fresh again; plan section 8,
@@ -185,16 +188,41 @@ const oldSig = await r2.get(SIG_KEY, I.MAX_INDEX_SIG_BYTES);
 let firstPublish = false;
 if (oldHead.status === 'error') refuse(`the live head cannot be read (${oldHead.why}): nothing was written; dispatch again later`);
 if (oldSig.status === 'error') refuse(`the live signature cannot be read (${oldSig.why}): nothing was written; dispatch again later`);
+const pairVerifies = oldHead.status === 'ok' && oldSig.status === 'ok' && verifies(oldHead.bytes, oldSig.bytes);
+const isBucket = (served, o) => Buffer.isBuffer(served) && o.status === 'ok' && served.equals(o.bytes);
+/** Whether the index served over the prefix (a readLive() answer) is the head and signature just read from R2, byte for byte. */
+const servedIsBucket = (liveIndex) => isBucket(liveIndex.headBytes, oldHead) && isBucket(liveIndex.sigBytes, oldSig);
+/**
+ * Refuses a run whose index served over the prefix is not the pair in R2: an edge behind the bucket, or one serving other bytes, is no
+ * verdict on it. Both sides are named. A pair served that verifies, older or not, is a replay once it persists, and never a reason for
+ * recovery R2: the build job reads the index served only and would refuse the repair as NOT BROKEN.
+ */
+function notTheBucket(liveIndex) {
+  const served = liveIndex.status === 'missing' ? 'its head answers HTTP 404'
+    : liveVerifies(liveIndex) ? `a pair that verifies, the head generated ${liveIndex.head.generated}` : liveIndex.why;
+  let inR2;
+  if (oldHead.status === 'missing') inR2 = 'no head';
+  else if (oldHead.status !== 'ok') inR2 = `a head over ${I.MAX_HEAD_BYTES} bytes`;
+  else {
+    try { inR2 = `the head generated ${I.parseIndexHead(oldHead.bytes, P).generated}${pairVerifies ? '' : ', a pair that does not verify'}`; } catch { inR2 = 'a head the app refuses'; }
+  }
+  refuse(`the index served over the prefix is not the head and signature in R2 (served: ${served}; R2: ${inR2}): an edge cache behind the bucket, `
+    + 'or one serving other bytes, is no verdict on it; nothing was written; dispatch again later'
+    + `${liveVerifies(liveIndex) ? '; if it persists past ~10 min: a security event (docs/RUNBOOK.md, REPLAYED)' : ''}`);
+}
 if (target === 'test') {
   R.note(`target test: the live test pair is ${oldHead.status === 'missing' ? 'missing (a first test publish)' : 'not checked (an earlier run\'s throwaway key) and is replaced on its ETags'}`);
 } else if (repair) {
   // The build job's definition (liveVerifies), not the pair alone: a pair that verifies over a catalog that is gone is repaired here.
+  // A live index that verifies is NOT BROKEN only when it is the pair in R2; one the edge serves in its place is notTheBucket.
   const liveIndex = await readLive({ prefix: P, keys });
-  if (liveVerifies(liveIndex)) refuse(notBroken(liveIndex, keyText));
+  if (liveVerifies(liveIndex)) {
+    if (!servedIsBucket(liveIndex)) notTheBucket(liveIndex);
+    refuse(notBroken(liveIndex, keyText));
+  }
   if (liveIndex.status === 'unreadable') refuse(`the live index cannot be read (${liveIndex.why}): nothing was written; dispatch again later`);
   const runId = process.env.GITHUB_RUN_ID ?? '';
   if (!/^[1-9][0-9]{0,15}$/.test(runId)) refuse('REPAIR: no run id (GITHUB_RUN_ID) is set to find the candidate runs (fail closed)');
-  const pairVerifies = oldHead.status === 'ok' && oldSig.status === 'ok' && verifies(oldHead.bytes, oldSig.bytes);
   const state = oldHead.status === 'missing' ? 'is missing' : !pairVerifies ? 'and signature do not verify'
     : `and signature verify, but the live index does not (${liveIndex.why ?? 'its head answers HTTP 404 over the prefix'})`;
   R.note(`REPAIR: the live head ${state}; the base comes from the candidate runs' artifacts, computed again here`);
@@ -223,19 +251,16 @@ if (target === 'test') {
   firstPublish = true;
   R.note(`first publish: no live head, and no run has an approved index with a successful sign; ${oldSig.status === 'missing' ? 'no signature' : 'an orphan signature of an earlier first publish'} is live`);
 } else {
-  if (oldHead.status !== 'ok' || oldSig.status !== 'ok' || !verifies(oldHead.bytes, oldSig.bytes)) {
-    refuse(`LIVE UNVERIFIED: the live head and signature do not verify with ${keyText}; ${R2}`);
-  }
   // The build job's definition (liveVerifies): the pair in the bucket verifies, and so must the index served, its catalog included. The
   // index served must be that pair: an edge behind the bucket, or one serving other bytes, says nothing about what is in R2.
   const liveIndex = await readLive({ prefix: P, keys });
-  if (liveIndex.status === 'unreadable') refuse(`the live index cannot be read (${liveIndex.why}): nothing was written; dispatch again later`);
-  const isBucket = (served, o) => Buffer.isBuffer(served) && o.status === 'ok' && served.equals(o.bytes);
-  if (!isBucket(liveIndex.headBytes, oldHead) || !isBucket(liveIndex.sigBytes, oldSig)) {
-    const seen = liveIndex.status === 'missing' ? 'its head answers HTTP 404' : liveIndex.status === 'ok' ? 'another pair that verifies' : liveIndex.why;
-    refuse(`the index served over the prefix is not the head and signature in R2 (${seen}): an edge cache behind the bucket, or one serving `
-      + 'other bytes, is no verdict on it; nothing was written; dispatch again later');
+  if (!pairVerifies) {
+    // An index served that verifies over a pair in R2 that does not: recovery R2 would be NOT BROKEN in the build job.
+    if (liveVerifies(liveIndex)) notTheBucket(liveIndex);
+    refuse(`LIVE UNVERIFIED: the live head and signature do not verify with ${keyText}; ${R2}`);
   }
+  if (liveIndex.status === 'unreadable') refuse(`the live index cannot be read (${liveIndex.why}): nothing was written; dispatch again later`);
+  if (!servedIsBucket(liveIndex)) notTheBucket(liveIndex);
   if (!liveVerifies(liveIndex)) refuse(`LIVE UNVERIFIED: ${liveIndex.why}; ${R2}`);
   const live = I.parseIndexHead(oldHead.bytes, P);
   const dg = Date.parse(head.generated) - Date.parse(live.generated);
