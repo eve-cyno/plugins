@@ -807,6 +807,39 @@ describe('recovery R2 (repair: true)', () => {
     assert.equal(sc.ghLog().length, 0);
   });
 
+  test('PB-repair-empty-live-head: a 0-byte live object (a ranged GET answers InvalidRange) reads as empty bytes and never blocks a repair', async () => {
+    const empty = object(Buffer.alloc(0), 'application/json', 'no-cache');
+    for (const live of [{ ...broken(), [HEAD]: empty }, { ...broken(), [HEAD]: empty, [SIG]: { ...empty, contentType: 'text/plain' } }]) {
+      const u = await upload(scenario({ live, input: 'NR', routes: repairRoutes() }), 'repair');
+      assert.equal(u.code, 0, u.out);
+      assert.match(u.last, /^PUBLISHED .*REPAIR/);
+      assert.equal(u.puts.find(p => p.key === HEAD).ifMatch, md5Etag(Buffer.alloc(0)), 'If-Match on the empty head\'s ETag');
+      assert.equal(u.puts.find(p => p.key === SIG).ifMatch, live[SIG].etag);
+      assert.ok(u.calls.some(c => c.op === 'head-object' && c.key === HEAD), 'the empty object\'s ETag comes from head-object');
+      assert.match(u.out, /REPAIR: the live head and signature do not verify/);
+    }
+    const p = await upload(scenario({ live: { ...broken(), [HEAD]: empty }, input: 'NR', routes: repairRoutes() }));
+    assert.equal(p.code, 1, p.out);
+    assert.match(p.out, /LIVE UNVERIFIED: the live head and signature do not verify/, 'without repair: recovery R2, never "dispatch again later"');
+    assert.doesNotMatch(p.out, /cannot be read/);
+    const grown = { op: 'head-object', key: HEAD, nth: 1, before: { [HEAD]: b64('x') } };
+    const raced = await upload(scenario({ live: { ...broken(), [HEAD]: empty }, input: 'NR', routes: repairRoutes(), faults: [grown] }), 'repair');
+    assert.equal(raced.code, 1, raced.out);
+    assert.match(raced.out, /the live head cannot be read \(.*not a 0-byte object/, 'an object that is not empty at head-object is never read as empty');
+    assert.equal(raced.puts.length, 0);
+    const gone = await upload(scenario({ live: { ...broken(), [HEAD]: empty }, input: 'NR', routes: repairRoutes(), faults: [{ ...grown, before: { [HEAD]: null } }] }), 'repair');
+    assert.equal(gone.code, 1, gone.out);
+    assert.match(gone.out, /the live head cannot be read \(get-object answered InvalidRange and head-object missing: /);
+    assert.equal(gone.puts.length, 0);
+    const noEtag = await upload(scenario({ live: { ...broken(), [HEAD]: empty }, input: 'NR', routes: repairRoutes(), faults: [{ op: 'head-object', key: HEAD, nth: 1, result: 'no-etag' }] }), 'repair');
+    assert.equal(noEtag.code, 1, noEtag.out);
+    assert.match(noEtag.out, /the live head cannot be read \(get-object answered InvalidRange and head-object named no ETag\)/);
+    assert.equal(noEtag.puts.length, 0);
+    const net = await upload(scenario({ live: { ...broken(), [HEAD]: empty }, input: 'NR', routes: repairRoutes(), faults: [{ op: 'head-object', key: HEAD, nth: 1, result: 'network' }] }), 'repair');
+    assert.equal(net.code, 0, `one network error of head-object is retried once\n${net.out}`);
+    assert.equal(net.calls.filter(c => c.op === 'head-object' && c.key === HEAD).length >= 2, true);
+  });
+
   test('PB-repair-r1-no-restore: a head PUT that did not land restores nothing over a pair that never verified', async () => {
     const lost = (nth) => ({ op: 'put-object', key: HEAD, nth, result: 'network-lost' });
     const r = await upload(scenario({ live: broken(), input: 'NR', routes: repairRoutes(), faults: [lost(1), lost(2)] }), 'repair');

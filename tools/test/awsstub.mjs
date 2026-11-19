@@ -1,12 +1,13 @@
-// A stub `aws` for the tests of tools/publish/ (plan task 2.4): an R2 bucket kept in one JSON file, answered through the two s3api
-// calls the upload step makes (get-object with a byte range, put-object with --if-match or --if-none-match) and the runner-image
+// A stub `aws` for the tests of tools/publish/ (plan task 2.4): an R2 bucket kept in one JSON file, answered through the s3api calls
+// the upload step makes (get-object with a byte range, which a 0-byte object answers with InvalidRange as S3 and R2 do; head-object;
+// put-object with --if-match or --if-none-match) and the runner-image
 // check (--version, put-object --generate-cli-skeleton). It is written beside the stub gh of ghstub.mjs into a temp folder that is the
 // only entry of PATH the tools see, so the real aws and gh are never found: no network, no credential. The upload step gives aws a
 // minimal environment of its own, so the stub finds the case's bucket file and log through aws-paths.json beside it (pointStub()).
 // Every call is appended to the log with the credential variables the call saw (the tests set fake values only). Faults script a lost answer, a 412, a network error or
-// another writer: { op: 'put-object' | 'get-object', key, nth (1-based count of that op on that key), result?, before?, after? }, where
-// `before` and `after` are { key: bytes (base64) | null } written into the bucket before the call is answered or after it took effect.
-// result: get-object 'network' | 'error'; put-object 'network-landed' | 'network-lost' | '412' | 'error' | 'no-etag' (the write
+// another writer: { op: 'put-object' | 'get-object' | 'head-object', key, nth (1-based count of that op on that key), result?, before?,
+// after? }, where `before` and `after` are { key: bytes (base64) | null } written into the bucket before the call is answered or after
+// it took effect. result: get-object and head-object 'network' | 'error', head-object also 'no-etag'; put-object 'network-landed' | 'network-lost' | '412' | 'error' | 'no-etag' (the write
 // lands and the answer names no ETag).
 // serveBucket() serves the same file over http://127.0.0.1 as the custom domain serves the bucket: each object with its stored
 // Cache-Control, Content-Type and ETag, 404 for a missing key.
@@ -50,7 +51,7 @@ const fault = st.faults.find((f) => f.op === op && f.key === key && f.nth === co
 entry.fault = fault ? (fault.result ?? 'writer') : null;
 const apply = (m) => { for (const [k, v] of Object.entries(m ?? {})) { if (v === null) delete st.objects[k]; else st.objects[k] = { b64: v, etag: etag(Buffer.from(v, 'base64')), contentType: 'application/octet-stream', cacheControl: '' }; } };
 const net = () => { log(); save(); process.stderr.write('\\nCould not connect to the endpoint URL: "https://stub.invalid/' + key + '"\\n'); process.exit(255); };
-const service = (code, msg) => { log(); save(); process.stderr.write('\\nAn error occurred (' + code + ') when calling the ' + (op === 'put-object' ? 'PutObject' : 'GetObject') + ' operation: ' + msg + '\\n'); process.exit(254); };
+const service = (code, msg) => { log(); save(); process.stderr.write('\\nAn error occurred (' + code + ') when calling the ' + ({ 'put-object': 'PutObject', 'head-object': 'HeadObject' }[op] ?? 'GetObject') + ' operation: ' + msg + '\\n'); process.exit(254); };
 if (fault) apply(fault.before);
 if (op === 'get-object') {
   if (fault?.result === 'network') net();
@@ -58,6 +59,7 @@ if (op === 'get-object') {
   const o = st.objects[key];
   if (!o) service('NoSuchKey', 'The specified key does not exist.');
   const all = Buffer.from(o.b64, 'base64');
+  if (opt('--range') !== undefined && all.length === 0) service('InvalidRange', 'The requested range is not satisfiable');
   const m = /^bytes=0-(\\d+)$/.exec(opt('--range') ?? '');
   const b = m ? all.subarray(0, Number(m[1]) + 1) : all;
   fs.writeFileSync(argv[argv.length - 1], b);
@@ -65,6 +67,17 @@ if (op === 'get-object') {
   log(); save();
   process.stdout.write(JSON.stringify({ AcceptRanges: 'bytes', ContentLength: b.length, ContentRange: 'bytes 0-' + (b.length - 1) + '/' + all.length,
     ETag: o.etag, CacheControl: o.cacheControl, ContentType: o.contentType, Metadata: {} }, null, 4) + '\\n');
+  process.exit(0);
+}
+if (op === 'head-object') {
+  if (fault?.result === 'network') net();
+  if (fault?.result === 'error') service('InternalError', 'We encountered an internal error. Please try again.');
+  const o = st.objects[key];
+  if (!o) service('404', 'Not Found');
+  if (fault) apply(fault.after);
+  log(); save();
+  process.stdout.write(JSON.stringify({ AcceptRanges: 'bytes', ContentLength: Buffer.from(o.b64, 'base64').length,
+    ...(fault?.result === 'no-etag' ? {} : { ETag: o.etag }), CacheControl: o.cacheControl, ContentType: o.contentType, Metadata: {} }, null, 4) + '\\n');
   process.exit(0);
 }
 if (op === 'put-object') {

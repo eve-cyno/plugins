@@ -5,7 +5,10 @@
 // standard AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, never as an argument. Text that aws prints is cut to one line and has both
 // values replaced by *** before anyone sees it.
 // - Reads are get-object with a byte range (never more than `max` + 1 bytes reach the disk): {status: 'ok', bytes, etag},
-//   {status: 'too-large', etag} (more than `max` bytes), {status: 'missing'} (no such key) or {status: 'error', why}.
+//   {status: 'too-large', etag} (more than `max` bytes), {status: 'missing'} (no such key) or {status: 'error', why}. A 0-byte object
+//   answers a ranged GET with InvalidRange (HTTP 416); then head-object must show ContentLength 0 and an ETag, and the read is
+//   {status: 'ok', bytes: <empty>, etag}, so an empty live object is read as one and never blocks a repair. Any other head-object
+//   answer, a missing object included, is an error.
 // - Writes are put-object, always conditional (--if-match <ETag> or --if-none-match '*'), with the object's Content-Type and
 //   Cache-Control: {status: 'ok', etag (null when the answer named none)} or {status: 'precondition' (412) | 'missing' | 'network' |
 //   'error', why}.
@@ -79,8 +82,26 @@ export function r2Client(creds, { workDir, timeoutMs = 600_000 }) {
     } catch (e) { resolve({ error: `aws could not start: ${oneLine(e.message)}` }); }
   });
   const whyOf = (r, k) => (r.error ? r.error : `${k}: ${redact(r.stderr || `aws exited ${r.code}`)}`);
+  /** True when a get-object answer is InvalidRange (HTTP 416): what a ranged GET of a 0-byte object answers. */
+  const invalidRange = (r) => !r.error && !r.timedOut && r.code !== 0 && /\((?:InvalidRange|416)\)/.test(r.stderr ?? '');
   const s3 = (op, key) => ['s3api', op, '--endpoint-url', endpoint, '--bucket', creds.bucket, '--key', key, '--output', 'json'];
   let n = 0;
+  /** The read of a key whose ranged GET answered InvalidRange: ok with empty bytes when head-object shows a 0-byte object, else an error. */
+  const readEmpty = async (key) => {
+    for (let attempt = 1; ; attempt++) {
+      const r = await aws(s3('head-object', key));
+      const k = kindOf(r);
+      if (k === 'network' && attempt === 1) continue;
+      if (k !== 'ok') return { status: 'error', why: `get-object answered InvalidRange and head-object ${whyOf(r, k)}` };
+      let h;
+      try { h = JSON.parse(r.stdout); } catch { return { status: 'error', why: 'get-object answered InvalidRange and head-object answered no JSON' }; }
+      if (h === null || typeof h !== 'object' || h.ContentLength !== 0) {
+        return { status: 'error', why: `get-object answered InvalidRange, but head-object shows not a 0-byte object (ContentLength ${oneLine(JSON.stringify(h?.ContentLength))})` };
+      }
+      if (typeof h.ETag !== 'string' || h.ETag === '') return { status: 'error', why: 'get-object answered InvalidRange and head-object named no ETag' };
+      return { status: 'ok', bytes: Buffer.alloc(0), etag: h.ETag };
+    }
+  };
 
   return {
     endpoint,
@@ -112,6 +133,7 @@ export function r2Client(creds, { workDir, timeoutMs = 600_000 }) {
         if (k === 'network' && attempt === 1) continue;
         try {
           if (k === 'missing') return { status: 'missing' };
+          if (invalidRange(r)) return await readEmpty(key);
           if (k !== 'ok') return { status: 'error', why: whyOf(r, k) };
           let etag;
           try { etag = JSON.parse(r.stdout).ETag; } catch { return { status: 'error', why: 'get-object answered no JSON' }; }
