@@ -209,7 +209,7 @@ async function getLive(url, max, pace, timeoutMs = I.INDEX_TIMEOUT_MS) {
  * The index served under `prefix` now, read as the app reads it: {status: 'missing'} (the head answers 404), {status: 'unreadable',
  * why} (the head cannot be read), {status: 'unverified', headBytes, why} (anything the keys or the app's parsers refuse, the catalog
  * included; headBytes: the head as served, unverified, for recovery R2's floor only), or {status: 'ok', headBytes, sigBytes, head,
- * catalogName, catalogBytes, catalog}.
+ * catalogName, catalogBytes, catalog}. Whether the live index verifies is liveVerifies() of this answer, nothing else.
  */
 export async function readLive({ prefix, keys, pace = pacer() }) {
   const h = await getLive(`${prefix}index.json`, I.MAX_HEAD_BYTES, pace);
@@ -226,6 +226,20 @@ export async function readLive({ prefix, keys, pace = pacer() }) {
   try { catalog = I.parseCatalog(c.bytes, v.head, { prefix }); } catch (e) { return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: the app refuses it (${e?.message ?? 'bad_index'})` }; }
   return { status: 'ok', headBytes: h.bytes, sigBytes: s.bytes, head: v.head, catalogName, catalogBytes: c.bytes, catalog };
 }
+
+/**
+ * The one definition of "the live index verifies", on a readLive() answer: the head and its signature verify with the keys, and the
+ * catalog the head names is served, is the size and SHA-256 the head names and is one the app parses. The archives are not part of
+ * it: one the mirror holds with other bytes is the upload step's refusal (swapped). build-index.mjs base (LIVE UNVERIFIED without
+ * repair, NOT BROKEN with it), resign-check and resign, and tools/publish/upload.mjs (production, resign and repair) decide on it
+ * alone, so a live pair that verifies over a catalog that is gone is LIVE UNVERIFIED on a normal run and repaired by recovery R2,
+ * never refused by both.
+ */
+export const liveVerifies = (live) => live?.status === 'ok';
+
+/** The refusal of a repair (recovery R2) whose live index verifies (liveVerifies), in the same words in build-index.mjs and upload.mjs. */
+export const notBroken = (live, keyText) => `NOT BROKEN: the live index verifies with ${keyText} (the head generated ${live.head.generated}, ${live.catalogName}); `
+  + 'repair (recovery R2) is only for a live index that does not verify: dispatch publish.yml without repair';
 
 /** One live archive `name` (archives/<name>.zip) of `size` bytes into `file`, checked against `sha`: null, or why it failed. */
 export async function fetchArchive(prefix, name, size, sha, file, pace) {

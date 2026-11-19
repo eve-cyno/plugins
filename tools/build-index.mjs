@@ -13,7 +13,8 @@
 //     The base of a publish: the live index, verified with the pinned index keys (catalog.json, index.json, index.json.minisig and
 //     BASE.json). target test: no live compare (plan 4.2), an empty base. A live head that answers 404 is a first publish only when
 //     GitHub shows no run with an approved index and a successful sign (tools/approved-base.mjs; fail closed); otherwise,
-//     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED.
+//     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED. "The live index verifies" has one definition,
+//     liveVerifies in tools/lib/indexbuild.mjs (the head, its signature and the catalog the head names), which upload.mjs uses too.
 //     --repair true (recovery R2, target production only): refused with NOT BROKEN when the live index verifies. Otherwise the base is
 //     the newest verified candidate run's head, signature and catalog from GitHub's artifacts (tools/lib/repairbase.mjs; the live
 //     index never is), with the union of the verified candidates' revocations and the floor in BASE.json (kind repair). A missing
@@ -39,9 +40,10 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from './lib/summary.mjs';
+import { oneLine } from './lib/github.mjs';
 import {
-  LIFETIME_MS, PREFIXES, ROOT, buildIndex, fetchArchive, headBoundsProblem, indexKeys, pacer, prefixProblem, readJson, readLive,
-  refusalLines, revKey, runVendored, sha256, treeDiff,
+  LIFETIME_MS, PREFIXES, ROOT, buildIndex, fetchArchive, headBoundsProblem, indexKeys, liveVerifies, notBroken, pacer, prefixProblem,
+  readJson, readLive, refusalLines, revKey, runVendored, sha256, treeDiff,
 } from './lib/indexbuild.mjs';
 
 const require = createRequire(import.meta.url);
@@ -94,10 +96,14 @@ function end(code, verdict) {
   R.finish(verdict, { title, file: a.summary });
   process.exit(code);
 }
-/** Ends the run refused: REFUSED on stderr (and in the summary), exit 1; `cleanup` folders are removed first. */
+/**
+ * Ends the run refused: REFUSED on stderr (and in the summary), exit 1; `cleanup` folders are removed first. `why` is printed as one
+ * line of printable ASCII (oneLine), so no text it carries (a path, a server's answer, a vendored tool's output) starts a line of its
+ * own, a workflow command (`::`) included.
+ */
 function refuse(why, ...cleanupDirs) {
   for (const d of cleanupDirs) fs.rmSync(d, { recursive: true, force: true });
-  console.error(`REFUSED: ${why}`);
+  console.error(`REFUSED: ${oneLine(why)}`);
   R.fail('build-index', why);
   end(1, `REFUSED ${cmd}`);
 }
@@ -119,6 +125,7 @@ const keysOrUsage = () => {
   if (k.why) usage(k.why);
   return k.keys;
 };
+const keyText = a.key ? 'the --key keys' : 'the pinned index keys';
 const newFolder = (dir) => {
   if (fs.existsSync(dir)) refuse(`${dir} exists: write into a new folder`);
   fs.mkdirSync(path.dirname(path.resolve(dir)), { recursive: true });
@@ -150,9 +157,7 @@ function writeEmptyBase(out, kind, prefix) {
 async function stepRepairBase(out, prefix) {
   const keys = keysOrUsage();
   const live = await readLive({ prefix, keys });
-  if (live.status === 'ok') {
-    refuse(`NOT BROKEN: the live index verifies with the index keys (generated ${live.head.generated}); repair (recovery R2) is only for a live index that does not verify: dispatch publish.yml without repair`);
-  }
+  if (liveVerifies(live)) refuse(notBroken(live, keyText));
   if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to repair against; dispatch again later`);
   const runId = process.env.GITHUB_RUN_ID ?? '';
   if (!/^[1-9][0-9]{0,15}$/.test(runId)) refuse('REPAIR: no run id (GITHUB_RUN_ID) is set to find the candidate runs (fail closed)');
@@ -202,7 +207,7 @@ async function stepBase() {
     end(0, 'BASE first publish (empty)');
   }
   if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to compare with; dispatch again later`);
-  if (live.status !== 'ok') refuse(`LIVE UNVERIFIED: ${live.why}; ${R2}`);
+  if (!liveVerifies(live)) refuse(`LIVE UNVERIFIED: ${live.why}; ${R2}`);
   newFolder(out);
   fs.writeFileSync(path.join(out, 'index.json'), live.headBytes);
   fs.writeFileSync(path.join(out, 'index.json.minisig'), live.sigBytes);
@@ -278,7 +283,7 @@ async function stepResignCheck() {
   const prefix = a.prefix ?? PREFIXES.production;
   const live = await readLive({ prefix, keys: keysOrUsage() });
   if (live.status === 'missing') refuse(`the live head answers HTTP 404: resign never makes a first publish or repairs (publish.yml, or ${R2})`);
-  if (live.status !== 'ok') refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
+  if (!liveVerifies(live)) refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
   const now = Date.now(), g = Date.parse(live.head.generated), x = Date.parse(live.head.expires);
   const needed = now - g >= RESIGN_AT_MS || x - now < RESIGN_AT_MS;
   R.pass('live', `the live head verifies: generated ${live.head.generated} (${Math.floor((now - g) / DAY)} days ago), expires ${live.head.expires} (in ${Math.floor((x - now) / DAY)} days)`);
@@ -296,7 +301,7 @@ async function stepResign() {
   const pace = pacer();
   const live = await readLive({ prefix, keys: keysOrUsage(), pace });
   if (live.status === 'missing') refuse(`the live head answers HTTP 404: nothing to re-sign (publish.yml, or ${R2})`);
-  if (live.status !== 'ok') refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
+  if (!liveVerifies(live)) refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
   refuseUnlessMain(live.catalog);
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'evecyno-resign-'));
   try {

@@ -29,6 +29,7 @@ const DAY = 86_400_000;
 const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const b64 = (b) => Buffer.from(b).toString('base64');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const temps = [];
 const BIN = makeStubBin(temps);
@@ -383,6 +384,27 @@ describe('upload: refusals before any write', () => {
     const noRun = await upload(scenario({ live, gh: 'none', env: { GITHUB_RUN_ID: '' } }));
     assert.equal(noRun.code, 1, noRun.out);
     assert.equal(noRun.puts.length, 0);
+  });
+
+  test('REFUSED-one-line: a refusal whose text holds line breaks is one REFUSED line in build-index.mjs and upload.mjs; no line starts a workflow command', async () => {
+    // A local path is text the tools print in a refusal: the output folder of build-index.mjs, a --key file of upload.mjs.
+    const evil = 'x\n::error title=injected::injected\r\n::warning::second';
+    const dir = tempDir('oneline');
+    const out = path.join(dir, `out${evil}`);
+    fs.mkdirSync(out);
+    const b = await run('tools/build-index.mjs', ['base', '--target', 'test', '--repair', 'false', '--out', out]);
+    assert.equal(b.code, 1, JSON.stringify(b.stdout + b.stderr));
+    const sc = scenario();
+    const u = await run(TOOL, ['--target', 'production', '--repair', 'false', '--in', sc.inDir, '--prefix', P, '--key', path.join(dir, `key${evil}.pub`)], { env: sc.env });
+    assert.equal(u.code, 1, JSON.stringify(u.stdout + u.stderr));
+    assert.deepEqual(readAwsLog(sc.awsLog), [], 'refused before any aws call');
+    for (const [name, r, tail] of [['build-index.mjs', b, 'exists: write into a new folder'], ['upload.mjs', u, 'cannot be read']]) {
+      const lines = `${r.stdout}\n${r.stderr}`.split(/\r\n|\r|\n/);
+      assert.ok(lines.every(l => !l.trimStart().startsWith('::')), `${name}: no line starts a workflow command: ${JSON.stringify(lines)}`);
+      const refused = r.stderr.split('\n').filter(l => l.startsWith('REFUSED: '));
+      assert.equal(refused.length, 1, `${name}: ${JSON.stringify(r.stderr)}`);
+      assert.match(refused[0], new RegExp(`injected .*second.*${esc(tail)}`), `${name}: the whole refusal on its one line`);
+    }
   });
 });
 
@@ -849,5 +871,89 @@ describe('recovery R2 (repair: true)', () => {
     const s = await upload(scenario({ live: broken(), input: 'NR', routes: repairRoutes(), faults: [{ op: 'put-object', key: SIG, nth: 1, result: '412' }] }), 'repair');
     assert.equal(s.code, 1, s.out);
     assert.match(s.last, /^UNCHANGED: the live index still does not verify/);
+  });
+
+  // Fable finding 4: one definition of "the live index verifies" (liveVerifies in tools/lib/indexbuild.mjs: the head, its signature and
+  // the catalog the head names) in build-index.mjs base, with and without repair, and in upload.mjs, so no state is refused by one step
+  // and taken by the other.
+  describe('one definition of "the live index verifies"', () => {
+    const catKeyOf = (name) => `v1/${JSON.parse(ix[name].head).catalog.url.slice(P.length)}`;
+    const normalBase = (sc, out) => run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'false', '--out', out, '--summary', sc.summary, '--prefix', P, '--key', PUB], { env: sc.env });
+    /** A's live index with its catalog object gone: the head and its signature still verify. */
+    const catalogGone = () => { const live = objectsOf('A'); delete live[catKeyOf('A')]; return live; };
+
+    test('LIVE-catalog-missing-normal-refuses: a live pair that verifies over a missing catalog is LIVE UNVERIFIED in build and upload alike', async () => {
+      const sc = scenario({ live: catalogGone(), input: 'NR' });
+      const want = new RegExp(`^REFUSED: LIVE UNVERIFIED: ${esc(catKeyOf('A').slice(3))}: HTTP 404; recovery R2 `, 'm');
+      const b = await normalBase(sc, path.join(sc.dir, 'base'));
+      assert.equal(b.code, 1, b.stdout + b.stderr);
+      assert.match(b.stderr, want);
+      assert.ok(!fs.existsSync(path.join(sc.dir, 'base')));
+      const u = await upload(sc);
+      assert.equal(u.code, 1, u.out);
+      assert.match(u.out, want, 'the upload step refuses on the same definition, with the same way out');
+      assert.equal(u.puts.length, 0, 'nothing is written');
+      assert.deepEqual(u.calls.map(c => [c.op, c.key]), [['get-object', HEAD], ['get-object', SIG]], 'refused at the live read, before any archive is read');
+      assert.equal(sc.ghLog().length, 0, 'a live head: GitHub is not asked');
+    });
+
+    test('LIVE-catalog-missing-repair-publishes: the same state is repaired: build passes, upload writes the new catalog and the pair', async () => {
+      const sc = scenario({ live: catalogGone(), input: 'NR', routes: repairRoutes() });
+      const out = path.join(sc.dir, 'base');
+      const b = await base(sc, out);
+      assert.equal(b.code, 0, b.stdout + b.stderr);
+      assert.match(b.stdout, /^NOTE REPAIR: the live index does not verify \(catalog\/[0-9a-f]{64}\.json: HTTP 404\)/m);
+      assert.match(b.stdout, /^BASE REPAIR run 290 /m);
+      const c = await compare(sc, out, 'NR', '\n');
+      assert.equal(c.code, 0, c.stdout + c.stderr);
+      const u = await upload(sc, 'repair');
+      assert.equal(u.code, 0, u.out);
+      assert.match(u.last, /^PUBLISHED .*REPAIR/);
+      assert.match(u.out, /^NOTE REPAIR: the live head and signature verify, but the live index does not \(catalog\/[0-9a-f]{64}\.json: HTTP 404\)/m);
+      const catKey = catKeyOf('NR');
+      const cat = u.puts.find(p => p.key === catKey);
+      assert.deepEqual([cat?.ifNoneMatch, cat?.cacheControl], ['*', IMMUTABLE], 'the new catalog, create-only');
+      const A = objectsOf('A');
+      assert.deepEqual(u.puts.slice(-2).map(p => [p.key, p.ifMatch]), [[SIG, A[SIG].etag], [HEAD, A[HEAD].etag]], 'then the pair, on the live ETags');
+      assert.deepEqual(bytesOf(u.bucket, catKey), fs.readFileSync(path.join(ix.NR.dir, ...catKey.slice(3).split('/'))));
+      assert.deepEqual(bytesOf(u.bucket, HEAD), ix.NR.head);
+      assert.deepEqual(bytesOf(u.bucket, SIG), ix.NR.sig);
+      const next = await normalBase(sc, path.join(sc.dir, 'next'));
+      assert.equal(next.code, 0, next.stdout + next.stderr);
+      assert.match(next.stdout, /^BASE live /m, 'the live index verifies again: the next run is a normal one');
+    });
+
+    test('LIVE-archive-swapped: other bytes under a live archive leave the index verifying: upload refuses swapped, repair is NOT BROKEN; once the owner deletes the object a normal run restores it', async () => {
+      const key = `v1/archives/${sha(A100)}.zip`;
+      const live = objectsOf('A');
+      live[key] = object(Buffer.from('not the archive'), 'application/zip', IMMUTABLE);
+      const sc = scenario({ live, input: 'B' });
+      const b = await normalBase(sc, path.join(sc.dir, 'base'));
+      assert.equal(b.code, 0, b.stdout + b.stderr);
+      assert.match(b.stdout, /^BASE live /m, 'the head, its signature and the catalog verify; archives are not part of the definition');
+      const u = await upload(sc);
+      assert.equal(u.code, 1, u.out);
+      assert.match(u.out, new RegExp(`^REFUSED: the mirror holds another file under ${esc(key.slice(3))} .*swapped in R2`, 'm'));
+      assert.equal(u.puts.length, 0, 'nothing is written');
+      const rs = scenario({ live, input: 'NR', routes: repairRoutes() });
+      const notBroken = new RegExp(`^REFUSED: NOT BROKEN: the live index verifies with the --key keys \\(the head generated ${esc(JSON.parse(ix.A.head).generated)}, `
+        + `${esc(catKeyOf('A').slice(3))}\\); repair \\(recovery R2\\) is only for a live index that does not verify: dispatch publish\\.yml without repair$`, 'm');
+      const rb = await base(rs, path.join(rs.dir, 'base'));
+      assert.equal(rb.code, 1, rb.stdout + rb.stderr);
+      assert.match(rb.stderr, notBroken);
+      const ru = await upload(rs, 'repair');
+      assert.equal(ru.code, 1, ru.out);
+      assert.match(ru.out, notBroken, 'the upload step refuses on the same definition, in the same words');
+      assert.equal(ru.puts.length, 0);
+      assert.equal(rs.ghLog().length, 0, 'GitHub is not asked for a live index that verifies');
+      // The owner looks into it and deletes the object (docs/RUNBOOK.md); a normal run then uploads the archive again, create-only.
+      delete live[key];
+      const n = await upload(scenario({ live, input: 'B' }));
+      assert.equal(n.code, 0, n.out);
+      assert.match(n.last, /^PUBLISHED /);
+      const p = n.puts.find(x => x.key === key);
+      assert.deepEqual([p?.ifNoneMatch, p?.cacheControl], ['*', IMMUTABLE]);
+      assert.deepEqual(bytesOf(n.bucket, key), A100);
+    });
   });
 });
