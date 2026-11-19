@@ -107,9 +107,12 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   repository or organization level reaches every job of the repository without an approval of `index` or `mirror`, and one in
   another environment reaches every job that names that environment. A list it cannot read fails closed.
 - **The key-custody residual, named exactly.** Any process of the agents' user can decrypt `signing/desktop/keys.enc.yaml` (the
-  release keys included) with the age identity under `~/.config/sops/age` and sign a head offline; the phone approval guards only
-  the CI copy of the key; publishing such a head would still need R2 write; the key-custody fix (a passphrase-protected age identity
-  for `signing/desktop` only) is the owner's decision. So the hard rule above is a rule of conduct for the agents, not a barrier.
+  release keys included) with the age identity under `~/.config/sops/age` and sign a head offline. The same identity decrypts the
+  infra repository's `prod/secrets.enc.yaml`, encrypted to the same age recipient, whose R2 keys can write to the bucket. So that
+  user can reach both halves of a forged index today, the signature and the write, with no approval on the way: the phone approval
+  guards only the CI copy of the key, and needing R2 write is no barrier. The fix is a passphrase-protected age identity for
+  `signing/desktop` only, so that forging needs that passphrase as well as an R2 key; it is the owner's decision. Until then the hard
+  rule above is a rule of conduct for the agents, not a barrier.
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
@@ -251,7 +254,8 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 4. **First publish only** (the tool says `FIRST PUBLISH`, there is no `<A>`): allowed only while no entry of your list has a
    successful `sign` (a signed head may have gone live, as recovery R2 counts it). After such an entry, a run that calls itself a
    first publish means **no approval**. When GitHub shows such a run but none with a successful `upload`, the tool says `NOT A FIRST
-   PUBLISH`: then only a repair run (`repair: true`, step 6) may be approved, read as this step says, since there is no `<A>`. Read every file other
+   PUBLISH`: then only a repair run (`repair: true`, step 6) may be approved, read as this step says, since there is no `<A>`
+   (once that run is 90 days old, not even that: "Recovery R2", a dead end at 90 days). Read every file other
    than the `entries/<id>.json` files and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`),
    `package-lock.json` included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop
    checkout> --rev <pinned commit>` output.
@@ -420,14 +424,25 @@ those artifacts (or has it expired) **stops the repair**, so a deleted artifact 
 head only raises the floor of `generated`. The approvals follow the steps above, step 6 included. If the repair stops, or no candidate
 verifies, the owner follows the emergency path.
 
+**A dead end at 90 days.** `tools/approved-base.mjs` has no age limit, but the repair takes only runs younger than 90 days as
+candidates (their artifacts' retention). So when the only runs with an approved `index` and a successful `sign` never had a
+successful `upload` (a first publish that signed but did not go live: `unchanged` or `FIRST-PUBLISH ORPHAN` in recovery R1), and the
+newest of them is 90 days old or more, the tool says `NOT A FIRST PUBLISH` (only a repair may follow) while a repair run stops with
+`NO VERIFIED BASE` (no candidate). Neither a first publish nor a repair can then be approved: the owner follows the emergency path.
+To stay out of it, dispatch the repair run while that run is younger than 90 days.
+
 ## Emergency path (plan 5.4)
 
-If `eve-cyno/plugins` or its Actions are unusable, the coordinator re-sets the desktop signing secrets from the backup
-(`scripts/desktop-signing-secrets.sh` in the infra repository: it decrypts into tmpfs and pipes each value to `gh secret set` on
-stdin; the owner runs no decrypt command). Then the desktop repository's `docs/release-checklist.md`, "The plugin index", is followed
-by hand: the coordinator builds with the vendored tools; the owner runs `scripts/release-sign.sh` with purpose `index`, which only
-dispatches the desktop `sign.yml` (it signs in CI after his approval, decrypts nothing and reads no secret) and verifies the
-signature it downloads; the owner uploads with his own Cloudflare login.
+If `eve-cyno/plugins` or its Actions are unusable, the coordinator sets the two index secrets of `eve-cyno/desktop` again from the
+backup, and nothing else: `scripts/desktop-signing-rotate.sh secrets index index --repo eve-cyno/desktop` in the infra repository.
+It proves the index primary against its `.pub` and the key the app pins, decrypts into tmpfs and pipes `MINISIGN_INDEX_KEY` and
+`MINISIGN_INDEX_PASSWORD` to `gh secret set` on stdin; the owner runs no decrypt command. (`scripts/desktop-signing-secrets.sh` is not
+used here: it sets the two release secrets too.) Then the desktop repository's `docs/release-checklist.md`, "The plugin index", is
+followed by hand: the coordinator builds with the vendored tools; the owner runs `scripts/release-sign.sh` with purpose `index`,
+which only dispatches the desktop `sign.yml` (it decrypts nothing and reads no secret) and verifies the signature it downloads; the
+owner uploads with his own Cloudflare login. `sign.yml` has no `environment:` and asks for no approval: its first step lets only a
+login listed in the desktop repository's Actions variable `RELEASE_SIGNERS` sign, and only on `main`. So on this path that list,
+not a phone approval, decides who can sign an index head.
 
 ## Rotation (plan 4.4)
 
