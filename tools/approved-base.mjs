@@ -4,7 +4,8 @@
 // - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that has an approval of
 //   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
 //   both concluded success (GET .../actions/runs/<id>/jobs, the run's latest attempt), with one "skip" line for every newer run and
-//   why it does not count;
+//   why it does not count; a newer run on a later attempt than its first (a re-run) is an ERROR, since the jobs list shows only that
+//   attempt;
 // - the compare status of <A> to <B> (GET .../compare/<A>...<B>) and the compare view to read.
 // The reviewer is the only required reviewer of environment index, read now from GitHub (tools/lib/reviewer.mjs); no login or id is
 // written in the repository, and this tool prints neither. Fail closed: any request that fails, a list that did not come back whole,
@@ -55,9 +56,15 @@ export function notOnMain(run) {
 /**
  * A run's review state: { why } when it has no approval of environment index by the user `id` (the environment's reviewer), else
  * { why: '', sign, upload }, each '' when the run has exactly one job of that name and it concluded success, or why not. Throws
- * { error } on a failed request.
+ * { error } on a failed request, and on a run whose run_attempt is not 1 (a re-run): GitHub lists the jobs of a run's latest attempt
+ * only, and a later attempt fails at its first step, so an earlier attempt that signed and uploaded would read as skipped.
  */
 export async function reviewRun(run, id, opts) {
+  if (run.run_attempt !== 1) {
+    throw { error: `${label(run)} is attempt ${oneLine(run.run_attempt ?? 'unknown')} of that run, not its first: GitHub lists the jobs of `
+      + "a run's latest attempt only, so whether an earlier attempt signed or uploaded cannot be read here. Read every attempt on the run "
+      + 'page and against your own list (docs/RUNBOOK.md, a re-run)' };
+  }
   const ap = await getJson(`${R}/actions/runs/${run.id}/approvals`, opts);
   if (ap.error) throw ap;
   if (!Array.isArray(ap.value)) throw { error: `${R}/actions/runs/${run.id}/approvals: the answer is not a list` };

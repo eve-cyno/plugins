@@ -97,7 +97,7 @@ function inputOf(name, dest, { testPub = false, head } = {}) {
 }
 
 const GH = 'repos/eve-cyno/plugins';
-const ghRun = (id, sha40, created) => ({ id, path: '.github/workflows/publish.yml', head_branch: 'main', head_sha: sha40, created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}` });
+const ghRun = (id, sha40, created) => ({ id, path: '.github/workflows/publish.yml', head_branch: 'main', head_sha: sha40, run_attempt: 1, created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}` });
 /** gh answers for run 300 (the run under review): no other run (a first publish), an approved and uploaded run 200, or a failing list. */
 function ghRoutes(kind) {
   const under = ghRun(300, 'b'.repeat(40), '2026-12-10T10:00:00Z');

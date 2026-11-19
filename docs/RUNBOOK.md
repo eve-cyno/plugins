@@ -204,7 +204,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 
    It reads the reviewer from environment `index`, and prints `<B>`, one `skip` line per newer run with the reason, `<A>` with its
    run, the compare status and the compare link. Exit 0: `<A>` found, status `ahead` or `identical`; 1: `NO APPROVAL` or `ERROR` (a
-   failed request, an incomplete list or an environment without exactly one reviewer is an error, never "no approved run"); 3:
+   failed request, an incomplete list or an environment without exactly one reviewer is an error, never "no approved run"; so is a
+   newer run on a later attempt than its first, a re-run: GitHub lists the jobs of a run's latest attempt only, and a re-run's
+   attempt fails at its first step, so an earlier attempt that signed and uploaded would look skipped); 3:
    `FIRST PUBLISH` (step 4). The tool is a convenience: confirm on `<A>`'s run page that the `index` approval shown is your own.
    The agents' token cannot write an approval record or change who may approve, so an approval by the owner's account means the
    owner approved, on his phone.
@@ -359,7 +361,7 @@ input names it exactly, one `<id> <versions>` per line; `build` fails otherwise.
 
 | Where | What it means | What to do |
 |---|---|---|
-| `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run |
+| `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run. From then on `approved-base.mjs` and the repair base stop with an ERROR at that run (GitHub lists the latest attempt's jobs only): the owner reads each of its attempts on the run page against his list and finds `<A>` by hand while that run is newer than `<A>` |
 | `build` or `head` | a check failed, or the commit is no longer `main`'s head | read the summary; fix through a pull request; dispatch a new run |
 | `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; set the `index` secrets again with the command of "Secrets and variables" and check the head; dispatch a new run |
 | `upload`, a 412 | someone changed the live index during the run | stop; find out who wrote it (R2 audit, other runs) before anything else; then dispatch a new run |

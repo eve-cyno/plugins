@@ -177,6 +177,16 @@ describe('recovery R2: the candidates and the base', () => {
     assert.deepEqual(unionKeys(r), [revKey(R1), revKey(R2)].sort());
   });
 
+  test('PB-repair-rerun-error: a run on a later attempt is an ERROR, never a skipped candidate (its earlier attempt may have signed)', async () => {
+    const rerun = runOf(295, 'publish.yml', 0.5, index(NOW - DAY / 2, [R0]), { sign: 'skipped', upload: 'skipped' });
+    rerun.run.run_attempt = 2;
+    const r = await collect([rerun, H(), A()]);
+    assert.equal(r.ok, false, r.text);
+    assert.match(r.why, /^ERROR: run 295 \(publish\.yml, created [^)]*\) is attempt 2 of that run, not its first: /);
+    assert.deepEqual(r.zipCalls, [], 'nothing is downloaded');
+    assert.ok(!r.calls.some((c) => c.startsWith(`${R}/actions/runs/295/`)), 'nothing of the re-run is read');
+  });
+
   test('PB-repair-90-days: a run created 90 days ago or more is never a candidate, so its expired artifacts do not stop the repair', async () => {
     const old = runOf(250, 'publish.yml', 91, index(NOW - 91 * DAY, [R0]), { upload: 'failure', expired: ['head', 'signature', 'catalog'] });
     const r = await collect([H(), old]);

@@ -131,6 +131,22 @@ describe('approved-base: direction and failures', () => {
     assert.match(r.text, /^FIRST PUBLISH: /m);
     assert.match(r.text, /only while your own list has no entry with a successful upload/);
   });
+  test('AB-rerun-error: a listed run on a later attempt is an ERROR, never a skip (GitHub lists the jobs of the latest attempt only)', async () => {
+    // Attempt 1 may have signed and uploaded; attempt 2 fails at its first step, so its jobs list shows sign and upload skipped.
+    const rerun = (attempt, approvals) => ({ run: { ...run(254, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), run_attempt: attempt }, approvals,
+      jobs: jobs(254, [['build', 'failure'], ['sign', 'skipped'], ['upload', 'skipped'], ['verify', 'skipped']]) });
+    const approved = [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])];
+    for (const x of [rerun(2, approved), rerun(3, []), rerun(undefined, approved)]) {
+      const r = await call({ under: UNDER, others: [x, GOOD] });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, new RegExp(`^ERROR: run 254 \\(publish\\.yml, created [^)]*\\) is attempt ${x.run.run_attempt ?? 'unknown'} of that run, not its first: `, 'm'));
+      assert.match(r.text, /the jobs of a run's latest attempt only/);
+      assert.doesNotMatch(r.text, /^A /m, 'no older run becomes <A> past a re-run');
+      assert.ok(!r.calls.some((a) => a[a.length - 1].startsWith(`${R}/actions/runs/254/`)), 'nothing of the re-run is read');
+    }
+    const under = await call({ under: { ...UNDER, run: { ...UNDER.run, run_attempt: 2 } }, others: [GOOD] });
+    assert.equal(under.code, 0, `the run under review is not reviewed here (its own first step refuses a re-run)\n${under.text}`);
+  });
   test('AB-pagination-incomplete: a run list that did not complete fails closed', async () => {
     const r = await call({ under: UNDER, others: [GOOD], publishPages: [{ total_count: 150, workflow_runs: [UNDER.run, GOOD.run] }] });
     assert.equal(r.code, 1);
