@@ -233,8 +233,8 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    PUBLISH` (step 4) or `ERROR` (a
    failed request, an incomplete list or an environment without exactly one reviewer is an error, never "no approved run"); 3:
    `FIRST PUBLISH` (step 4). A re-run counts by its attempt 1: every job refuses any attempt but the first, so the tool reads the
-   jobs of every attempt (`jobs?filter=all`, each job names its attempt) and judges attempt 1's `sign` and `upload`. Whether GitHub
-   lists the approvals of every attempt of a re-run, or of the latest attempt only, is **not verified** ("Measurements"). So a
+   jobs of every attempt (`jobs?filter=all`, each job names its attempt) and judges attempt 1's `sign` and `upload`. GitHub lists the
+   approvals of the latest attempt only (measured on 2026-11-19, "Measurements"): a re-run's list does not show attempt 1's approval. So a
    re-run without an `index` approval (a re-run `target: test` run, say) is skipped only once its jobs show that attempt 1's `sign`
    did not succeed; `sign` is the job that asks for the `index` approval, so one that succeeded with no approval listed is an
    `ERROR`. It is an `ERROR` too when a re-run's attempt 1 cannot be read from the jobs list (a job without a valid attempt, no job of
@@ -465,4 +465,4 @@ Recorded once, on real runs; until then they are open.
 | Does a run waiting for approval hold the `index-sign` group? | a `target: test` run waiting at `mirror`, then a second dispatch | not measured yet |
 | How long does a pending approval stay open? | the same run, within the 35-day run cap | at least 57 minutes: run 44491400412 waited at `mirror` from 08:54Z (`sign-test` done) to the owner's approval at 09:51Z on 2026-11-19, still open; the upper bound is not measured |
 | Probe answers of both tokens | `tools/check-envs.mjs` after the token swap | see "The agents' token" |
-| Does `GET .../actions/runs/<id>/approvals` list the approvals of every attempt of a re-run, or of the latest attempt only? | on the first `target: test` dispatch: after its `mirror` approval and its end, the owner re-runs it once, the only exception to "No run is ever re-run" (every job fails at its first step, so nothing is built, signed or uploaded), and the coordinator reads its approvals list and its `jobs?filter=all` | not measured yet; until then the tools assume the latest attempt only (see "Before every index and mirror approval", step 2) |
+| Does `GET .../actions/runs/<id>/approvals` list the approvals of every attempt of a re-run, or of the latest attempt only? | on the first `target: test` dispatch: after its `mirror` approval and its end, the owner re-runs it once, the only exception to "No run is ever re-run" (every job fails at its first step, so nothing is built, signed or uploaded), and the coordinator reads its approvals list and its `jobs?filter=all` | the latest attempt only (2026-11-19): run 44491400412 had `mirror` approved by the owner in attempt 1; after the owner's one re-run, `GET .../approvals` returned an empty list, `jobs?filter=all` showed attempt 2's `build` failed at its first step (`Refuse a re-run`) and every other attempt-2 job skipped, and no approval was requested. The tools' assumption holds |

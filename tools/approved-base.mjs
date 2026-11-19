@@ -64,8 +64,8 @@ const BY_HAND = 'read every attempt on the run page and against your own list (d
  * Every job refuses any attempt but the first at its first step, so only attempt 1 can sign or upload: the jobs are read for every
  * attempt (filter=all; each job names its run_attempt) and attempt 1 is judged, so a re-run's skipped sign and upload never hide what
  * attempt 1 did. A first attempt without the approval is skipped before its jobs are read. A re-run without it is skipped only after
- * its jobs show that attempt 1's sign did not succeed: whether GitHub lists the approvals of every attempt of a re-run, or of the
- * latest only, is not verified yet (docs/RUNBOOK.md, Measurements), and job sign is what asks for the index approval, so a sign of
+ * its jobs show that attempt 1's sign did not succeed: GitHub lists the approvals of the latest attempt only (measured 2026-11-19,
+ * docs/RUNBOOK.md, Measurements), and job sign is what asks for the index approval, so a sign of
  * attempt 1 that succeeded means the list lacks it. Throws { error } on a failed request, and on a re-run or approved run that names no
  * valid run_attempt, a job that names no attempt from 1 to the run's, a re-run whose list holds no job of attempt 1, a job sign or
  * upload of a later attempt that concluded success, a re-run whose attempt 1 signed without a listed approval, and an approved run
