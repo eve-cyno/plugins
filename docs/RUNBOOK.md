@@ -108,11 +108,12 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   another environment reaches every job that names that environment. A list it cannot read fails closed.
 - **The key-custody residual, named exactly.** Any process of the agents' user can decrypt `signing/desktop/keys.enc.yaml` (the
   release keys included) with the age identity under `~/.config/sops/age` and sign a head offline. The same identity decrypts the
-  infra repository's `prod/secrets.enc.yaml`, encrypted to the same age recipient, whose R2 keys can write to the bucket. So that
-  user can reach both halves of a forged index today, the signature and the write, with no approval on the way: the phone approval
-  guards only the CI copy of the key, and needing R2 write is no barrier. The fix is a passphrase-protected age identity for
-  `signing/desktop` only, so that forging needs that passphrase as well as an R2 key; it is the owner's decision. Until then the hard
-  rule above is a rule of conduct for the agents, not a barrier.
+  infra repository's `infra/terraform/prod/secrets.enc.yaml`, encrypted to the same age recipient. That file holds no R2 key, but
+  its Cloudflare API token (`cloudflare_api_token`, which Terraform uses for the `eve-cyno-plugins` bucket) can write to the bucket.
+  So that user can reach both halves of a forged index today, the signature and the write, with no approval on the way: the phone
+  approval guards only the CI copy of the key, and needing write access to the bucket is no barrier. The fix is a
+  passphrase-protected age identity for `signing/desktop` only, so that forging needs that passphrase as well as that token; it is
+  the owner's decision. Until then the hard rule above is a rule of conduct for the agents, not a barrier.
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
