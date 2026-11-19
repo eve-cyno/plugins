@@ -104,7 +104,7 @@ jobs:
           node tools/base-tree.mjs --rev "$base" --out "$RUNNER_TEMP/base"
           echo "base $base, head $(git rev-parse HEAD)"
 
-      - name: Name the review classes (C3 first-party, C10, C11, C13, C14)
+      - name: Name the review classes (C3 first-party, C10, C11, C13, C14, C15, C17, revoked)
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node tools/check.mjs review --base "$RUNNER_TEMP/base" --head . --author "$PR_AUTHOR" --summary "$GITHUB_STEP_SUMMARY"
