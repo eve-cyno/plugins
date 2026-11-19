@@ -417,6 +417,21 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
     const late = { ...lp, merge: git(lp.dir, 'hash-object', '--literally', '-t', 'commit', '-w', obj) };
     assert.equal(git(lp.dir, 'rev-list', '--parents', '-n', '1', late.merge), `${late.merge} ${lp.base}`, 'the premise: git reads one parent');
     assertNotTheMerge(await readGate(late), late, 1);
+    // A third parent line whose id is uppercase hex: git reads it as a parent (an octopus), so a parser that stops there and sees
+    // only <B> and <H> would pass it. A parent line it cannot read is an error.
+    const up = merged({ prFiles });
+    git(up.dir, 'checkout', '-q', '-b', 'rider', 'main');
+    write(up.dir, { 'entries/dev.example.rider.json': entry('dev.example.rider') });
+    const rider = commit(up.dir, 'another pull request');
+    const uobj = path.join(tempDir('obj'), 'commit');
+    fs.writeFileSync(uobj, `tree ${git(up.dir, 'rev-parse', `${up.merge}^{tree}`)}\nparent ${up.base}\nparent ${up.head}\nparent ${rider.toUpperCase()}\n`
+      + 'author test <test@example.invalid> 1 +0000\ncommitter test <test@example.invalid> 1 +0000\n\nan octopus\n');
+    const upper = { ...up, merge: git(up.dir, 'hash-object', '--literally', '-t', 'commit', '-w', uobj) };
+    assert.equal(git(up.dir, 'rev-list', '--parents', '-n', '1', upper.merge), `${upper.merge} ${up.base} ${up.head} ${rider}`, 'the premise: git reads three parents');
+    const ures = await readGate(upper);
+    assert.equal(ures.code, 1, ures.stdout + ures.stderr);
+    assert.match(ures.stderr, new RegExp(`^ERROR commit ${upper.merge} has a parent line that does not name a full lowercase id`, 'm'));
+    assert.doesNotMatch(ures.stdout, /^SCOPE/m);
   });
 
   test('SCOPE-read-parents-replace: a refs/replace entry cannot make another commit look like the merge of <H> on <B>', async () => {
@@ -444,5 +459,13 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
       assert.match(res.stderr, /^--read must name a commit by all 40 \(or 64\) hex digits/m);
       assert.doesNotMatch(res.stdout, /^SCOPE/m);
     }
+    // 64 hex digits in a SHA-1 repository name no object, so git reads them as a ref name: a tag of that name must not stand in
+    // for <H>, even one that points at it.
+    const tag = 'a'.repeat(64);
+    git(m.dir, 'tag', tag, m.head);
+    const byTag = await readGate(m, tag);
+    assert.equal(byTag.code, 1, byTag.stdout + byTag.stderr);
+    assert.match(byTag.stderr, /^ERROR --read a{64} resolves to [0-9a-f]{40}, not to itself/m);
+    assert.doesNotMatch(byTag.stdout, /^SCOPE/m);
   });
 });

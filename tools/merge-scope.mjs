@@ -104,7 +104,8 @@ function changesOf(repoDir, from, to, env) {
  * The parents of commit `oid` as its own object names them, in order: { parents } or { why }. It reads the commit object (git
  * cat-file commit, replace refs off), so a graft or a refs/replace entry cannot change the list. It parses the header as git does:
  * the first line is `tree <oid>`, and the parents are only the `parent <oid>` lines directly after it; the first other line ends
- * them, so a `parent` line further down (after the author line, say) is no parent to git and none here.
+ * them, so a `parent` line further down (after the author line, say) is no parent to git and none here. A `parent ` line in that
+ * run whose id is not 40 or 64 lowercase hex is an error.
  */
 function parentsOf(repoDir, oid, env) {
   const r = git(repoDir, ['cat-file', 'commit', oid], env);
@@ -113,8 +114,11 @@ function parentsOf(repoDir, oid, env) {
   if (!/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(lines[0])) return { why: `commit ${oid} does not start with a tree line` };
   const parents = [];
   for (const l of lines.slice(1)) {
+    if (!l.startsWith('parent ')) break;
+    // git also reads an id it would not write (uppercase hex, say) as a parent; one this parser cannot read is an error, never
+    // the end of the list, or an octopus would read as the merge of <H> on <B>.
     const m = /^parent ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(l);
-    if (!m) break;
+    if (!m) return { why: `commit ${oid} has a parent line that does not name a full lowercase id (${shown(l.slice(0, 120))})` };
     parents.push(m[1]);
   }
   return { parents };
@@ -164,6 +168,9 @@ export function mergeScope({ repoDir, base, head, mergeBase = false, read = null
   if (read !== null) {
     const r = commitOf(repoDir, read, env);
     if (r.why) return { ok: false, why: r.why };
+    // 64 hex digits in a SHA-1 repository (or 40 in a SHA-256 one) name no object, so git reads them as a ref name, and a tag of
+    // that name could point anywhere: <H> must be the commit its id names, nothing it resolves to.
+    if (r.oid !== read) return { ok: false, why: `--read ${shown(read)} resolves to ${r.oid}, not to itself: name <H> by its own full id` };
     // Step 1.5 makes the merge with `git merge --no-ff <H>` on <B>: exactly the parents <B> and <H>, in that order. A fast-forward,
     // a squash, an octopus (another branch's change rides along) or swapped parents is no merge of what the owner read.
     const p = parentsOf(repoDir, h.oid, env);
