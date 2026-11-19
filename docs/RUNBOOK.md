@@ -298,8 +298,25 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
 
 ## Publishing
 
-1. Merge the entry pull requests locally on `main`.
-2. The owner dispatches `publish.yml` with `target: production` (`lift` empty unless a revocation is being lifted; `repair` false).
+1. Merge the entry pull requests locally on `main` and push them, one pull request at a time, and merge only the commits the checks
+   ran on. For pull request `<n>`:
+   1. Read its head commit `<H>`: `gh pr view <n> --repo eve-cyno/plugins --json headRefOid --jq .headRefOid`.
+   2. Find the newest `check.yml` run of `<H>`: `gh run list --repo eve-cyno/plugins --workflow check.yml --commit <H> --json
+      databaseId,headSha,conclusion,createdAt`. Its `checks` job must be green and its `review` job green or reviewed by the owner.
+      Both jobs print `base <B>, head <M>` (`gh run view <id> --repo eve-cyno/plugins --log | grep -m2 'base '`): `<B>` is the
+      `main` they checked against, `<M>` GitHub's merge commit of `<B>` and `<H>`.
+   3. Fetch the head: `git fetch origin pull/<n>/head`; `git rev-parse FETCH_HEAD` must be `<H>` (no commit was pushed after the run).
+   4. `git rev-parse main` and `git rev-parse origin/main` must both be `<B>`. When `main` moved on (an earlier merge was pushed),
+      the run checked another base: do not merge; close and reopen the pull request so `check.yml` runs on the current `main`, and
+      start again at step 2.
+   5. Merge `<H>` with a merge commit (`git merge --no-ff <H>`), then confirm `git rev-parse HEAD^1` is `<B>` and
+      `git rev-parse HEAD^2` is `<H>`. While GitHub still serves `<M>` (`git fetch origin pull/<n>/merge`, then
+      `git rev-parse FETCH_HEAD` is `<M>`), `git rev-parse HEAD^{tree}` must equal `git rev-parse FETCH_HEAD^{tree}`: the merged
+      files are the files the jobs checked. Any difference: `git reset --hard <B>`, and do not push.
+   6. Push `main` (`git push origin main`). The next pull request's run checked the old `main`, so step 4 sends it round again.
+2. Before the dispatch, `git rev-parse origin/main` must be the merge commit of the last step 1.5. The owner dispatches
+   `publish.yml` with `target: production` (`lift` empty unless a revocation is being lifted; `repair` false), and
+   `gh run list --repo eve-cyno/plugins --workflow publish.yml --limit 1 --json headSha` must name that commit.
 3. `build` checks against the live base and prints the head's bytes and SHA-256 in the summary. Approve `index` only after the steps
    above; then `mirror`, after them again.
 4. After the run, add the outcome of `sign` and `upload` to your list.
@@ -324,7 +341,8 @@ even its failed jobs: the first step of every job fails on any attempt but the f
 1. A report arrives (Discord, in-game, or a finding of ours).
 2. The owner, or a maintainer acting for him, opens a pull request `revoke <id> <versions>` with the entry in `revoked.json`; check C15
    reads it.
-3. The owner merges it locally at once and dispatches `publish.yml` (`target: production`); the owner approves `index` and then
+3. The owner merges it locally at once, as in "Publishing" step 1 (the merged commits are the ones `check.yml` ran on), and dispatches
+   `publish.yml` (`target: production`); the owner approves `index` and then
    `mirror`, each after the steps above. The summary's "revocations added" line is a convenience.
 4. Apps apply it at their next check (at most 4 hours) or next start; a revoked plugin is disabled at once with a notice and keeps its
    data. The archive stays in the mirror.
