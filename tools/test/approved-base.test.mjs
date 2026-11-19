@@ -1,6 +1,7 @@
 // Tests of tools/approved-base.mjs (plan 4.5 step 1 and 2): <A> is the commit of the newest other run of publish.yml or resign.yml
-// that this repository's own dispatch or schedule started, with an approval of environment index by the environment's only
-// required reviewer and successful sign and upload jobs; the compare status of <A> to <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like
+// that this repository started by an event of that workflow (publish.yml: a dispatch; resign.yml: a dispatch or its schedule), with
+// an approval of environment index by the environment's only required reviewer and successful sign and upload jobs; the compare
+// status of <A> to <B> must be ahead or identical. GitHub is a stub gh on PATH (ghstub.mjs) answering with bodies shaped like
 // the REST answers of the environment, runs, approvals, jobs and compare endpoints; the reviewer is read from the environment.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -127,22 +128,56 @@ describe('approved-base: <A> skips every run that is not an approved, signed and
     assert.match(r.text, new RegExp(`^A ${A} from run 200 `, 'm'));
   });
   // A fork may change publish.yml to run on pull_request and name its branch main: such a run has the path and the head_branch of
-  // a run of main, and jobs named sign and upload of its own. Only a run that this repository's own dispatch or schedule started
-  // counts, and it is skipped before its approvals or jobs are read (a re-run of it could otherwise stop every review with an ERROR).
+  // a run of main, and jobs named sign and upload of its own. A run whose head repository is not this one is skipped before its
+  // approvals or jobs are read (a re-run of it could otherwise stop every review with an ERROR).
   const notRead = (r, id) => {
     for (const end of [`${R}/actions/runs/${id}/approvals`, JOBS(id)]) assert.ok(!r.calls.some((a) => a[a.length - 1] === end), `${end} is not read`);
   };
   test('approved-base skips a pull_request run on a fork branch named main', async () => {
     const created = '2026-12-05T10:00:00Z';
     for (const [x, event] of [[forkRun(270, created), 'pull_request'],
-      [forkRun(270, created, { head_repository: run(1, 'publish.yml', A, created).head_repository }), 'pull_request'],
       [forkRun(270, created, { event: 'pull_request_target' }), 'pull_request_target'], [forkRun(270, created, { event: 'push' }), 'push'],
       [forkRun(270, created, { event: 'workflow_run' }), 'workflow_run'], [forkRun(270, created, { event: undefined }), 'none'],
       [forkRun(270, created, { event: 'Workflow_Dispatch' }), 'Workflow_Dispatch']]) {
       // Approved, signed and uploaded, and newer than run 200: without the rule it would be <A>.
-      const r = await skips({ run: x, ...PUBLISHED(270) }, `started by event ${event}, not workflow_dispatch or schedule$`);
+      const r = await skips({ run: x, ...PUBLISHED(270) }, `started by event ${event}, not workflow_dispatch$`);
       notRead(r, 270);
     }
+  });
+  // A run of this repository started by another event (a commit on main that added `on: push` to publish.yml) is never <A>, but it
+  // is reviewed: its index approval and a successful sign mean its signed head may have gone live, so it is no first publish.
+  test('AB-own-other-event: an own-repository run of another event is read, may count as signed, and is never <A>', async () => {
+    const created = '2026-12-05T10:00:00Z';
+    const own = (event, wf = 'publish.yml') => ({ ...run(273, wf, sha('c'), created), event });
+    const UPLOAD_FAILED = jobs(273, [['build', 'success'], ['sign', 'success'], ['upload', 'failure']]);
+    for (const [x, list, events] of [[own('push'), PUBLISHED(273).jobs, 'workflow_dispatch'], [own('push'), UPLOAD_FAILED, 'workflow_dispatch'],
+      [own('pull_request'), PUBLISHED(273).jobs, 'workflow_dispatch'], [own('push', 'resign.yml'), PUBLISHED(273).jobs, 'workflow_dispatch or schedule']]) {
+      const approvals = PUBLISHED(273).approvals;
+      const alone = await call({ under: UNDER, others: [{ run: x, approvals, jobs: list }] });
+      assert.equal(alone.code, 1, alone.text);
+      assert.match(alone.text, new RegExp(`^skip run 273 .*started by event ${x.event}, not ${events}$`, 'm'));
+      assert.match(alone.text, /^NOT A FIRST PUBLISH: run 273 \([a-z]+\.yml, created [^)]*\) has an approval of index/m);
+      assert.doesNotMatch(alone.text, /^(A |FIRST PUBLISH)/m);
+      assert.ok(alone.calls.some((a) => a[a.length - 1] === JOBS(273)), 'an own-repository run is reviewed whatever its event');
+      const r = await skips({ run: x, approvals, jobs: list }, `started by event ${x.event}, not ${events}$`);
+      assert.ok(r.calls.some((a) => a[a.length - 1] === JOBS(273)));
+    }
+    const unsigned = { run: own('push'), approvals: [], jobs: jobs(273, [['build', 'success'], ['sign', 'skipped'], ['upload', 'skipped']]) };
+    assert.equal((await call({ under: UNDER, others: [unsigned] })).code, 3, 'an own push run that signed nothing: still a first publish');
+  });
+  test('AB-events-per-workflow: publish.yml counts a dispatch only, resign.yml a dispatch or its schedule', async () => {
+    const created = '2026-12-05T10:00:00Z';
+    const scheduled = { run: { ...run(274, 'publish.yml', sha('c'), created), event: 'schedule' }, ...PUBLISHED(274) };
+    await skips(scheduled, 'started by event schedule, not workflow_dispatch$');
+    for (const event of ['schedule', 'workflow_dispatch']) {
+      const resign = { run: { ...run(275, 'resign.yml', sha('d'), created), event }, ...PUBLISHED(275) };
+      const r = await call({ under: UNDER, others: [resign, GOOD] });
+      assert.equal(r.code, 0, r.text);
+      assert.match(r.text, new RegExp(`^A ${sha('d')} from run 275 \\(resign\\.yml`, 'm'), event);
+    }
+    const under = await call({ under: { ...UNDER, run: { ...UNDER.run, event: 'schedule' } }, others: [GOOD] });
+    assert.equal(under.code, 1, under.text);
+    assert.match(under.text, /^ERROR: run 300: started by event schedule, not workflow_dispatch$/m);
   });
   test('approved-base skips a run whose head repository is not eve-cyno/plugins', async () => {
     const created = '2026-12-05T10:00:00Z';
@@ -157,7 +192,7 @@ describe('approved-base: <A> skips every run that is not an approved, signed and
     notRead(await skips({ run: resign, ...PUBLISHED(272) }, 'its head repository is someone/plugins, not eve-cyno/plugins$'), 272);
   });
   test('AB-under-review-foreign: a run under review that a fork or another repository started is an ERROR', async () => {
-    for (const [under, re] of [[forkRun(300, '2026-12-10T10:00:00Z'), /^ERROR: run 300: started by event pull_request, not workflow_dispatch or schedule$/m],
+    for (const [under, re] of [[forkRun(300, '2026-12-10T10:00:00Z'), /^ERROR: run 300: started by event pull_request, not workflow_dispatch$/m],
       [{ ...UNDER.run, head_repository: { full_name: 'someone/plugins' } }, /^ERROR: run 300: its head repository is someone\/plugins, not eve-cyno\/plugins$/m]]) {
       const r = await call({ under: { ...UNDER, run: under }, others: [GOOD] });
       assert.equal(r.code, 1, r.text);

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // tools/approved-base.mjs: plan 4.5 steps 1 and 2 as a convenience for the reviewer, who still confirms every line on the run pages
 // and against the reviewer's own offline list (docs/RUNBOOK.md). Given the run under review (its commit is <B>), it prints:
-// - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that this repository's own
-//   dispatch or schedule started (event workflow_dispatch or schedule, head repository eve-cyno/plugins: a fork can change
-//   publish.yml to run on pull_request and name its branch main, so path and head_branch alone do not tell) and that has an approval of
+// - <A>: the commit of the newest OTHER run of publish.yml or resign.yml (by created_at, then id) that this repository started by
+//   an event of that workflow (head repository eve-cyno/plugins; publish.yml: event workflow_dispatch, resign.yml: workflow_dispatch
+//   or schedule; a fork can change publish.yml to run on pull_request and name its branch main, so path and head_branch alone do not
+//   tell; a run of another head repository is skipped before it is read, a run of this one by another event is read and may rule
+//   out a first publish, but is never <A>) and that has an approval of
 //   environment index by the environment's reviewer (GET .../actions/runs/<id>/approvals) and exactly one job sign and one job upload,
 //   both concluded success in attempt 1 (GET .../actions/runs/<id>/jobs?filter=all, the jobs of every attempt: every job refuses any
 //   attempt but the first, so a re-run's later attempts never sign or upload), with one "skip" line for every newer run and why it
@@ -58,19 +60,29 @@ export function notOnMain(run) {
   return '';
 }
 
-/** The events that start the two workflows: a dispatch (both), and resign.yml's schedule. */
-const OWN_EVENTS = ['workflow_dispatch', 'schedule'];
+/** The events that start each workflow: publish.yml only a dispatch, resign.yml a dispatch or its schedule. */
+const OWN_EVENTS = { 'publish.yml': ['workflow_dispatch'], 'resign.yml': ['workflow_dispatch', 'schedule'] };
+
+/** Why a run was not started by an event that starts its workflow ('' when it was). */
+export function notOwnEvent(run) {
+  const events = OWN_EVENTS[wfOf(run)] ?? [];
+  if (!events.includes(run.event)) return `started by event ${oneLine(run.event ?? 'none')}, not ${events.join(' or ') || 'publish.yml or resign.yml'}`;
+  return '';
+}
+
+/** Why a run's head repository is not this repository ('' when it is). */
+export function notOwnRepo(run) {
+  const repo = isObj(run.head_repository) && typeof run.head_repository.full_name === 'string' ? run.head_repository.full_name : null;
+  return repo === REPO ? '' : `its head repository is ${oneLine(repo ?? 'none')}, not ${REPO}`;
+}
 
 /**
- * Why a run is not one that this repository's own dispatch or schedule started ('' when it is one). A fork can change publish.yml
+ * Why a run is not one that this repository started by an event of its workflow ('' when it is one). A fork can change publish.yml
  * to run on pull_request and name its branch main: that run has the path and the head_branch of a run of main, and jobs named sign
  * and upload of its own; its event is pull_request and its head repository the fork (null once the fork is deleted).
  */
 export function notOwnRun(run) {
-  if (!OWN_EVENTS.includes(run.event)) return `started by event ${oneLine(run.event ?? 'none')}, not workflow_dispatch or schedule`;
-  const repo = isObj(run.head_repository) && typeof run.head_repository.full_name === 'string' ? run.head_repository.full_name : null;
-  if (repo !== REPO) return `its head repository is ${oneLine(repo ?? 'none')}, not ${REPO}`;
-  return '';
+  return notOwnEvent(run) || notOwnRepo(run);
 }
 
 const BY_HAND = 'read every attempt on the run page and against your own list (docs/RUNBOOK.md, a re-run)';
@@ -153,14 +165,17 @@ export async function approvedBase({ runId, env }) {
     lines.push("reviewer: the only required reviewer of environment index, read now (login and id not printed)");
 
     const runs = await listRuns(opts);
-    let signed = null; // the newest run with an approved index and a successful sign, but no successful upload
+    let signed = null; // the newest run with an approved index and a successful sign that is not <A>
     for (const run of runs) {
       if (run.id === runId) { lines.push(`skip ${label(run)}: the run under review`); continue; }
-      // Skipped before its approvals or jobs are read: a foreign run is never <A>, and a re-run of one never stops the review.
-      const off = notOnMain(run) || notOwnRun(run);
+      // Skipped before its approvals or jobs are read: a run of another head repository is never <A> and never signed here, and a
+      // re-run of one never stops the review (its skip line names its event first, as for a run under review).
+      const off = notOnMain(run) || (notOwnRepo(run) && notOwnRun(run));
       if (off) { lines.push(`skip ${wfOf(run) ? label(run) : `run ${run.id}`}: ${off}`); continue; }
+      // A run of this repository started by another event (a commit on main that added `on: push`) is never <A>, but it is still
+      // reviewed: an approved index and a successful sign mean its signed head may have gone live, so it rules out a first publish.
       const s = await reviewRun(run, reviewer.id, opts);
-      const why = s.why || s.sign || s.upload;
+      const why = s.why || s.sign || notOwnEvent(run) || s.upload;
       if (why) {
         if (!s.why && !s.sign) signed ??= run;
         lines.push(`skip ${label(run)}: ${why}`);
@@ -184,7 +199,7 @@ export async function approvedBase({ runId, env }) {
     if (signed) {
       return done(1, `NOT A FIRST PUBLISH: ${label(signed)} has an approval of index by the environment's reviewer and a successful sign `
         + "job, so its signed head may have gone live (recovery R2 counts it as a candidate) and a missing live head is a deleted one. No run "
-        + 'has a successful upload, so there is no <A>: only a repair run (recovery R2) may follow, read as the runbook says for a first '
+        + 'of an event of its workflow has a successful upload, so there is no <A>: only a repair run (recovery R2) may follow, read as the runbook says for a first '
         + 'publish and for a repair; any other run under review: no approval.');
     }
     return done(3, "FIRST PUBLISH: no other run of publish.yml or resign.yml has an approval of index by the environment's reviewer and "
