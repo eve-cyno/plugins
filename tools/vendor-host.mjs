@@ -13,6 +13,8 @@
 //       the make runs the desktop's own build scripts at that commit, which only desktop main vouches for. Then the same make into
 //       the temp folder only; prints every difference from <root>/vendor/eve-cyno-host (default: this repository's) and exits 1 on
 //       any. With --root, the vendored tree of another commit is checked (docs/RUNBOOK.md: a tree written by tools/base-tree.mjs).
+//       Before the desktop main check, <root>/vendor and <root>/vendor/eve-cyno-host must be real directories (lstat; a link to a
+//       correct tree elsewhere fails), as --verify also requires.
 //   node tools/vendor-host.mjs --verify [--root <dir>]
 //       Needs no desktop: every vendored file against its SHA-256 in MANIFEST.json, no file missing or extra, package.json and
 //       package-lock.json hold the host's ajv and semver, the vendored PRODUCT_KEYS.index equal the vendored .pub files, and the
@@ -256,6 +258,19 @@ function make(from, rev, work) {
   return { out, manifest, closure };
 }
 
+/**
+ * FAIL lines for `<root>/vendor` and `<root>/vendor/eve-cyno-host` when either is not a real directory (lstat, never followed):
+ * through a link there, a correct vendored tree elsewhere would pass every file check while the tree under review holds a link.
+ */
+export function vendorDirFails(root) {
+  for (const rel of ['vendor', VENDOR_DIR]) {
+    let st;
+    try { st = fs.lstatSync(path.join(root, rel)); } catch (e) { return [`FAIL not-a-directory ${rel}: cannot be read (${e.code ?? e.name})`]; }
+    if (!st.isDirectory()) return [`FAIL not-a-directory ${rel}: ${st.isSymbolicLink() ? 'a link' : 'not a directory'}; the vendored tree is real directories only`];
+  }
+  return [];
+}
+
 /** Byte comparison of two trees; returns the differences as `DIFF <kind> <path>` lines. */
 function compareTrees(fresh, vendored) {
   const diffs = [];
@@ -274,6 +289,8 @@ function compareTrees(fresh, vendored) {
 
 /** --verify: returns the FAIL lines (empty when the vendored tree holds). */
 export function verifyVendor(root) {
+  const notDirs = vendorDirFails(root);
+  if (notDirs.length > 0) return notDirs;
   const fails = [];
   const vendor = path.join(root, VENDOR_DIR);
   let m;
@@ -376,6 +393,13 @@ function main() {
   try {
     if (inside(o.from, work) || inside(fs.realpathSync(o.root), work)) refuse('the temp folder is inside a repository; set TMPDIR to a folder outside every repository');
     if (o.mode === 'check') {
+      // Before the make: the tree under review must hold vendor/eve-cyno-host as real directories, not a link to a correct tree.
+      const notDirs = vendorDirFails(o.root);
+      if (notDirs.length > 0) {
+        for (const f of notDirs) console.error(`${f}; nothing was exported or built`);
+        process.exitCode = 1;
+        return;
+      }
       // Before the make, which runs the desktop's npm ci and build scripts at o.rev: only a commit of desktop main is built.
       const d = onDesktopMain(o.from, o.rev);
       if (!d.on) {

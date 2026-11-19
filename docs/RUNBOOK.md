@@ -21,6 +21,14 @@ Roles:
   rules, or delete runs or artifacts. It can write secrets and environment variables (owner decision 2026-11-18; "One account" names
   what that allows). Agents push over SSH.
 
+**Threat model.** The gates of this runbook defend against a pull request's author, anyone who can push to a pull request branch,
+and the author of a desktop commit that is not on desktop `main`. Trusted: the coordinator's workstation, its environment, git
+config, hooks, every `.git` directory (`info/grafts`, `shallow`, local refs), the trusted worktree, and GitHub's view of `main`. Out
+of scope: anything that needs write access on the workstation or control of the caller's environment. So the tools do not guard
+against `GIT_GRAFT_FILE` or `info/grafts`, `GIT_SHALLOW_FILE`, `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT`, git config, hooks,
+local replace refs, or the index that `tools/check.mjs` lists with `git ls-files` in a checkout; the variables that
+`tools/lib/gitsafe.mjs` removes and its replace refs switch stay as hardening.
+
 **The trusted worktree.** A pull request or a run's commit can change the tools themselves, so a tool run from the checkout under
 review prints whatever that change wants (a `tools/check.mjs` that never names `maintenance`, say). The coordinator therefore runs
 every `node` command of this runbook that a merge or an approval rests on from `../eve-cyno-plugins-trusted`, a worktree beside
@@ -368,7 +376,9 @@ below. O1 is the owner's alone.
 
 0. **The first trusted commit `<X>`.** The coordinator names `<X>`, the head of `main` then (`git rev-parse origin/main`, 40 hex),
    and adds the trusted worktree at it without installing anything (`git -C <checkout> worktree add --detach
-   ../eve-cyno-plugins-trusted <X>`). Then the owner reads `<X>` in full, in this order. The same order reads a later commit `<Y>`
+   ../eve-cyno-plugins-trusted <X>`). Before he reads, the owner compares the 40-hex `<X>` the coordinator printed (for a later
+   commit, `<Y>`) with the head of `main` on github.com (`https://github.com/eve-cyno/plugins/commits/main`); any difference: no
+   line. Then the owner reads `<X>` in full, in this order. The same order reads a later commit `<Y>`
    in full ("Before every index and mirror approval", step 4), with `<Y>` in place of `<X>` and the compare view from the newest
    `read in full` commit in place of every file:
    1. The owner reads every file at `<X>` (`https://github.com/eve-cyno/plugins/tree/<X>`) other than the `entries/<id>.json`
@@ -392,9 +402,9 @@ below. O1 is the owner's alone.
       desktop main` before it exports or builds anything: the make runs the desktop's own `npm ci` and build scripts at `<D>`,
       which only desktop `main` vouches for. Then it compares `<T>`'s `vendor/eve-cyno-host` with a fresh make, file by file.
       `base-tree.mjs` and this check load no vendored module; no other tool runs from the worktree until the owner has read
-      `vendor/`. When the commit under review changes `tools/vendor-host.mjs` or `tools/lib/gitsafe.mjs`, the trusted copy can
-      report differences that the new tool explains: then, once the owner has read that tool change, the coordinator runs the
-      same command with `node <T>/tools/vendor-host.mjs` in place of the trusted copy and hands over both outputs.
+      `vendor/`. A change to `tools/vendor-host.mjs`, `tools/base-tree.mjs`, `tools/lib/basetree.mjs` or `tools/lib/gitsafe.mjs`
+      lands in a commit range with no `vendor/` change: the owner reads it in full and the worktree moves to it; only then does a
+      `vendor/` change follow, checked by the moved worktree's tools. A range that holds both means no `read in full` line.
    3. The owner reads `vendor/` against that output: the check passes (`<D>` is on desktop `main`, and no difference from a fresh
       make), and `<D>` is a desktop commit he accepts. Any doubt, or a failed check: no line (for `<X>`, the coordinator removes
       the worktree).

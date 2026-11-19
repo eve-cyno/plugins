@@ -91,6 +91,16 @@ describe('vendor-host --verify', () => {
     assertFails(verify(t), /^FAIL not-regular host\/dist\/minisign\.js$/m);
   });
 
+  test('VD-not-a-directory: vendor or vendor/eve-cyno-host as a link to a correct vendored tree fails', () => {
+    for (const rel of ['vendor', VENDOR]) {
+      const t = copyRoot();
+      const real = path.join(tempDir(), 'real');
+      fs.renameSync(path.join(t, rel), real);
+      fs.symlinkSync(real, path.join(t, rel));
+      assertFails(verify(t), new RegExp(`^FAIL not-a-directory ${rel.replace('/', '\\/')}: a link`, 'm'));
+    }
+  });
+
   test('VD-missing-file: a file MANIFEST.json names but the tree lacks fails', () => {
     const t = copyRoot();
     fs.rmSync(path.join(t, VENDOR, 'host/dist/market/zipread.js'));
@@ -208,6 +218,20 @@ describe('vendor-host --check: desktop main first', () => {
     assert.equal(spawnSync('git', ['-C', d.dir, 'merge-base', '--is-ancestor', d.side, d.m2], { env: ENV }).status, 0, 'the premise: git honours it');
     assertOffMain(check(d, d.side), d, d.side);
     assert.deepEqual(vendorHost.onDesktopMain(d.dir, d.side), { on: false, main: d.m2 });
+  });
+
+  test('VD-check-not-a-directory: a <root> whose vendor is a link to a correct vendored tree fails before anything is exported or built', () => {
+    const d = desktop();
+    for (const rel of ['vendor', VENDOR]) {
+      const t = copyRoot();
+      const real = path.join(tempDir(), 'real');
+      fs.renameSync(path.join(t, rel), real);
+      fs.symlinkSync(real, path.join(t, rel));
+      const r = spawnSync(process.execPath, [TOOL, '--check', '--from', d.dir, '--rev', d.m1, '--root', t], { encoding: 'utf8', timeout: 60_000 });
+      assert.equal(r.status, 1, `exit ${r.status}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`^FAIL not-a-directory ${rel.replace('/', '\\/')}: a link`, 'm'));
+      assert.doesNotMatch(r.stdout, /git archive|npm/, 'nothing was exported or built');
+    }
   });
 
   test('VD-check-main-missing: a desktop checkout without refs/remotes/origin/main cannot tell, so the check stops (exit 2)', () => {

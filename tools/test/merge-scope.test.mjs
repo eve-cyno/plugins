@@ -408,6 +408,15 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
     const m = { dir: r.dir, base: r.base, head: h, merge: git(r.dir, 'rev-parse', 'HEAD') };
     assertOwner(await readGate(m), ['tools/x.mjs']);
     assertNotTheMerge(await readGate(m, h2), m, 2);
+    // A header that names a second parent after the author line: git reads only the parent lines right after the tree line, so
+    // this commit has the one parent <B>. Written with --literally, since git's own fsck refuses the object.
+    const lp = merged({ prFiles });
+    const obj = path.join(tempDir('obj'), 'commit');
+    fs.writeFileSync(obj, `tree ${git(lp.dir, 'rev-parse', `${lp.merge}^{tree}`)}\nparent ${lp.base}\n`
+      + `author test <test@example.invalid> 1 +0000\nparent ${lp.head}\ncommitter test <test@example.invalid> 1 +0000\n\nnot a merge\n`);
+    const late = { ...lp, merge: git(lp.dir, 'hash-object', '--literally', '-t', 'commit', '-w', obj) };
+    assert.equal(git(lp.dir, 'rev-list', '--parents', '-n', '1', late.merge), `${late.merge} ${lp.base}`, 'the premise: git reads one parent');
+    assertNotTheMerge(await readGate(late), late, 1);
   });
 
   test('SCOPE-read-parents-replace: a refs/replace entry cannot make another commit look like the merge of <H> on <B>', async () => {
@@ -428,5 +437,12 @@ describe('merge scope --read (RUNBOOK Publishing 1.5a)', () => {
     assert.match(unknown.stderr, /^ERROR /m);
     assert.doesNotMatch(unknown.stdout, /^SCOPE/m);
     assert.equal((await readGate(m, '--merge-base')).code, 2);
+    // <H> is named by all its hex digits, as the owner's "merge" names it: a short id or a ref name is a usage error.
+    for (const read of [m.head.slice(0, 12), 'pr', 'HEAD']) {
+      const res = await readGate(m, read);
+      assert.equal(res.code, 2, `--read ${read}: ${res.stdout}${res.stderr}`);
+      assert.match(res.stderr, /^--read must name a commit by all 40 \(or 64\) hex digits/m);
+      assert.doesNotMatch(res.stdout, /^SCOPE/m);
+    }
   });
 });

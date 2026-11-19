@@ -19,7 +19,8 @@
 // --merge-base it compares <head> with the one merge base of <base> and <head> (what `git diff <base>...<head>` shows); more than
 // one merge base is an error.
 //
-// Usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <rev>]
+// Usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <full commit id>]
+// --read takes <H> by all 40 (or 64) hex digits only, as the owner's "merge" names it; a short id or a ref name is a usage error.
 // Exit 0 ENTRIES-ONLY, 3 OWNER, 4 UNREAD, 1 error (no SCOPE line), 2 usage. Paths are printed as they are when they hold only
 // [A-Za-z0-9._/@+=,-], else quoted with every other character as \u{hex}, so a path cannot forge a line.
 import { spawnSync } from 'node:child_process';
@@ -101,17 +102,20 @@ function changesOf(repoDir, from, to, env) {
 
 /**
  * The parents of commit `oid` as its own object names them, in order: { parents } or { why }. It reads the commit object (git
- * cat-file commit, replace refs off), so a graft or a refs/replace entry cannot change the list.
+ * cat-file commit, replace refs off), so a graft or a refs/replace entry cannot change the list. It parses the header as git does:
+ * the first line is `tree <oid>`, and the parents are only the `parent <oid>` lines directly after it; the first other line ends
+ * them, so a `parent` line further down (after the author line, say) is no parent to git and none here.
  */
 function parentsOf(repoDir, oid, env) {
   const r = git(repoDir, ['cat-file', 'commit', oid], env);
   if (r.why) return r;
-  const text = r.out.toString('latin1');
-  const end = text.indexOf('\n\n');
+  const lines = r.out.toString('latin1').split('\n');
+  if (!/^tree (?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(lines[0])) return { why: `commit ${oid} does not start with a tree line` };
   const parents = [];
-  for (const l of (end < 0 ? text : text.slice(0, end)).split('\n')) {
+  for (const l of lines.slice(1)) {
     const m = /^parent ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(l);
-    if (m) parents.push(m[1]);
+    if (!m) break;
+    parents.push(m[1]);
   }
   return { parents };
 }
@@ -194,7 +198,7 @@ export function mergeScope({ repoDir, base, head, mergeBase = false, read = null
   return { ok: true, lines, owner: owner.map((o) => o.path), unread };
 }
 
-const USAGE = 'usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <rev>]';
+const USAGE = 'usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <full commit id>]';
 
 function main(argv) {
   let a;
@@ -213,8 +217,8 @@ function main(argv) {
       return 2;
     }
   }
-  if (a.read !== undefined && (a.read === '' || a.read.startsWith('-'))) {
-    process.stderr.write(`--read must name a commit, and must not start with "-"\n${USAGE}\n`);
+  if (a.read !== undefined && !OID_RE.test(a.read)) {
+    process.stderr.write(`--read must name a commit by all 40 (or 64) hex digits, as the owner's "merge" names <H>; never a short id or a ref name\n${USAGE}\n`);
     return 2;
   }
   const r = mergeScope({ repoDir: path.resolve(a['repo-dir']), base: a.base, head: a.head, mergeBase: a['merge-base'] === true, read: a.read ?? null });
