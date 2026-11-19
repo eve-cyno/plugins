@@ -289,6 +289,7 @@ describe('E2E check.mjs', () => {
     assert.match(r.stdout, /^PASS C4-C7 dev\.example\.intel 1\.0\.0/m, 'a version that is not live is checked');
     assert.doesNotMatch(r.stdout, /^PASS C4-C7 dev\.example\.intel 1\.1\.0/m, 'a live version is not');
     assert.match(r.stdout, /^FLAG lift C15 removed: dev\.example\.intel 1\.0\.0/m);
+    assert.doesNotMatch(r.stdout, /^FLAG identity/m, 'a catalog names no maintainers or provenance: they are not compared');
     assert.equal(last(r.stdout), 'CHECKS PASSED');
   });
 

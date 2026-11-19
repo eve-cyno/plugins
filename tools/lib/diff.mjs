@@ -62,6 +62,22 @@ const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(',')}]`
 /** True when `a` and `b` hold the same JSON value: a pull request that leaves an entry so has not touched it. */
 export const sameEntry = (a, b) => canon(a) === canon(b);
 
+/** The maintainers as lower-case logins (GitHub logins are case-insensitive), sorted; none is an empty list. */
+const maintainerSet = (e) => JSON.stringify((Array.isArray(e.maintainers) ? e.maintainers : []).map((m) => String(m).toLowerCase()).sort());
+/** The repository the archives' provenance is bound to (C12), lower case, or null when none is declared. */
+const provenanceRepo = (e) => (typeof e.provenance?.repo === 'string' ? e.provenance.repo.toLowerCase() : null);
+
+/**
+ * C10 identity: who the entry is and who may change it. A changed name, author or type under the same id; a provenance repository
+ * that changes (C12 binds it to `source`, so the source moves with it) or is dropped; any change to the maintainers (C14 trusts them).
+ */
+function identityChanged(head, base) {
+  if (base.name !== head.name || base.author !== head.author || base.type !== head.type) return true;
+  const was = provenanceRepo(base);
+  if (was !== null && provenanceRepo(head) !== was) return true;
+  return maintainerSet(base) !== maintainerSet(head);
+}
+
 /**
  * All of C3, C10, C11, C14, C17 for one entry. `base` is the entry on the base branch or null, `others` every other entry of the head
  * tree, `prAuthor` the PR's login (null when the check runs without one). Returns { refusals: string[], flags: string[] } with flags
@@ -73,7 +89,7 @@ export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
   if (base === null) flags.add('new');
   if ((head.firstParty === true) !== (base?.firstParty === true)) flags.add('first-party');
   if (base !== null) {
-    if (base.name !== head.name || base.author !== head.author) flags.add('identity');
+    if (identityChanged(head, base)) flags.add('identity');
     // C14 holds a pull request to the maintainers of each entry it changes; an entry it leaves as it was needs none of them.
     if (prAuthor !== null && !sameEntry(head, base) && !(base.maintainers ?? []).some((m) => m.toLowerCase() === prAuthor.toLowerCase())) flags.add('identity');
   }

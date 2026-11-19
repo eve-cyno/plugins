@@ -74,6 +74,31 @@ describe('entry flags (C10, C11, C14, C17)', () => {
     assert.deepEqual(checkEntry(entry([ver('1.0.0')], { author: 'Someone Else' }), base, { prAuthor: 'alice' }).flags, ['identity']);
     assert.ok(checkEntry(entry([ver('1.0.0')], { name: 'Intel Board 2' }), base, { prAuthor: 'alice' }).flags.includes('identity'));
   });
+  test('DF-identity-type: a changed type under the same id is flagged identity', () => {
+    const tv = (version) => ({ version });
+    assert.deepEqual(checkEntry(entry([tv('1.0.0')], { type: 'theme' }), entry([tv('1.0.0')], { type: 'plugin' }), { prAuthor: 'alice' }).flags, ['identity']);
+    assert.deepEqual(checkEntry(entry([ver('1.0.0')], { type: 'plugin' }), entry([ver('1.0.0')], { type: 'plugin' }), { prAuthor: 'alice' }).flags, []);
+  });
+  test('DF-identity-provenance: a provenance repository that changes (with its source) or is dropped is flagged identity', () => {
+    const declared = (repo, extra = {}) => ({ source: `https://github.com/${repo}`, provenance: { repo, ...extra } });
+    const base = entry([ver('1.0.0')], declared('example/intel'));
+    const flags = (over) => checkEntry(entry([ver('1.0.0')], over), base, { prAuthor: 'alice' }).flags;
+    assert.deepEqual(flags(declared('other/intel')), ['identity'], 'another repository');
+    assert.deepEqual(flags({ source: 'https://github.com/example/intel' }), ['identity'], 'provenance dropped');
+    assert.deepEqual(flags(declared('Example/Intel')), [], 'GitHub names are case-insensitive');
+    assert.deepEqual(flags(declared('example/intel', { workflow: '.github/workflows/release.yml' })), [], 'a workflow named in the same repository');
+    assert.deepEqual(checkEntry(entry([ver('1.0.0')], declared('example/intel')), entry([ver('1.0.0')], { source: 'https://github.com/example/intel' }), { prAuthor: 'alice' }).flags, [], 'provenance added');
+  });
+  test('DF-identity-maintainers: any change to the maintainers is flagged identity; order and case are not a change', () => {
+    const base = entry([ver('1.0.0')], { maintainers: ['alice', 'bob'] });
+    const flags = (maintainers) => checkEntry(entry([ver('1.0.0')], { maintainers }), base, { prAuthor: 'alice' }).flags;
+    assert.deepEqual(flags(['alice', 'bob', 'mallory']), ['identity'], 'one added');
+    assert.deepEqual(flags(['alice']), ['identity'], 'one removed');
+    assert.deepEqual(flags(['alice', 'carol']), ['identity'], 'one replaced');
+    assert.deepEqual(flags(undefined), ['identity'], 'all dropped');
+    assert.deepEqual(flags(['BOB', 'Alice']), [], 'order and case');
+    assert.deepEqual(checkEntry(entry([ver('1.0.0')], { maintainers: [] }), entry([ver('1.0.0')], { maintainers: undefined }), { prAuthor: null }).flags, [], 'none and an empty list');
+  });
   test('DF-maintainer: a PR author outside the base maintainers who changes the entry is flagged identity, case-insensitively inside', () => {
     const base = entry([ver('1.0.0')]);
     const head = entry([ver('1.1.0'), ver('1.0.0')]);

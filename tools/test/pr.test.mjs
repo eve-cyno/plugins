@@ -294,6 +294,13 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     assert.doesNotMatch(none.stdout, /C12/, 'no provenance declared: no C12 line');
   });
 
+  test('PR-identity-maintainers: a maintainer who adds a maintainer needs review identity', async () => {
+    const r = await check('review', baseTree(), tree({ entries: [pluginEntry([version('1.0.0', A100)], { maintainers: ['example-login', 'new-login'] })] }), ['--author', 'example-login']);
+    assert.equal(r.code, 3, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FLAG identity C10 C14 dev\.example\.intel: .*the maintainers changed/m);
+    assert.equal(last(r.stdout), 'NEEDS REVIEW identity');
+  });
+
   test('PR-c14-removed: removing an entry is flagged identity unless the author is one of its maintainers (any case)', async () => {
     const DUSK = themeZip();
     cacheArchive(cache, DUSK);

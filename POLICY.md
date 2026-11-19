@@ -13,7 +13,8 @@ previous version, and, when you declare it, the build provenance from your GitHu
 ## Human review
 
 A maintainer reviews every new plugin and every version that asks for more permissions, runs in the background for the first time, or
-changes its author or name. A version that asks for nothing new is merged after the checks pass and a maintainer has read the change.
+changes its author, name or type, its provenance repository or its maintainers. A version that asks for nothing new is merged after
+the checks pass and a maintainer has read the change.
 There is no fixed review time.
 
 ## What we do not list
