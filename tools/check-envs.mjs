@@ -19,7 +19,8 @@
 //   check then fails with an ALARM line, first in the output and on stderr, that names the environment the owner deletes;
 // - the six secrets and variables the workflows read (STORED) are each set once in their environment with a valid updated_at, which
 //   is printed for the reviewer to compare with the day the owner or the coordinator set it (docs/RUNBOOK.md); R2_BUCKET is
-//   eve-cyno-plugins and R2_ACCOUNT_ID is 32 lower-case hex (ok or fail only, never the value);
+//   eve-cyno-plugins and R2_ACCOUNT_ID is 32 lower-case hex (ok or fail only, never the value read; a failure names the rule, and
+//   for R2_BUCKET the rule is the public bucket name docs/RUNBOOK.md lists);
 // - no secret or variable named MINISIGN_* or R2_* is set at repository or organization level (OUTSIDE): one there reaches every
 //   job of the repository without an approval of index or mirror. Listing the variables needs read access to Variables; a list
 //   that cannot be read, or did not come back whole, fails closed.
@@ -66,7 +67,7 @@ export const STORED = Object.freeze([
   { kind: 'secret', name: 'R2_ACCESS_KEY_ID', env: 'mirror' },
   { kind: 'secret', name: 'R2_SECRET_ACCESS_KEY', env: 'mirror' },
   { kind: 'variable', name: 'R2_ACCOUNT_ID', env: 'mirror', value: (v) => /^[0-9a-f]{32}$/.test(v), rule: 'a Cloudflare account id (32 lower-case hex)', shown: 'a Cloudflare account id (32 lower-case hex; not printed)' },
-  { kind: 'variable', name: 'R2_BUCKET', env: 'mirror', value: (v) => v === 'eve-cyno-plugins', rule: 'eve-cyno-plugins', shown: 'eve-cyno-plugins' },
+  { kind: 'variable', name: 'R2_BUCKET', env: 'mirror', value: (v) => v === 'eve-cyno-plugins', rule: 'eve-cyno-plugins', shown: 'the bucket the runbook names (not printed)' },
 ]);
 /** The lists outside the environments where no name MINISIGN_* or R2_* may be set (the repository's own and the organization's). */
 export const OUTSIDE = Object.freeze([

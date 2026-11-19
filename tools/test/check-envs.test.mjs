@@ -320,9 +320,10 @@ describe('C-ENV1 the secrets and variables the workflows read', () => {
     assert.equal(r.ok, true, r.text);
     for (const [kind, name, env] of SIX) assert.match(r.text, new RegExp(`^PASS ${kind} ${name} \\(environment ${env}\\): updated_at ${STAMP}`, 'm'));
     assert.match(r.text, /^PASS variable R2_ACCOUNT_ID \(environment mirror\): updated_at \S+; the value is a Cloudflare account id \(32 lower-case hex; not printed\)$/m);
-    assert.match(r.text, /^PASS variable R2_BUCKET \(environment mirror\): updated_at \S+; the value is eve-cyno-plugins$/m);
+    assert.match(r.text, /^PASS variable R2_BUCKET \(environment mirror\): updated_at \S+; the value is the bucket the runbook names \(not printed\)$/m);
     assert.match(r.text, /^updated_at: compare each date above with the day the owner or the coordinator set that value/m);
     assert.doesNotMatch(r.text, new RegExp(ACCOUNT), 'the account id is never printed');
+    assert.doesNotMatch(r.text, /eve-cyno-plugins/, 'nor the bucket name read from the variable');
     assert.doesNotMatch(r.text, /created_at|2026-11-01/, 'only updated_at');
     for (const what of ['repository secrets', 'organization secrets', 'repository variables', 'organization variables']) {
       assert.match(r.text, new RegExp(`^PASS ${what}: none named MINISIGN_\\* or R2_\\*`, 'm'));
