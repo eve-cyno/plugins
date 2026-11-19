@@ -151,11 +151,14 @@ function repairRoutes({ drop = {}, older = 'A' } = {}) {
   return r;
 }
 
-/** One case: a bucket holding `live`, an input folder made from index `input`, faults, and the environment of the upload step. */
-function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, gh = 'none', routes, env = {}, testPub = false, head } = {}) {
+/**
+ * One case: a bucket holding `live`, an input folder made from index `input`, faults, and the environment of the upload step. `edge`:
+ * what the server serves instead of the bucket (awsstub.mjs).
+ */
+function scenario({ live, input = 'B', faults = [], version: ver, skeletonDrop, gh = 'none', routes, env = {}, testPub = false, head, edge = {} } = {}) {
   const dir = tempDir('upload');
   const bucket = path.join(dir, 'bucket.json');
-  writeBucket(bucket, { objects: structuredClone(live ?? objectsOf('A')), faults, ...(ver ? { version: ver } : {}), ...(skeletonDrop ? { skeletonDrop } : {}) });
+  writeBucket(bucket, { objects: structuredClone(live ?? objectsOf('A')), faults, edge, ...(ver ? { version: ver } : {}), ...(skeletonDrop ? { skeletonDrop } : {}) });
   current = bucket;
   const inDir = path.join(dir, 'in');
   const h = inputOf(input, inDir, { testPub, head });
@@ -180,6 +183,22 @@ async function upload(sc, mode = 'production', extra = []) {
     summary: fs.existsSync(sc.summary) ? fs.readFileSync(sc.summary, 'utf8') : '', last: r.stdout.trim().split('\n').at(-1) };
 }
 const bytesOf = (bucket, key) => (bucket[key] ? Buffer.from(bucket[key].b64, 'base64') : null);
+/** The bucket key of the catalog index `name`'s head names. */
+const catKeyOf = (name) => `v1/${JSON.parse(ix[name].head).catalog.url.slice(P.length)}`;
+/** build-index.mjs base without repair against the case's bucket, as the build job runs it. */
+const normalBase = (sc, out) => run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'false', '--out', out, '--summary', sc.summary, '--prefix', P, '--key', PUB], { env: sc.env });
+/** build-index.mjs resign-check against the case's bucket, main's tree `tree`. */
+const resignCheck = (sc, tree) => {
+  const outputs = path.join(sc.dir, `outputs-${Math.random().toString(16).slice(2)}.txt`);
+  fs.writeFileSync(outputs, '');
+  return run('tools/build-index.mjs', ['resign-check', '--outputs', outputs, '--tree', tree, '--prefix', P, '--key', PUB], { env: sc.env });
+};
+/** The one REFUSED line of a run's stderr. */
+const refusedLine = (r) => {
+  const l = r.stderr.split('\n').filter(x => x.startsWith('REFUSED: '));
+  assert.equal(l.length, 1, JSON.stringify(r.stderr));
+  return l[0];
+};
 const garbage = b64('untrusted comment: not a signature\nRVQAAAAA\n');
 
 before(async () => {
@@ -877,8 +896,6 @@ describe('recovery R2 (repair: true)', () => {
   // the catalog the head names) in build-index.mjs base, with and without repair, and in upload.mjs, so no state is refused by one step
   // and taken by the other.
   describe('one definition of "the live index verifies"', () => {
-    const catKeyOf = (name) => `v1/${JSON.parse(ix[name].head).catalog.url.slice(P.length)}`;
-    const normalBase = (sc, out) => run('tools/build-index.mjs', ['base', '--target', 'production', '--repair', 'false', '--out', out, '--summary', sc.summary, '--prefix', P, '--key', PUB], { env: sc.env });
     /** A's live index with its catalog object gone: the head and its signature still verify. */
     const catalogGone = () => { const live = objectsOf('A'); delete live[catKeyOf('A')]; return live; };
 
@@ -955,5 +972,120 @@ describe('recovery R2 (repair: true)', () => {
       assert.deepEqual([p?.ifNoneMatch, p?.cacheControl], ['*', IMMUTABLE]);
       assert.deepEqual(bytesOf(n.bucket, key), A100);
     });
+  });
+
+  // The index served over the prefix (the edge, which caches) and the objects in R2 are read apart. A read that fails says nothing
+  // about the index, an edge that serves another pair is no verdict on the bucket, and a catalog the edge still serves from its cache
+  // may be gone from R2.
+  describe('the index served and the pair in R2', () => {
+    test('LIVE-read-fails-dispatch-again: a signature or catalog the edge answers with HTTP 503 or 429 is "dispatch again later" in build and upload, normal, repair and resign; nothing is written', async () => {
+      for (const [key, status] of [[catKeyOf('A'), 503], [SIG, 429]]) {
+        const edge = { [key]: { status } };
+        const want = new RegExp(`^REFUSED: the live index cannot be read \\(${esc(key.slice(3))}: HTTP ${status}\\): .*dispatch again later$`, 'm');
+        const rs = scenario({ input: 'NR', routes: repairRoutes(), edge });
+        const rb = await base(rs, path.join(rs.dir, 'base'));
+        assert.equal(rb.code, 1, rb.stdout + rb.stderr);
+        assert.match(rb.stderr, want, 'repair: never opened by a read that failed over a healthy bucket');
+        assert.ok(!fs.existsSync(path.join(rs.dir, 'base')));
+        const ru = await upload(rs, 'repair');
+        assert.equal(ru.code, 1, ru.out);
+        assert.match(ru.out, want, 'the upload step refuses the repair in the same way');
+        assert.equal(ru.puts.length, 0, 'nothing is written');
+        assert.equal(rs.ghLog().length, 0, 'GitHub is not asked');
+        const sc = scenario({ input: 'B', edge });
+        const nb = await normalBase(sc, path.join(sc.dir, 'base'));
+        assert.equal(nb.code, 1, nb.stdout + nb.stderr);
+        assert.match(nb.stderr, want, 'a normal run: never LIVE UNVERIFIED for a read that failed');
+        const nu = await upload(sc);
+        assert.equal(nu.code, 1, nu.out);
+        assert.match(nu.out, want);
+        assert.equal(nu.puts.length, 0);
+        const rc = await resignCheck(sc, path.join(T, 'tree-A'));
+        assert.equal(rc.code, 1, rc.stdout + rc.stderr);
+        assert.match(rc.stderr, want, 'resign-check: never "does not verify" for a read that failed');
+        const u = await upload(scenario({ input: 'R', edge }), 'resign', ['--tree', path.join(T, 'tree-A')]);
+        assert.equal(u.code, 1, u.out);
+        assert.match(u.out, want);
+        assert.equal(u.puts.length, 0);
+      }
+    });
+
+    test('LIVE-edge-not-bucket: an index served that is not the pair in R2 (an edge behind the bucket, or one serving other bytes) is "dispatch again later" for a publish and a re-sign; nothing is written', async () => {
+      const A0 = objectsOf('A0');
+      const live = { ...objectsOf('A'), [catKeyOf('A0')]: A0[catKeyOf('A0')] }; // A0's pair, served alone, verifies over its catalog
+      const want = /^REFUSED: the index served over the prefix is not the head and signature in R2 .*dispatch again later$/m;
+      for (const edge of [{ [HEAD]: A0[HEAD], [SIG]: A0[SIG] }, { [SIG]: A0[SIG] }, { [HEAD]: null }, { [SIG]: null }]) {
+        const what = JSON.stringify(Object.keys(edge));
+        const u = await upload(scenario({ live, input: 'B', edge }));
+        assert.equal(u.code, 1, `${what}: ${u.out}`);
+        assert.match(u.out, want, what);
+        assert.doesNotMatch(u.out, /LIVE UNVERIFIED/, `${what}: the bucket's pair verifies; the edge is no verdict on it`);
+        assert.equal(u.puts.length, 0, what);
+        const r = await upload(scenario({ live, input: 'R', edge }), 'resign', ['--tree', path.join(T, 'tree-A')]);
+        assert.equal(r.code, 1, `${what}: ${r.out}`);
+        assert.match(r.out, want, what);
+        assert.equal(r.puts.length, 0, what);
+      }
+    });
+
+    test('PB-resign-catalog-edge-only: a live catalog gone from R2 but still served from the edge cache is never re-signed; other bytes under its name are swapped', async () => {
+      const key = catKeyOf('A');
+      const A = objectsOf('A');
+      const resignA = (sc) => upload(sc, 'resign', ['--tree', path.join(T, 'tree-A')]);
+      const gone = { ...A };
+      delete gone[key];
+      const g = await resignA(scenario({ input: 'R', live: gone, edge: { [key]: A[key] } }));
+      assert.equal(g.code, 1, g.out);
+      assert.match(g.out, new RegExp(`^REFUSED: resign: the live catalog ${esc(key.slice(3))} is not in R2, only in the edge cache`, 'm'));
+      assert.equal(g.puts.length, 0, 'a re-sign writes the pair only, and not over a catalog the mirror does not hold');
+      const other = { ...A, [key]: object(Buffer.from('{"not":"the catalog"}'), 'application/json', IMMUTABLE) };
+      const s = await resignA(scenario({ input: 'R', live: other, edge: { [key]: A[key] } }));
+      assert.equal(s.code, 1, s.out);
+      assert.match(s.out, new RegExp(`^REFUSED: the mirror holds another file under ${esc(key.slice(3))} .*swapped in R2`, 'm'));
+      assert.equal(s.puts.length, 0);
+      const e = await resignA(scenario({ input: 'R', faults: [{ op: 'get-object', key, nth: 1, result: 'error' }] }));
+      assert.equal(e.code, 1, e.out);
+      assert.match(e.out, new RegExp(`^REFUSED: ${esc(key.slice(3))}: the mirror cannot be read \\(.*\\): nothing was written; dispatch again later$`, 'm'));
+      assert.equal(e.puts.length, 0);
+      const ok = await resignA(scenario({ input: 'R' }));
+      assert.equal(ok.code, 0, ok.out);
+      assert.ok(ok.calls.some(c => c.op === 'get-object' && c.key === key), 'the live catalog is read from R2 itself');
+      assert.deepEqual(ok.puts.map(p => p.key), [SIG, HEAD]);
+    });
+  });
+});
+
+describe('long refusals and usage errors', () => {
+  test('REFUSED-long-keeps-way-out: a MAIN DIVERGES refusal over 300 characters keeps its way out, before the differences, on its REFUSED line', async () => {
+    // Seven differences from the live A: five revocations on main only, dusk listed on main only, intel's versions.
+    const revoked = ['gone', 'old', 'bad', 'four', 'five'].map(n =>({ id: `dev.example.${n}`, versions: '*', reason: 'Revoked on main after the live head was made.', date: '2026-01-01' }));
+    const tree = writeTree(path.join(T, 'tree-long'), { ...TREE_B, revoked });
+    const sc = scenario({ input: 'R' });
+    const b = await resignCheck(sc, tree);
+    assert.equal(b.code, 1, b.stdout + b.stderr);
+    const u = await upload(sc, 'resign', ['--tree', tree]);
+    assert.equal(u.code, 1, u.out);
+    assert.equal(u.puts.length, 0);
+    for (const [name, r, wayOut] of [['build-index.mjs', b, 'treat it as a security event (docs/RUNBOOK.md) before anything else'], ['upload.mjs', u, 'a security event (docs/RUNBOOK.md)']]) {
+      const line = refusedLine(r);
+      assert.ok(line.length > 300, `${name}: a refusal longer than 300 characters (${line.length})`);
+      assert.match(line, /^REFUSED: MAIN DIVERGES: /, name);
+      const at = line.indexOf(wayOut);
+      assert.ok(at > 0, `${name}: the way out is on the REFUSED line: ${line}`);
+      assert.ok(at < line.indexOf('revocation on main only: dev.example.bad *'), `${name}: the way out comes before the differences: ${line}`);
+      assert.match(line, /; 2 more\)$/, `${name}: the differences, five and a count of the rest, at the end`);
+    }
+  });
+
+  test('USAGE-one-line: a usage error whose text holds line breaks prints no line that starts a workflow command, in build-index.mjs and upload.mjs', async () => {
+    const evil = '--x\n::error::injected';
+    const b = await run('tools/build-index.mjs', ['base', evil]);
+    const u = await run(TOOL, [evil]);
+    for (const [name, r] of [['build-index.mjs', b], ['upload.mjs', u]]) {
+      assert.equal(r.code, 2, `${name}: ${JSON.stringify(r.stdout + r.stderr)}`);
+      const lines = `${r.stdout}\n${r.stderr}`.split(/\r\n|\r|\n/);
+      assert.ok(lines.every(l => !l.trimStart().startsWith('::')), `${name}: no line starts a workflow command: ${JSON.stringify(lines)}`);
+      assert.match(r.stderr, /^Unknown option '--x ::error::injected'/m, `${name}: the reason, on one line`);
+    }
   });
 });

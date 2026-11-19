@@ -19,11 +19,15 @@
 //  4. The live pair (head and signature, at most 16,384 bytes each, with their ETags), read before any write and kept. Production and
 //     resign: it must verify with the pinned keys, the live index must verify as the build job's base step reads it (liveVerifies in
 //     tools/lib/indexbuild.mjs, the one definition: the head, its signature and the catalog the head names, read over the prefix as
-//     the app reads them), and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). A
+//     the app reads them), and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). The index served must be the
+//     pair just read from R2, byte for byte (an edge behind the bucket, or one serving other bytes, is no verdict on it), and a read
+//     over the prefix that fails for another reason than HTTP 404 or more bytes than its cap (a 429 or 503, a network error, a
+//     time-out, a redirect) is none either: "dispatch again later", in every mode, repair included. A
 //     missing head is a first publish only when GitHub shows no run with an approved index and a successful sign (a signed head
 //     may have gone live; tools/approved-base.mjs, fail closed; never for resign). Resign: the new head names the live head's catalog, and that catalog
 //     is the one main builds (MAIN DIVERGES otherwise: re-signing a replayed older head would make it fresh again; plan section 8,
-//     test MV-diverged). Target test: the earlier test pair is not checked. --repair true
+//     test MV-diverged), read from R2 itself with its SHA-256 (the edge caches it for a year after the bucket lost it, and resign
+//     writes the pair only). Target test: the earlier test pair is not checked. --repair true
 //     (recovery R2, plan 4.2): a live index that verifies (liveVerifies, as in the build job) is refused (NOT BROKEN), so a live pair
 //     that verifies over a catalog that is gone is repaired; else the base is computed again from the candidate
 //     runs' artifacts (tools/lib/repairbase.mjs, GH_TOKEN with actions: read; a missing artifact or no verified candidate stops the
@@ -38,7 +42,7 @@
 //     the live head's ETag (If-None-Match: * on a first publish); Cache-Control no-cache. Recovery R1 (plan 4.2): a write that fails
 //     after its one retry, or answers 412, is followed by a re-read of that object before anything else; a head that did not land
 //     puts the old signature back with If-Match on the new one's ETag (production and resign only, never on a first publish or a
-//     repair: their old pair never verified).
+//     repair: the old index did not verify, so there is nothing to go back to).
 //  8. Every exit after step 7 began re-reads both objects and verifies the pair: PUBLISHED (exit 0), else UNCHANGED, FIRST-PUBLISH
 //     ORPHAN, TEST NOT PUBLISHED, REPLAYED or HALF-PUBLISHED (exit 1; docs/RUNBOOK.md, "When a run is red").
 // Exit 0 published, 1 refused or not published, 2 usage.
@@ -48,7 +52,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from '../lib/summary.mjs';
-import { oneLine } from '../lib/github.mjs';
+import { printableLine } from '../lib/github.mjs';
 import {
   PREFIXES, ROOT, headBoundsProblem, indexKeys, liveVerifies, notBroken, obtainArchive, prefixProblem, readLive, refusalLines, revKey, runVendored,
   sha256, treeDiff,
@@ -68,7 +72,7 @@ const USAGE = [
   '       node tools/publish/upload.mjs --resign --in <folder> [--summary <file>]',
   '       tests only: [--prefix <URL>] [--key <pub>...] [--archive-cache <dir>] [--tree <dir>] (--tree with --resign only)',
 ].join('\n');
-const usage = (why) => { if (why) console.error(why); console.error(USAGE); process.exit(2); };
+const usage = (why) => { if (why) console.error(printableLine(why)); console.error(USAGE); process.exit(2); };
 
 let a;
 try {
@@ -103,15 +107,17 @@ function end(code, verdict) {
   process.exit(code);
 }
 /**
- * Ends the run refused. `wrote` says whether content-addressed files were written (the pair never was). `why` is printed as one line
- * of printable ASCII (oneLine), so no text it carries (a path, a server's answer, a vendored tool's output) starts a line of its own,
- * a workflow command (`::`) included.
+ * Ends the run refused. `wrote` says whether content-addressed files were written (the pair never was). `why` is printed whole as one
+ * line of printable ASCII (printableLine), so no text it carries (a path, a server's answer, a vendored tool's output) starts a line
+ * of its own, a workflow command (`::`) included, and its way out is never cut off.
  */
 function refuse(why, wrote = false) {
-  console.error(`REFUSED: ${oneLine(why)}`);
+  console.error(`REFUSED: ${printableLine(why)}`);
   R.fail('upload', why);
   end(1, `REFUSED: the head and its signature were not written${wrote ? ' (content-addressed files may have been)' : ''}`);
 }
+
+const swapped = (name) => `the mirror holds another file under ${name} (not the size and SHA-256 the catalog names): swapped in R2; the owner looks into it before anything is published`;
 
 const repair = a.repair === 'true';
 if (repair && target === 'test') refuse('repair is for target production only');
@@ -220,21 +226,38 @@ if (target === 'test') {
   if (oldHead.status !== 'ok' || oldSig.status !== 'ok' || !verifies(oldHead.bytes, oldSig.bytes)) {
     refuse(`LIVE UNVERIFIED: the live head and signature do not verify with ${keyText}; ${R2}`);
   }
-  // The build job's definition (liveVerifies): the pair in the bucket verifies, and so must the index served, its catalog included.
+  // The build job's definition (liveVerifies): the pair in the bucket verifies, and so must the index served, its catalog included. The
+  // index served must be that pair: an edge behind the bucket, or one serving other bytes, says nothing about what is in R2.
   const liveIndex = await readLive({ prefix: P, keys });
   if (liveIndex.status === 'unreadable') refuse(`the live index cannot be read (${liveIndex.why}): nothing was written; dispatch again later`);
-  if (!liveVerifies(liveIndex)) refuse(`LIVE UNVERIFIED: ${liveIndex.why ?? 'the live head answers HTTP 404 over the prefix'}; ${R2}`);
+  const isBucket = (served, o) => Buffer.isBuffer(served) && o.status === 'ok' && served.equals(o.bytes);
+  if (!isBucket(liveIndex.headBytes, oldHead) || !isBucket(liveIndex.sigBytes, oldSig)) {
+    const seen = liveIndex.status === 'missing' ? 'its head answers HTTP 404' : liveIndex.status === 'ok' ? 'another pair that verifies' : liveIndex.why;
+    refuse(`the index served over the prefix is not the head and signature in R2 (${seen}): an edge cache behind the bucket, or one serving `
+      + 'other bytes, is no verdict on it; nothing was written; dispatch again later');
+  }
+  if (!liveVerifies(liveIndex)) refuse(`LIVE UNVERIFIED: ${liveIndex.why}; ${R2}`);
   const live = I.parseIndexHead(oldHead.bytes, P);
   const dg = Date.parse(head.generated) - Date.parse(live.generated);
   if (dg < 0 || (dg === 0 && head.catalog.sha256 !== live.catalog.sha256)) refuse(`the new head (${head.generated}) is older than the live head (${live.generated}), or the same time with another catalog: a rollback`);
   if (resign && JSON.stringify(head.catalog) !== JSON.stringify(live.catalog)) refuse('resign: the new head names another catalog than the live head');
   if (resign) {
+    // Resign writes the pair only, so the catalog the new head names must be in R2 itself: the edge serves a catalog (immutable) for a
+    // year after the bucket lost it, and a head naming it would outlive that copy.
+    const rc = await r2.get(K(catalogName), head.catalog.size);
+    if (rc.status === 'error') refuse(`${catalogName}: the mirror cannot be read (${rc.why}): nothing was written; dispatch again later`);
+    if (rc.status === 'missing') {
+      refuse(`resign: the live catalog ${catalogName} is not in R2, only in the edge cache: a re-sign writes the head and signature only and `
+        + 'would name a catalog the mirror no longer holds; the owner looks into the deletion (docs/RUNBOOK.md), then dispatches publish.yml, which writes a new catalog');
+    }
+    if (rc.status !== 'ok' || rc.bytes.length !== head.catalog.size || sha256(rc.bytes) !== head.catalog.sha256) refuse(swapped(catalogName));
     // The catalog re-signed is the live one (above); it must be the one main builds, or a replayed older head would come back fresh.
+    // The way out first, the differences last: the summary keeps 500 characters of a line.
     const diff = treeDiff(path.resolve(a.tree ?? ROOT), cat);
     if (diff.length > 0) {
-      refuse(`MAIN DIVERGES: the live catalog is not the one main builds (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''}); `
-        + 'a re-sign never makes a replayed older head fresh again. If main was not published yet, run publish.yml; if it was, the live head '
-        + 'is a replay: a security event (docs/RUNBOOK.md)');
+      refuse('MAIN DIVERGES: the live catalog is not the one main builds; a re-sign never makes a replayed older head fresh again. If main '
+        + 'was not published yet, run publish.yml; if it was, the live head is a replay: a security event (docs/RUNBOOK.md). '
+        + `Main and the live catalog differ (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''})`);
     }
     R.pass('main', 'the re-signed catalog is main\'s: the same revocations, listings, versions and archives');
   }
@@ -252,7 +275,6 @@ fs.writeFileSync(staged(catalogName), catBytes);
 const cache = a['archive-cache'] ? path.resolve(a['archive-cache']) : path.join(work, 'cache');
 fs.mkdirSync(cache, { recursive: true });
 const readInMirror = new Set();
-const swapped = (name) => `the mirror holds another file under ${name} (not the size and SHA-256 the catalog names): swapped in R2; the owner looks into it before anything is published`;
 for (const x of list) {
   const m = await r2.get(K(x.name), x.size);
   if (m.status === 'error') refuse(`${x.name}: the mirror cannot be read (${m.why}): dispatch again later`);
@@ -323,7 +345,7 @@ casFailed('index.json', h);
 if (!unchanged(hb, oldHead)) await finish('the live head is neither the old nor the new one; nothing more is written');
 if (target === 'test') await finish('the head was not written; target test restores nothing');
 if (firstPublish) await finish('the head was not written; a first publish has no old signature to put back');
-if (repair) await finish('the head was not written; the old pair never verified, so nothing is put back');
+if (repair) await finish('the head was not written; a repair puts nothing back (the old index did not verify)');
 if (newSigEtag === null) {
   const sb = await r2.get(SIG_KEY, I.MAX_INDEX_SIG_BYTES);
   if (!holds(sb, sigBytes)) await finish('the head was not written, and the live signature is not the new one: nothing is put back');

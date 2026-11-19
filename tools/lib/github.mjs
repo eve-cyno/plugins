@@ -9,8 +9,13 @@ export const TIMEOUT_MS = 120_000;
 const MAX_OUTPUT = 32 * 1024 * 1024;
 const HEADERS = ['-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28'];
 
-/** One line, printable ASCII only, so no answer can start a workflow command or a fake output line. */
-export const oneLine = (s) => String(s).replace(/[^\x20-\x7e]+/g, ' ').trim().slice(0, 300);
+/**
+ * One line, printable ASCII only, so no text can start a workflow command or a fake output line; never cut, for a tool's own refusal
+ * or usage error, whose way out must stay on its line.
+ */
+export const printableLine = (s) => String(s).replace(/[^\x20-\x7e]+/g, ' ').trim();
+/** printableLine, at most 300 characters: for an answer (a server's, a child's) quoted inside a longer message. */
+export const oneLine = (s) => printableLine(s).slice(0, 300);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /**

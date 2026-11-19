@@ -10,7 +10,9 @@
 // it took effect. result: get-object and head-object 'network' | 'error', head-object also 'no-etag'; put-object 'network-landed' | 'network-lost' | '412' | 'error' | 'no-etag' (the write
 // lands and the answer names no ETag).
 // serveBucket() serves the same file over http://127.0.0.1 as the custom domain serves the bucket: each object with its stored
-// Cache-Control, Content-Type and ETag, 404 for a missing key.
+// Cache-Control, Content-Type and ETag, 404 for a missing key. The bucket file's `edge` stands for what the edge serves instead of the
+// bucket (a cache behind or ahead of it, an answer of its own): { key: object (served in place of the bucket's) | null (404) |
+// { status } (that status, no body) }; the stub aws never reads it.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -110,9 +112,9 @@ export function pointStub(bin, { bucket, log }) {
   fs.writeFileSync(path.join(bin, 'aws-paths.json'), JSON.stringify({ bucket, log }));
 }
 
-/** A bucket file: { objects: { key: { b64, etag, contentType, cacheControl } }, faults, counts, version, skeletonDrop }. */
-export function writeBucket(file, { objects = {}, faults = [], version = 'aws-cli/2.31.9 Python/3.13.7 Linux/6.11.0-1012-azure exe/x86_64.ubuntu.24', skeletonDrop = [] } = {}) {
-  fs.writeFileSync(file, JSON.stringify({ objects, faults, counts: {}, version, skeletonDrop }));
+/** A bucket file: { objects: { key: { b64, etag, contentType, cacheControl } }, faults, counts, version, skeletonDrop, edge }. */
+export function writeBucket(file, { objects = {}, faults = [], version = 'aws-cli/2.31.9 Python/3.13.7 Linux/6.11.0-1012-azure exe/x86_64.ubuntu.24', skeletonDrop = [], edge = {} } = {}) {
+  fs.writeFileSync(file, JSON.stringify({ objects, faults, counts: {}, version, skeletonDrop, edge }));
 }
 export const readBucket = (file) => JSON.parse(fs.readFileSync(file, 'utf8')).objects;
 /** One bucket object for `bytes` with the headers the upload step gives it. */
@@ -129,7 +131,10 @@ export function serveBucket(bucketFile) {
       requests.push({ url: req.url, at: Date.now() });
       const key = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname.slice(1));
       const f = bucketFile();
-      const o = f && fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')).objects[key] : undefined;
+      const st = f && fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null;
+      const e = st?.edge && Object.hasOwn(st.edge, key) ? st.edge[key] : undefined;
+      if (e && typeof e.status === 'number') { res.writeHead(e.status, { 'Content-Type': 'text/plain' }); res.end(); return; }
+      const o = e === undefined ? st?.objects[key] : e;
       if (!o) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('not found'); return; }
       const b = Buffer.from(o.b64, 'base64');
       res.writeHead(200, { 'Cache-Control': o.cacheControl, 'Content-Type': o.contentType, ETag: o.etag, 'Content-Length': b.length });

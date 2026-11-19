@@ -15,6 +15,8 @@
 //     GitHub shows no run with an approved index and a successful sign (tools/approved-base.mjs; fail closed); otherwise,
 //     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED. "The live index verifies" has one definition,
 //     liveVerifies in tools/lib/indexbuild.mjs (the head, its signature and the catalog the head names), which upload.mjs uses too.
+//     A read that fails for another reason than HTTP 404 or more bytes than its cap (a 429 or 503, a network error, a time-out, a
+//     redirect) is no verdict on the live index: "dispatch again later" in every step, with or without repair.
 //     --repair true (recovery R2, target production only): refused with NOT BROKEN when the live index verifies. Otherwise the base is
 //     the newest verified candidate run's head, signature and catalog from GitHub's artifacts (tools/lib/repairbase.mjs; the live
 //     index never is), with the union of the verified candidates' revocations and the floor in BASE.json (kind repair). A missing
@@ -40,7 +42,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from './lib/summary.mjs';
-import { oneLine } from './lib/github.mjs';
+import { printableLine } from './lib/github.mjs';
 import {
   LIFETIME_MS, PREFIXES, ROOT, buildIndex, fetchArchive, headBoundsProblem, indexKeys, liveVerifies, notBroken, pacer, prefixProblem,
   readJson, readLive, refusalLines, revKey, runVendored, sha256, treeDiff,
@@ -68,7 +70,7 @@ const ALLOWED = {
 };
 const REQUIRED = { build: ['out'], base: ['target', 'repair', 'out'], '--compare-live': ['base', 'index', 'lift', 'repair'], 'resign-check': ['outputs'], resign: ['out'] };
 
-const usage = (why) => { if (why) console.error(why); console.error(USAGE); process.exit(2); };
+const usage = (why) => { if (why) console.error(printableLine(why)); console.error(USAGE); process.exit(2); };
 let a, cmd;
 try {
   const p = parseArgs({
@@ -97,13 +99,13 @@ function end(code, verdict) {
   process.exit(code);
 }
 /**
- * Ends the run refused: REFUSED on stderr (and in the summary), exit 1; `cleanup` folders are removed first. `why` is printed as one
- * line of printable ASCII (oneLine), so no text it carries (a path, a server's answer, a vendored tool's output) starts a line of its
- * own, a workflow command (`::`) included.
+ * Ends the run refused: REFUSED on stderr (and in the summary), exit 1; `cleanup` folders are removed first. `why` is printed whole as
+ * one line of printable ASCII (printableLine), so no text it carries (a path, a server's answer, a vendored tool's output) starts a
+ * line of its own, a workflow command (`::`) included, and its way out is never cut off.
  */
 function refuse(why, ...cleanupDirs) {
   for (const d of cleanupDirs) fs.rmSync(d, { recursive: true, force: true });
-  console.error(`REFUSED: ${oneLine(why)}`);
+  console.error(`REFUSED: ${printableLine(why)}`);
   R.fail('build-index', why);
   end(1, `REFUSED ${cmd}`);
 }
@@ -115,10 +117,11 @@ function refuseUnlessMain(catalog, ...cleanupDirs) {
   const diff = treeDiff(path.resolve(a.tree ?? ROOT), catalog);
   if (diff.length === 0) { R.pass('main', 'the live catalog is main\'s: the same revocations, listings, versions and archives'); return; }
   for (const d of diff.slice(0, 20)) R.note(`main differs from the live catalog: ${d}`);
-  refuse(`MAIN DIVERGES: the live catalog is not the one main builds (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''}). `
-    + 'A re-sign would re-sign it with a new generated time, so an older verified head replayed into the mirror would come back fresh and '
-    + 'apps would drop the revocations it lacks. If main was not published yet, run publish.yml; if it was, the live head is a replay: '
-    + `treat it as a security event (docs/RUNBOOK.md) before anything else`, ...cleanupDirs);
+  // The way out first, the differences last: the summary keeps 500 characters of a line.
+  refuse('MAIN DIVERGES: the live catalog is not the one main builds. A re-sign would re-sign it with a new generated time, so an older '
+    + 'verified head replayed into the mirror would come back fresh and apps would drop the revocations it lacks. If main was not '
+    + 'published yet, run publish.yml; if it was, the live head is a replay: treat it as a security event (docs/RUNBOOK.md) before '
+    + `anything else. Main and the live catalog differ (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''})`, ...cleanupDirs);
 }
 const keysOrUsage = () => {
   const k = indexKeys(a.key ?? []);
@@ -283,6 +286,7 @@ async function stepResignCheck() {
   const prefix = a.prefix ?? PREFIXES.production;
   const live = await readLive({ prefix, keys: keysOrUsage() });
   if (live.status === 'missing') refuse(`the live head answers HTTP 404: resign never makes a first publish or repairs (publish.yml, or ${R2})`);
+  if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to check; dispatch again later`);
   if (!liveVerifies(live)) refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
   const now = Date.now(), g = Date.parse(live.head.generated), x = Date.parse(live.head.expires);
   const needed = now - g >= RESIGN_AT_MS || x - now < RESIGN_AT_MS;
@@ -301,6 +305,7 @@ async function stepResign() {
   const pace = pacer();
   const live = await readLive({ prefix, keys: keysOrUsage(), pace });
   if (live.status === 'missing') refuse(`the live head answers HTTP 404: nothing to re-sign (publish.yml, or ${R2})`);
+  if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to re-sign; dispatch again later`);
   if (!liveVerifies(live)) refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
   refuseUnlessMain(live.catalog);
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'evecyno-resign-'));

@@ -206,24 +206,36 @@ async function getLive(url, max, pace, timeoutMs = I.INDEX_TIMEOUT_MS) {
 }
 
 /**
+ * True when a failed read (fetchCapped's `why`) says what is served: HTTP 404, or more bytes than the cap. Any other failure (another
+ * status such as 429 or 503, a network error, a time-out, a redirect, a transfer that broke off) says nothing about the index.
+ */
+const servedAnswer = (why) => why === 'HTTP 404' || /^more than \d+ bytes$/.test(why);
+
+/**
  * The index served under `prefix` now, read as the app reads it: {status: 'missing'} (the head answers 404), {status: 'unreadable',
- * why} (the head cannot be read), {status: 'unverified', headBytes, why} (anything the keys or the app's parsers refuse, the catalog
- * included; headBytes: the head as served, unverified, for recovery R2's floor only), or {status: 'ok', headBytes, sigBytes, head,
+ * why} (the head, the signature or the catalog cannot be read: a failure that is not servedAnswer, so no verdict on the index;
+ * "dispatch again later"), {status: 'unverified', headBytes, sigBytes?, why} (a signature or catalog that answers 404 or is over its
+ * cap, and anything the keys or the app's parsers refuse; headBytes and sigBytes: the head and the signature as served, unverified, for
+ * recovery R2's floor and the upload step's compare with the pair in R2 only), or {status: 'ok', headBytes, sigBytes, head,
  * catalogName, catalogBytes, catalog}. Whether the live index verifies is liveVerifies() of this answer, nothing else.
  */
 export async function readLive({ prefix, keys, pace = pacer() }) {
   const h = await getLive(`${prefix}index.json`, I.MAX_HEAD_BYTES, pace);
   if (!h.ok) return h.why === 'HTTP 404' ? { status: 'missing' } : { status: 'unreadable', why: `index.json: ${h.why}` };
   const s = await getLive(`${prefix}index.json.minisig`, I.MAX_INDEX_SIG_BYTES, pace);
-  if (!s.ok) return { status: 'unverified', headBytes: h.bytes, why: `index.json.minisig: ${s.why}` };
+  if (!s.ok) {
+    const why = `index.json.minisig: ${s.why}`;
+    return servedAnswer(s.why) ? { status: 'unverified', headBytes: h.bytes, why } : { status: 'unreadable', why };
+  }
+  const unverified = (why) => ({ status: 'unverified', headBytes: h.bytes, sigBytes: s.bytes, why });
   const v = I.verifyIndexHead(h.bytes, s.bytes.toString('utf8'), keys, prefix);
-  if (!v.ok) return { status: 'unverified', headBytes: h.bytes, why: `the live head does not verify with the index keys (${v.reason})` };
+  if (!v.ok) return unverified(`the live head does not verify with the index keys (${v.reason})`);
   const catalogName = v.head.catalog.url.slice(prefix.length);
   const c = await getLive(v.head.catalog.url, v.head.catalog.size, pace);
-  if (!c.ok) return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: ${c.why}` };
-  if (!I.catalogMatches(c.bytes, v.head)) return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: its size or SHA-256 is not the one the live head names` };
+  if (!c.ok) return servedAnswer(c.why) ? unverified(`${catalogName}: ${c.why}`) : { status: 'unreadable', why: `${catalogName}: ${c.why}` };
+  if (!I.catalogMatches(c.bytes, v.head)) return unverified(`${catalogName}: its size or SHA-256 is not the one the live head names`);
   let catalog;
-  try { catalog = I.parseCatalog(c.bytes, v.head, { prefix }); } catch (e) { return { status: 'unverified', headBytes: h.bytes, why: `${catalogName}: the app refuses it (${e?.message ?? 'bad_index'})` }; }
+  try { catalog = I.parseCatalog(c.bytes, v.head, { prefix }); } catch (e) { return unverified(`${catalogName}: the app refuses it (${e?.message ?? 'bad_index'})`); }
   return { status: 'ok', headBytes: h.bytes, sigBytes: s.bytes, head: v.head, catalogName, catalogBytes: c.bytes, catalog };
 }
 
