@@ -1,4 +1,5 @@
-// Checks C3 (names), C10 (permissions diff), C11 (new plugin), C14 (maintainer), C17 (engines reach) over plain parsed entries.
+// Checks C3 (names), C10 (permissions diff), C11 (new plugin), C14 (maintainer), C17 (engines reach) and the review class of a new
+// version of a revoked id (C15) over plain parsed entries.
 // Every rule that the app also applies comes from the vendored host (requested, delta, isEmpty, foldName, listingAdmit, HOST_API);
 // nothing here reimplements them. Pure: no I/O. An escalation is a flag (`NEEDS REVIEW escalation`), never a refusal.
 import { createRequire } from 'node:module';
@@ -25,11 +26,26 @@ export function permissionsDiff(oldV, newV) {
   return { escalation: !isEmpty(d), delta: d, background: newV.background === true && oldV.background !== true };
 }
 
-/** The version of `all` that C10 compares `v` against: the greatest strictly lower semver, or null. */
+/** The version of `all` with the greatest semver strictly lower than `v`'s, or null. */
 function previousOf(v, all) {
   let best = null;
   for (const o of all) if (semver.lt(o.version, v.version) && (best === null || semver.gt(o.version, best.version))) best = o;
   return best;
+}
+
+/**
+ * The version C10 compares an added version `v` of `head` against (`base`: the entry on the base, or null): the greatest lower version
+ * that is listed, as the head lists them (unlisting is one-way, C8); when none is listed, the greatest lower version on the base in any
+ * listing state, so unlisting every older version (in the same pull request or an earlier one) never skips the comparison. A version
+ * on the base is its base copy; an unlisted version the base does not name is never one (against a tree C8 refuses it, a catalog leaves
+ * it out). Null when there is no such version. Throws on a version that is not semver.
+ */
+export function versionBefore(v, head, base) {
+  const onBase = base?.versions ?? [];
+  const known = new Set(onBase.map((x) => x.version));
+  const listedNow = (x) => (head.versions.find((y) => y.version === x.version) ?? x).unlisted !== true;
+  const listed = [...onBase, ...head.versions.filter((x) => !known.has(x.version))].filter(listedNow);
+  return previousOf(v, listed) ?? previousOf(v, onBase);
 }
 
 /** C17: the range admits a host API major that a released host supports. A range that does not parse admits none. */
@@ -80,10 +96,10 @@ function identityChanged(head, base) {
 
 /**
  * All of C3, C10, C11, C14, C17 for one entry. `base` is the entry on the base branch or null, `others` every other entry of the head
- * tree, `prAuthor` the PR's login (null when the check runs without one). Returns { refusals: string[], flags: string[] } with flags
- * from: new, escalation, identity, first-party, engines.
+ * tree, `prAuthor` the PR's login (null when the check runs without one), `revoked` the revocations of the base and the head (C15).
+ * Returns { refusals: string[], flags: string[] } with flags from: new, escalation, identity, first-party, engines, revoked.
  */
-export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
+export function checkEntry(head, base, { others = [], prAuthor = null, revoked = [] } = {}) {
   const refusals = checkNames(head, base, others);
   const flags = new Set();
   if (base === null) flags.add('new');
@@ -94,15 +110,16 @@ export function checkEntry(head, base, { others = [], prAuthor = null } = {}) {
     if (prAuthor !== null && !sameEntry(head, base) && !(base.maintainers ?? []).some((m) => m.toLowerCase() === prAuthor.toLowerCase())) flags.add('identity');
   }
   const known = new Set((base?.versions ?? []).map((v) => v.version));
-  // The version before an added one is the greatest lower version that is listed, as the head lists them (unlisting is one-way, C8).
-  const listedNow = (v) => (head.versions.find((x) => x.version === v.version) ?? v).unlisted !== true;
-  const all = [...(base?.versions ?? []), ...head.versions.filter((v) => !known.has(v.version))].filter(listedNow);
+  // A revocation names the id: a new version of it is read by a maintainer, whatever it asks for (C15).
+  const revokedId = revoked.some((r) => typeof r === 'object' && r !== null && r.id === head.id);
   for (const v of head.versions) {
     // An unlisted version is never an added one (C8): against a live catalog, which leaves it out, it is not compared again.
     if (known.has(v.version) || v.unlisted === true) continue;
+    if (revokedId) flags.add('revoked');
     if (head.type !== 'theme' && !enginesReach(v.engines)) flags.add('engines');
-    const prev = previousOf(v, all);
-    if (prev === null) continue;
+    const prev = versionBefore(v, head, base);
+    // Fail closed: a known id with no lower version at all leaves nothing to compare with (C8 refuses such a version anyway).
+    if (prev === null) { if (base !== null) flags.add('escalation'); continue; }
     const d = permissionsDiff(prev, v);
     if (d.escalation || d.background) flags.add('escalation');
   }

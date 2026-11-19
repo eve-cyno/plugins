@@ -62,6 +62,36 @@ describe('entry flags (C10, C11, C14, C17)', () => {
     assert.deepEqual(checkEntry(entry([ver('1.1.0', { overlays: true }, { unlisted: true, engines: '^2.0.0' }), ver('1.0.0')]), base, { prAuthor: 'alice' }).flags, []);
     assert.deepEqual(checkEntry(entry([ver('1.1.0', { overlays: true }, { engines: '^2.0.0' }), ver('1.0.0')]), base, { prAuthor: 'alice' }).flags.sort(), ['engines', 'escalation']);
   });
+  test('DF-compare-unlisted-fallback: no listed lower version compares with an unlisted one (the greatest lower one on the base, any listing state)', () => {
+    const head = (perms, extra = {}) => entry([ver('2.0.0', perms, extra), ver('1.1.0', { overlays: true }, { unlisted: true }), ver('1.0.0', {}, { unlisted: true })]);
+    const sameBase = entry([ver('1.1.0', { overlays: true }), ver('1.0.0')]);
+    assert.deepEqual(checkEntry(head({ overlays: true }), sameBase, { prAuthor: 'alice' }).flags, [], 'unlisted in this pull request: 1.1.0, not 1.0.0');
+    assert.deepEqual(checkEntry(head({ overlays: true, network: ['https://b.example'] }), sameBase, { prAuthor: 'alice' }).flags, ['escalation']);
+    assert.deepEqual(checkEntry(head({ overlays: true }, { background: true }), sameBase, { prAuthor: 'alice' }).flags, ['escalation'], 'background turned on');
+    const unlistedBase = entry([ver('1.1.0', { overlays: true }, { unlisted: true }), ver('1.0.0', {}, { unlisted: true })]);
+    assert.deepEqual(checkEntry(head({ overlays: true }), unlistedBase, { prAuthor: 'alice' }).flags, [], 'unlisted by an earlier pull request');
+    assert.deepEqual(checkEntry(head({ overlays: true, network: ['https://b.example'] }), unlistedBase, { prAuthor: 'alice' }).flags, ['escalation']);
+    const listedLow = entry([ver('2.0.0', { overlays: true }), ver('1.1.0', {}, { unlisted: true }), ver('1.0.0', { overlays: true })]);
+    assert.deepEqual(checkEntry(listedLow, entry([ver('1.1.0', {}, { unlisted: true }), ver('1.0.0', { overlays: true })]), { prAuthor: 'alice' }).flags, [], 'a listed lower version comes first');
+    const headOnly = entry([ver('2.0.0', { overlays: true }), ver('1.5.0', { overlays: true }, { unlisted: true }), ver('1.0.0', {}, { unlisted: true })]);
+    assert.deepEqual(checkEntry(headOnly, entry([ver('1.0.0')]), { prAuthor: 'alice' }).flags, ['escalation'], 'an unlisted version the base does not name is never the version before');
+  });
+  test('DF-no-lower-version: no lower version on a known id flags escalation (fail closed); a new id is new', () => {
+    assert.deepEqual(checkEntry(entry([ver('2.0.0'), ver('1.5.0')]), entry([ver('2.0.0')]), { prAuthor: 'alice' }).flags, ['escalation']);
+    assert.deepEqual(checkEntry(entry([ver('1.0.0', {}, { unlisted: true }), ver('0.9.0')]), entry([ver('1.0.0', {}, { unlisted: true })]), { prAuthor: 'alice' }).flags, ['escalation']);
+    assert.deepEqual(checkEntry(entry([ver('1.1.0'), ver('1.0.0')]), null, { prAuthor: 'alice' }).flags, ['new']);
+  });
+  test('DF-revoked: an added version of an id that a revocation names is flagged revoked', () => {
+    const base = entry([ver('1.0.0')]);
+    const head = entry([ver('1.1.0'), ver('1.0.0')]);
+    const flags = (h, revoked) => checkEntry(h, base, { prAuthor: 'alice', revoked }).flags;
+    assert.deepEqual(flags(head, [{ id: 'dev.example.intel', versions: ['1.0.0'] }]), ['revoked']);
+    assert.deepEqual(flags(head, [null, 'x', { id: 'dev.example.intel', versions: '*' }]), ['revoked'], 'all versions; a malformed item is skipped');
+    assert.deepEqual(flags(head, [{ id: 'dev.other.tool', versions: '*' }]), [], 'another id');
+    assert.deepEqual(flags(base, [{ id: 'dev.example.intel', versions: ['1.0.0'] }]), [], 'no added version');
+    assert.deepEqual(flags(entry([ver('1.1.0', {}, { unlisted: true }), ver('1.0.0')]), [{ id: 'dev.example.intel', versions: ['1.0.0'] }]), [], 'an unlisted version is never an added one');
+    assert.deepEqual(checkEntry(head, base, { prAuthor: 'alice' }).flags, [], 'no revocations given');
+  });
   test('DF-base-version-untouched: versions already on base are not re-compared', () => {
     const base = entry([ver('1.1.0', { overlays: true }), ver('1.0.0')]);
     assert.deepEqual(checkEntry(base, base, { prAuthor: 'alice' }).flags, []);

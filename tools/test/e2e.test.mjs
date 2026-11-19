@@ -325,7 +325,7 @@ describe('E2E check.mjs', () => {
     assert.equal(r.code, 3, r.stdout + r.stderr);
     assert.match(r.stdout, /^FLAG new C11 dev\.example\.intel/m);
     assert.match(r.stdout, /^PASS C13 /m);
-    assert.equal(last(r.stdout), 'NEEDS REVIEW new multi-entry revocation');
+    assert.equal(last(r.stdout), 'NEEDS REVIEW new multi-entry revocation revoked', 'revoked: the tree revokes intel 1.0.0 and adds its versions');
   });
 
   test('E2E-check-publish: against the live base the lift is information, not a refusal', async () => {
@@ -445,8 +445,9 @@ describe('E2E check.mjs', () => {
     const args = (m, cache) => ['review', '--base', path.join(T, 'tree'), '--head', head, '--archive-cache', cache, '--author', 'example-login', '--mirror-url', m];
     const cache = cacheOf('review-mirror-cache');
     const r = await run('tools/check.mjs', args(P, cache));
-    assert.equal(r.code, 0, r.stdout + r.stderr);
-    assert.equal(last(r.stdout), 'NO REVIEW NEEDED');
+    assert.equal(r.code, 3, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /^FLAG escalation/m, '1.1.0 read and compared');
+    assert.equal(last(r.stdout), 'NEEDS REVIEW revoked', 'the tree revokes intel 1.0.0: a new version of it is read by a maintainer');
     assert.ok(fs.existsSync(path.join(cache, `${sha(A110)}.zip`)), 'read from the mirror');
     const none = await run('tools/check.mjs', args('none', cacheOf('review-nomirror-cache')));
     assert.match(none.stdout, /^FLAG escalation C10 dev\.example\.intel 1\.1\.0: its plugin\.json could not be read/m);

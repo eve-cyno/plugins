@@ -175,6 +175,85 @@ describe('PR fixture suite', () => {
     assert.equal(last(r.stdout), 'NO REVIEW NEEDED', 'background was on in 1.0.0, the listed version before 1.2.0');
   });
 
+  // Fable check 2026-11-19, finding 2 (fixture forkp/insert2.txt): with no listed version below an added one, C10 skipped the comparison.
+  const MORE = { characters: 'selected', network: ['https://api.example.com', 'https://collect.example.net'] };
+  test('ESC-unlist-all-same-pr: a new version with more permissions and background, every older version unlisted in the same pull request, needs review escalation', async () => {
+    const Z200 = pluginZip(manifest({ version: '2.0.0', permissions: MORE, background: true }));
+    cacheArchive(cache, Z200);
+    const base = baseTree();
+    const plain = tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), version('1.0.0', A100)])] });
+    const unlisted = tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), version('1.0.0', A100, { unlisted: true })])] });
+    for (const [label, h] of [['a plain add', plain], ['an add that unlists 1.0.0', unlisted]]) {
+      const r = await check('refuse', base, h);
+      assert.equal(r.code, 0, `${label}: a valid change, refuse passes and review decides\n${r.stdout}${r.stderr}`);
+      const v = await check('review', base, h, ['--author', 'example-login']);
+      assert.equal(v.code, 3, `${label}\n${v.stdout}${v.stderr}`);
+      assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: /m, label);
+      assert.doesNotMatch(v.stdout, /could not be read/, `${label}: compared, not a failed read`);
+      assert.equal(last(v.stdout), 'NEEDS REVIEW escalation', label);
+    }
+    // Compared with the unlisted 1.0.0, whose plugin.json is read: background alone is an escalation, nothing new is none.
+    const BG = pluginZip(manifest({ version: '2.0.0', background: true }));
+    const SAME = pluginZip(manifest({ version: '2.0.0' }));
+    for (const z of [BG, SAME]) cacheArchive(cache, z);
+    const bg = await check('review', base, tree({ entries: [pluginEntry([version('2.0.0', BG), version('1.0.0', A100, { unlisted: true })])] }), ['--author', 'example-login']);
+    assert.equal(last(bg.stdout), 'NEEDS REVIEW escalation', bg.stdout);
+    assert.doesNotMatch(bg.stdout, /could not be read/);
+    const same = await check('review', base, tree({ entries: [pluginEntry([version('2.0.0', SAME), version('1.0.0', A100, { unlisted: true })])] }), ['--author', 'example-login']);
+    assert.equal(same.code, 0, same.stdout + same.stderr);
+    assert.equal(last(same.stdout), 'NO REVIEW NEEDED');
+  });
+
+  test('ESC-unlist-then-add: one pull request unlists every version, the next adds one with more permissions and background: review escalation', async () => {
+    const Z200 = pluginZip(manifest({ version: '2.0.0', permissions: MORE, background: true }));
+    cacheArchive(cache, Z200);
+    const s1 = tree({ entries: [pluginEntry([version('1.0.0', A100, { unlisted: true })])] });
+    const first = await check('review', baseTree(), s1, ['--author', 'example-login']);
+    assert.equal(last(first.stdout), 'NO REVIEW NEEDED', 'unlisting alone needs no review');
+    const s2 = tree({ entries: [pluginEntry([version('2.0.0', Z200, { permissions: MORE }), version('1.0.0', A100, { unlisted: true })])] });
+    const r = await check('refuse', s1, s2);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const v = await check('review', s1, s2, ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: /m);
+    assert.doesNotMatch(v.stdout, /could not be read/, 'the unlisted 1.0.0 is read and compared');
+    assert.equal(last(v.stdout), 'NEEDS REVIEW escalation');
+  });
+
+  test('ESC-base-version-not-semver: a base version that is not semver leaves C10 nothing to compare: review escalation, not a crash', async () => {
+    const A110 = pluginZip(manifest({ version: '1.1.0' }));
+    const base = tree({ entries: [pluginEntry([version('1.0.0', A100), { ...version('1.0.0', A100), version: 'one' }])] });
+    const v = await check('review', base, head(A110), ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG escalation C10 dev\.example\.intel: the permissions could not be compared/m);
+  });
+
+  test('REV-new-version-of-revoked-id: an added version of an id that revoked.json names (base or head) needs review revoked', async () => {
+    const Z101 = pluginZip(manifest({ version: '1.0.1' }));
+    cacheArchive(cache, Z101);
+    const rev = [{ id: 'dev.example.intel', versions: ['1.0.0'], reason: 'Sends data to a third party.', date: today }];
+    const added = (revoked) => tree({ entries: [pluginEntry([version('1.0.1', Z101), version('1.0.0', A100)])], revoked });
+    const base = baseTree({ revoked: rev });
+    const r = await check('refuse', base, added(rev));
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const v = await check('review', base, added(rev), ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG revoked C15 dev\.example\.intel: /m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW revoked');
+    const same = await check('review', baseTree(), added(rev), ['--author', 'example-login']);
+    assert.equal(last(same.stdout), 'NEEDS REVIEW revocation revoked', 'named on the head only: the pull request revokes 1.0.0 and adds 1.0.1');
+    const lifted = await check('review', base, added([]), ['--author', 'example-login']);
+    assert.equal(last(lifted.stdout), 'NEEDS REVIEW lift revoked', 'named on the base only: the pull request lifts it and adds 1.0.1');
+    const all = [{ id: 'dev.example.intel', versions: '*', reason: 'Sends data to a third party.', date: today }];
+    assert.equal(last((await check('review', baseTree({ revoked: all }), added(all), ['--author', 'example-login'])).stdout), 'NEEDS REVIEW revoked', 'every version revoked');
+    const other = [{ id: 'dev.other.tool', versions: '*', reason: 'Sends data to a third party.', date: today }];
+    const clean = await check('review', baseTree({ revoked: other }), added(other), ['--author', 'example-login']);
+    assert.equal(clean.code, 0, clean.stdout + clean.stderr);
+    assert.equal(last(clean.stdout), 'NO REVIEW NEEDED', 'a revocation of another id');
+    const untouched = await check('review', base, baseTree({ revoked: rev }), ['--author', 'example-login']);
+    assert.equal(last(untouched.stdout), 'NO REVIEW NEEDED', 'no added version');
+  });
+
   test('PR-entries-dotfile: entries/.gitattributes is refused at C1 and flagged maintenance by C13', async () => {
     const base = baseTree();
     const h = tree({ entries: [pluginEntry([version('1.0.0', A100)])], files: { 'entries/.gitattributes': '*.json export-ignore\n' } });

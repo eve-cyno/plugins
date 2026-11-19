@@ -8,8 +8,8 @@
 // The Markdown summary escapes it again; GitHub annotations (::error / ::warning) escape it with the runner's own rules.
 import fs from 'node:fs';
 
-/** The review classes, in the order the verdict names them (plan 3.2: C3, C10, C11, C13, C14, C15, C17). */
-export const CLASSES = ['new', 'escalation', 'identity', 'first-party', 'engines', 'maintenance', 'multi-entry', 'revocation', 'lift'];
+/** The review classes, in the order the verdict names them (plan 3.2: C3, C10, C11, C13, C14, C15, C17; `revoked` added for C15 last). */
+export const CLASSES = ['new', 'escalation', 'identity', 'first-party', 'engines', 'maintenance', 'multi-entry', 'revocation', 'lift', 'revoked'];
 
 // Control characters (C0, DEL, C1), the line and paragraph separators and the bidirectional controls, as code points so no
 // literal separator can end up in this file.
