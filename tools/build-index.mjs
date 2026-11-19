@@ -12,7 +12,7 @@
 //   base   --target production|test --repair true|false --out <new folder> [--summary <file>] [--prefix <URL>] [--key <pub>...]
 //     The base of a publish: the live index, verified with the pinned index keys (catalog.json, index.json, index.json.minisig and
 //     BASE.json). target test: no live compare (plan 4.2), an empty base. A live head that answers 404 is a first publish only when
-//     GitHub shows no run with an approved index and successful sign and upload (tools/approved-base.mjs; fail closed); otherwise,
+//     GitHub shows no run with an approved index and a successful sign (tools/approved-base.mjs; fail closed); otherwise,
 //     and for any live index the keys or the app's parsers refuse, LIVE UNVERIFIED.
 //     --repair true (recovery R2, target production only): refused with NOT BROKEN when the live index verifies. Otherwise the base is
 //     the newest verified candidate run's head, signature and catalog from GitHub's artifacts (tools/lib/repairbase.mjs; the live
@@ -198,7 +198,7 @@ async function stepBase() {
     if (q.code !== 3) refuse(`LIVE UNVERIFIED: the live head answers HTTP 404, but GitHub shows an approved run or could not be asked (approved-base exit ${q.code}): a deleted head; ${R2}`);
     newFolder(out);
     writeEmptyBase(out, 'first-publish', prefix);
-    R.note('first publish: the live head answers HTTP 404 and no run has an approved index with successful sign and upload');
+    R.note('first publish: the live head answers HTTP 404 and no run has an approved index with a successful sign');
     end(0, 'BASE first publish (empty)');
   }
   if (live.status === 'unreadable') refuse(`the live index cannot be read (${live.why}): nothing to compare with; dispatch again later`);

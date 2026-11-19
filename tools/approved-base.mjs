@@ -12,8 +12,9 @@
 // or an environment that does not name exactly one reviewer is an ERROR, never "no approved run".
 //
 // Usage: node tools/approved-base.mjs --run <run id>
-// Exit 0: <A> found and <B> is ahead of it or identical; 1: NO APPROVAL or ERROR; 2: usage; 3: FIRST PUBLISH (no approved run
-// found; allowed only under the runbook's first-publish rule).
+// Exit 0: <A> found and <B> is ahead of it or identical; 1: NO APPROVAL, NOT A FIRST PUBLISH (no <A>, but a run has an approved index
+// and a successful sign: its signed head may have gone live, as recovery R2 counts it) or ERROR; 2: usage; 3: FIRST PUBLISH (no run
+// has an approved index and a successful sign; allowed only under the runbook's first-publish rule).
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -81,12 +82,6 @@ export async function reviewRun(run, id, opts) {
   return { why: '', sign: job('sign'), upload: job('upload') };
 }
 
-/** Why a run does not count as approved, signed and uploaded ('' when it counts). Throws { error } on a failed request. */
-async function whyNot(run, id, opts) {
-  const s = await reviewRun(run, id, opts);
-  return s.why || s.sign || s.upload;
-}
-
 /** Finds <A> for run `runId`. `env` is the environment gh runs with. */
 export async function approvedBase({ runId, env }) {
   const lines = [];
@@ -108,12 +103,18 @@ export async function approvedBase({ runId, env }) {
     lines.push("reviewer: the only required reviewer of environment index, read now (login and id not printed)");
 
     const runs = await listRuns(opts);
+    let signed = null; // the newest run with an approved index and a successful sign, but no successful upload
     for (const run of runs) {
       if (run.id === runId) { lines.push(`skip ${label(run)}: the run under review`); continue; }
       const off = notOnMain(run);
       if (off) { lines.push(`skip ${wfOf(run) ? label(run) : `run ${run.id}`}: ${off}`); continue; }
-      const why = await whyNot(run, reviewer.id, opts);
-      if (why) { lines.push(`skip ${label(run)}: ${why}`); continue; }
+      const s = await reviewRun(run, reviewer.id, opts);
+      const why = s.why || s.sign || s.upload;
+      if (why) {
+        if (!s.why && !s.sign) signed ??= run;
+        lines.push(`skip ${label(run)}: ${why}`);
+        continue;
+      }
 
       const A = run.head_sha;
       lines.push(`A ${A} from ${label(run)}: ${oneLine(run.html_url ?? '')}`);
@@ -126,11 +127,17 @@ export async function approvedBase({ runId, env }) {
       if (status !== 'ahead' && status !== 'identical') {
         return done(1, `NO APPROVAL: compare ${A}...${B} is ${oneLine(status ?? 'no status')}: <B> does not descend from <A>`);
       }
-      lines.push(`Read every change outside entries/** and revoked.json: https://${HOST}/${REPO}/compare/${A}...${B}`);
+      lines.push(`Read every change other than the entries/<id>.json files and revoked.json (anything else in entries/ too): https://${HOST}/${REPO}/compare/${A}...${B}`);
       return done(0);
     }
+    if (signed) {
+      return done(1, `NOT A FIRST PUBLISH: ${label(signed)} has an approval of index by the environment's reviewer and a successful sign `
+        + "job, so its signed head may have gone live (recovery R2 counts it as a candidate) and a missing live head is a deleted one. No run "
+        + 'has a successful upload, so there is no <A>: only a repair run (recovery R2) may follow, read as the runbook says for a first '
+        + 'publish and for a repair; any other run under review: no approval.');
+    }
     return done(3, "FIRST PUBLISH: no other run of publish.yml or resign.yml has an approval of index by the environment's reviewer and "
-      + 'successful sign and upload jobs. Treat <B> as a first publish only while your own list has no entry with a successful upload; '
+      + 'a successful sign job. Treat <B> as a first publish only while your own list has no entry with a successful sign; '
       + 'otherwise this is NO APPROVAL (runs or approvals may have been deleted).');
   } catch (e) {
     return done(1, `ERROR: ${oneLine(e && e.error ? e.error : e)}`);

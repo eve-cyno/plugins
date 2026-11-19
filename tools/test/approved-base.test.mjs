@@ -74,6 +74,7 @@ async function skips(skipped, why) {
   assert.match(r.text, new RegExp(`^skip run ${skipped.run.id} .*${why}`, 'm'));
   assert.match(r.text, new RegExp(`compare ${A}\\.\\.\\.${B}: ahead`));
   assert.match(r.text, new RegExp(`https://github\\.com/eve-cyno/plugins/compare/${A}\\.\\.\\.${B}`));
+  assert.match(r.text, /^Read every change other than the entries\/<id>\.json files and revoked\.json \(anything else in entries\/ too\): https:/m);
   return r;
 }
 
@@ -129,7 +130,21 @@ describe('approved-base: direction and failures', () => {
     const r = await call({ under: UNDER, others: [{ run: run(251, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['mirror'])], jobs: jobs(251, [['sign-test', 'success'], ['upload', 'success']]) }] });
     assert.equal(r.code, 3, r.text);
     assert.match(r.text, /^FIRST PUBLISH: /m);
-    assert.match(r.text, /only while your own list has no entry with a successful upload/);
+    assert.match(r.text, /only while your own list has no entry with a successful sign/);
+  });
+  test('AB-first-publish-signed: a run with an approved index and a successful sign but no successful upload means no first publish', async () => {
+    // Its signed head may have gone live (it is a recovery R2 candidate), so a missing live head after it is a deleted head.
+    const failed = { run: run(255, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'])], jobs: jobs(255, [['build', 'success'], ['sign', 'success'], ['upload', 'failure']]) };
+    const refused = { run: run(256, 'resign.yml', sha('d'), '2026-12-04T06:17:00Z'), approvals: [approval(REVIEWER, ['index']), approval(REVIEWER, ['mirror'], 'rejected')], jobs: jobs(256, [['check', 'success'], ['head', 'success'], ['sign', 'success'], ['upload', 'skipped']]) };
+    for (const [others, id] of [[[failed], 255], [[refused], 256], [[failed, refused], 255]]) {
+      const r = await call({ under: UNDER, others });
+      assert.equal(r.code, 1, r.text);
+      assert.match(r.text, new RegExp(`^NOT A FIRST PUBLISH: run ${id} \\([a-z]+\\.yml, created [^)]*\\) has an approval of index by the environment's reviewer and a successful sign`, 'm'));
+      assert.match(r.text, /only a repair run \(recovery R2\)/);
+      assert.doesNotMatch(r.text, /^FIRST PUBLISH/m);
+    }
+    const unsigned = { ...failed, jobs: jobs(255, [['build', 'success'], ['sign', 'failure'], ['upload', 'skipped']]) };
+    assert.equal((await call({ under: UNDER, others: [unsigned] })).code, 3, 'a failed sign signed nothing: still a first publish');
   });
   test('AB-rerun-error: a listed run on a later attempt is an ERROR, never a skip (GitHub lists the jobs of the latest attempt only)', async () => {
     // Attempt 1 may have signed and uploaded; attempt 2 fails at its first step, so its jobs list shows sign and upload skipped.

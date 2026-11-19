@@ -18,8 +18,8 @@
 //  3. The runner image: aws-cli version 2 whose s3api put-object takes --if-match and --if-none-match. Then the mirror's values.
 //  4. The live pair (head and signature, at most 16,384 bytes each, with their ETags), read before any write and kept. Production and
 //     resign: it must verify with the pinned keys and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). A
-//     missing head is a first publish only when GitHub shows no run with an approved index and successful sign and upload
-//     (tools/approved-base.mjs, fail closed; never for resign). Resign: the new head names the live head's catalog, and that catalog
+//     missing head is a first publish only when GitHub shows no run with an approved index and a successful sign (a signed head
+//     may have gone live; tools/approved-base.mjs, fail closed; never for resign). Resign: the new head names the live head's catalog, and that catalog
 //     is the one main builds (MAIN DIVERGES otherwise: re-signing a replayed older head would make it fresh again; plan section 8,
 //     test MV-diverged). Target test: the earlier test pair is not checked. --repair true
 //     (recovery R2, plan 4.2): a live pair that verifies is refused (NOT BROKEN); else the base is computed again from the candidate
@@ -200,7 +200,7 @@ if (target === 'test') {
   for (const l of q.lines) R.note(`approved-base: ${l}`);
   if (q.code !== 3) refuse(`LIVE UNVERIFIED: the live head is missing, but GitHub shows an approved run or could not be asked (approved-base exit ${q.code}): a deleted head; ${R2}`);
   firstPublish = true;
-  R.note(`first publish: no live head, and no run has an approved index with successful sign and upload; ${oldSig.status === 'missing' ? 'no signature' : 'an orphan signature of an earlier first publish'} is live`);
+  R.note(`first publish: no live head, and no run has an approved index with a successful sign; ${oldSig.status === 'missing' ? 'no signature' : 'an orphan signature of an earlier first publish'} is live`);
 } else {
   if (oldHead.status !== 'ok' || oldSig.status !== 'ok' || !verifies(oldHead.bytes, oldSig.bytes)) {
     refuse(`LIVE UNVERIFIED: the live head and signature do not verify with ${keyText}; ${R2}`);
@@ -334,8 +334,8 @@ async function finish(step) {
     if (unchanged(fh, oldHead) && unchanged(fsig, oldSig)) red('UNCHANGED: the live index still does not verify; nothing was published; dispatch a new repair run', 'the broken pair is still live');
   }
   if (firstPublish && fh.status === 'missing') {
-    if (fsig.status === 'missing') red('UNCHANGED: nothing was published (a first publish; both objects are still missing); dispatch a new run', 'nothing was published');
-    red('FIRST-PUBLISH ORPHAN: a signature with no head; apps read the missing head as unavailable and the next run overwrites it', 'a first publish left its signature without a head');
+    if (fsig.status === 'missing') red('UNCHANGED: nothing was published (a first publish; both objects are still missing); this run signed, so the next run is no first publish: dispatch a repair run (recovery R2)', 'nothing was published');
+    red('FIRST-PUBLISH ORPHAN: a signature with no head; apps read the missing head as unavailable; this run signed, so the next run is no first publish: a repair run (recovery R2) overwrites it', 'a first publish left its signature without a head');
   }
   if (!pairOk) red('HALF-PUBLISHED: the live head and signature do not verify as a pair; recovery R2 or the owner\'s manual path', `the live pair does not verify with ${keyText}`);
   if (isNew) end(0, `PUBLISHED ${P} generated ${head.generated}: the new head and signature are live and verify`);

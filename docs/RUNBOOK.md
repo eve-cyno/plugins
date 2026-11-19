@@ -203,7 +203,8 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    ```
 
    It reads the reviewer from environment `index`, and prints `<B>`, one `skip` line per newer run with the reason, `<A>` with its
-   run, the compare status and the compare link. Exit 0: `<A>` found, status `ahead` or `identical`; 1: `NO APPROVAL` or `ERROR` (a
+   run, the compare status and the compare link. Exit 0: `<A>` found, status `ahead` or `identical`; 1: `NO APPROVAL`, `NOT A FIRST
+   PUBLISH` (step 4) or `ERROR` (a
    failed request, an incomplete list or an environment without exactly one reviewer is an error, never "no approved run"; so is a
    newer run on a later attempt than its first, a re-run: GitHub lists the jobs of a run's latest attempt only, and a re-run's
    attempt fails at its first step, so an earlier attempt that signed and uploaded would look skipped); 3:
@@ -223,7 +224,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    aside); a run of the list no longer shows on GitHub; or the live base (the verified live head, or R2's base) has a `generated` older
    than that newest entry's (an older verified head was replayed).
 4. **First publish only** (the tool says `FIRST PUBLISH`, there is no `<A>`): allowed only while no entry of your list has a
-   successful `upload`. After such an entry, a run that calls itself a first publish means **no approval**. Read every file other
+   successful `sign` (a signed head may have gone live, as recovery R2 counts it). After such an entry, a run that calls itself a
+   first publish means **no approval**. When GitHub shows such a run but none with a successful `upload`, the tool says `NOT A FIRST
+   PUBLISH`: then only a repair run (`repair: true`, step 6) may be approved, read as this step says, since there is no `<A>`. Read every file other
    than the `entries/<id>.json` files and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`),
    `package-lock.json` included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop
    checkout> --rev <pinned commit>` output.
@@ -373,9 +376,10 @@ and a verification of the pair. Its outcomes:
 
 - **published:** the new pair verifies. The run goes on to `verify`.
 - **unchanged** (red): the old pair verifies, or, on a true first publish, both objects are still absent. Nothing was published;
-  dispatch a new run.
-- **FIRST-PUBLISH ORPHAN** (red): a new signature with no head yet. Apps read the missing head as unavailable; the next run overwrites
-  the orphan. Dispatch a new run.
+  dispatch a new run. After a first publish this run's `sign` succeeded, so the next run is no first publish: dispatch a repair run
+  (recovery R2).
+- **FIRST-PUBLISH ORPHAN** (red): a new signature with no head yet. Apps read the missing head as unavailable. This run's `sign`
+  succeeded, so the next run is no first publish: a repair run (recovery R2) overwrites the orphan.
 - **TEST NOT PUBLISHED** (red, `target: test` only): the new test pair is not live. Dispatch a new test run.
 - **REPLAYED** (red): a pair that verifies but is neither new nor old is live: someone else's verified head, possibly an older one.
   Treat it as a security event: no approval of anything until the owner has found out who wrote it; then recovery R2.

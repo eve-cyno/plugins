@@ -98,7 +98,10 @@ function inputOf(name, dest, { testPub = false, head } = {}) {
 
 const GH = 'repos/eve-cyno/plugins';
 const ghRun = (id, sha40, created) => ({ id, path: '.github/workflows/publish.yml', head_branch: 'main', head_sha: sha40, run_attempt: 1, created_at: created, html_url: `https://github.com/eve-cyno/plugins/actions/runs/${id}` });
-/** gh answers for run 300 (the run under review): no other run (a first publish), an approved and uploaded run 200, or a failing list. */
+/**
+ * gh answers for run 300 (the run under review): no other run (a first publish), an approved and uploaded run 200, an approved run
+ * 200 whose sign succeeded and upload failed ('signed'), or a failing list.
+ */
 function ghRoutes(kind) {
   const under = ghRun(300, 'b'.repeat(40), '2026-12-10T10:00:00Z');
   const done = ghRun(200, 'a'.repeat(40), '2026-12-01T10:00:00Z');
@@ -107,13 +110,17 @@ function ghRoutes(kind) {
     [`GET ${GH}/actions/runs/300`]: { stdout: under },
     [`GET ${GH}/environments/index`]: { stdout: { name: 'index', can_admins_bypass: false, protection_rules: [
       { type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { id: REVIEWER, login: 'reviewer-account', type: 'User' } }] }] } },
-    [`GET ${GH}/actions/workflows/publish.yml/runs?per_page=100`]: kind === 'error' ? { stderr: 'HTTP 502: Bad Gateway', exit: 1 } : { stdout: page(kind === 'approved' ? [under, done] : [under]) },
+    [`GET ${GH}/actions/workflows/publish.yml/runs?per_page=100`]: kind === 'error' ? { stderr: 'HTTP 502: Bad Gateway', exit: 1 } : { stdout: page(kind === 'approved' || kind === 'signed' ? [under, done] : [under]) },
     [`GET ${GH}/actions/workflows/resign.yml/runs?per_page=100`]: { stdout: page([]) },
   };
   if (kind === 'approved') {
     r[`GET ${GH}/actions/runs/200/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
     r[`GET ${GH}/actions/runs/200/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success' }, { id: 2, name: 'upload', conclusion: 'success' }] }] };
     r[`GET ${GH}/compare/${'a'.repeat(40)}...${'b'.repeat(40)}`] = { stdout: { status: 'ahead' } };
+  }
+  if (kind === 'signed') {
+    r[`GET ${GH}/actions/runs/200/approvals`] = { stdout: [{ state: 'approved', user: { id: REVIEWER }, environments: [{ name: 'index' }] }] };
+    r[`GET ${GH}/actions/runs/200/jobs?per_page=100`] = { stdout: [{ total_count: 2, jobs: [{ id: 1, name: 'sign', conclusion: 'success' }, { id: 2, name: 'upload', conclusion: 'failure' }] }] };
   }
   return r;
 }
@@ -355,6 +362,17 @@ describe('upload: refusals before any write', () => {
     assert.ok(sc.ghLog().length > 0, 'GitHub was asked');
   });
 
+  test('PB-head-missing-after-sign-not-first-publish: a missing head after an approved run whose sign succeeded is LIVE UNVERIFIED', async () => {
+    // That run's upload failed, but its signed head may have gone live: a missing head now is a deleted one (recovery R2).
+    for (const live of [{}, { [SIG]: object(ix.A0.sig, 'text/plain', 'no-cache') }]) {
+      const r = await upload(scenario({ live, gh: 'signed' }));
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /LIVE UNVERIFIED: the live head is missing, but GitHub shows an approved run/);
+      assert.match(r.out, /NOT A FIRST PUBLISH: run 200 /);
+      assert.equal(r.puts.length, 0);
+    }
+  });
+
   test('PB-head-404-query-error-fails: a missing head and a GitHub query that fails is a refusal, never a first publish', async () => {
     const live = objectsOf('A');
     delete live[HEAD];
@@ -479,7 +497,7 @@ describe('upload: recovery R1 on the head', () => {
 });
 
 describe('upload: a first publish', () => {
-  test('PB-first-publish-orphan-overwritten: an orphan signature of an earlier failed first publish never blocks the next run', async () => {
+  test('PB-first-publish-orphan-overwritten: an orphan signature with no signed run on GitHub never blocks a first publish', async () => {
     const live = { [SIG]: object(ix.A0.sig, 'text/plain', 'no-cache') };
     const sc = scenario({ live, gh: 'none' });
     const r = await upload(sc);
@@ -495,11 +513,13 @@ describe('upload: a first publish', () => {
     const r = await upload(scenario({ live: {}, gh: 'none', faults: [{ op: 'put-object', key: HEAD, nth: 1, result: 'network-lost' }, { op: 'put-object', key: HEAD, nth: 2, result: 'network-lost' }] }));
     assert.equal(r.code, 1, r.out);
     assert.match(r.last, /^FIRST-PUBLISH ORPHAN/);
+    assert.match(r.last, /this run signed, so the next run is no first publish: a repair run \(recovery R2\) overwrites it/);
     assert.doesNotMatch(r.out, /HALF-PUBLISHED/);
     assert.equal(r.puts.filter(p => p.key === SIG).length, 1, 'nothing restored');
     const n = await upload(scenario({ live: {}, gh: 'none', faults: [{ op: 'put-object', key: SIG, nth: 1, result: 'network-lost' }, { op: 'put-object', key: SIG, nth: 2, result: 'network-lost' }] }));
     assert.equal(n.code, 1, n.out);
     assert.match(n.last, /^UNCHANGED/, 'both objects still missing');
+    assert.match(n.last, /this run signed, so the next run is no first publish: dispatch a repair run \(recovery R2\)/);
     assert.ok(!n.puts.some(p => p.key === HEAD));
     const lost = (nth) => ({ op: 'put-object', key: HEAD, nth, result: 'network-lost' });
     const e = await upload(scenario({ live: {}, gh: 'none', faults: [lost(1), lost(2), { op: 'get-object', key: SIG, nth: 2, result: 'error' }] }));
