@@ -6,7 +6,7 @@ rules (C-WF1 to C-WF12).
 
 Roles:
 
-- **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
+- **The owner** (his own GitHub account) decides every merge, dispatches runs, and is the **only required reviewer** of the environments `index`
   and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for its head commit (all 40 hex
   digits of it, "Publishing" step 1.4a), an entries-only
   one included (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push
@@ -241,7 +241,7 @@ starts no such run, the first push included: `check.yml` runs on pull requests o
    that is why the request rejects), and no run is approved until the owner has replaced the token.
 4. The owner then approves or rejects the waiting run from his phone, after the steps below as for any test run.
 
-Result: 2026-11-19, on `target: test` run 44491400412 (commit `6925bbf`) waiting at `mirror`: `HTTP/2.0 403 Forbidden`, `Resource not accessible by personal access token`; the run kept waiting. The request was sent from the agents' token in the coordinator's shell (typed by the owner there, since the coordinator's own call was held back by its permission check). The owner then approved `mirror` from his phone (09:51Z) and the run ended `success` (`build`, `sign-test`, `upload`; `sign` skipped, as for every test run). Since then the `verify` job runs after every successful `upload`, a test run's included. A run cancelled after its upload skips `verify`: the coordinator then re-checks the live index locally with `tools/publish/verify-live.mjs` (`--target <target> --in <folder>`, from the trusted worktree) before the next run.
+Result: 2026-11-19, on `target: test` run 44491400412 (commit `6925bbf`) waiting at `mirror`: `HTTP/2.0 403 Forbidden`, `Resource not accessible by personal access token`; the run kept waiting. The request was sent from the agents' token in the coordinator's shell (typed by the owner there, since the coordinator's own call was held back by its permission check). The owner then approved `mirror` from his phone (09:51Z) and the run ended `success` (`build`, `sign-test`, `upload`; `sign` and `verify` skipped, as for every test run). Since then the `verify` job runs after every successful `upload`, a test run's included. A run cancelled after its upload skips `verify`: the coordinator then re-checks the live index locally with `node ../eve-cyno-plugins-trusted/tools/publish/verify-live.mjs --target <target> --in <new folder>` (paced to 100 requests per 10 s; for `--target test` the folder must hold the run's `test.pub`, from its test-key artifact) before the next run.
 
 ## Before every index and mirror approval
 
@@ -291,10 +291,14 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 
    It reads the reviewer from environment `index`, and prints `<B>`, one `skip` line per newer run with the reason, `<A>` with its
    run, the compare status and the compare link. A fork can change `publish.yml` to run on `pull_request` and name its branch `main`. Its
-   run then has the path and branch of a run of `main`, so any run started by another event or repository is skipped before its
-   approvals and jobs are read. A run under review that fails the same rule is an `ERROR`: no approval. The fork rule protects the
+   run then has the path and branch of a run of `main`. A run of another head repository is skipped before its approvals and jobs are
+   read, and a re-run of one never stops the review. A run of this repository started by another event (a commit on `main` that
+   added `on: push`) is never `<A>`, but it is still reviewed: with an approved `index` and a successful `sign` it sets `NOT A
+   FIRST PUBLISH`, and a run whose attempts cannot be read is an `ERROR`. The run under review that fails the same rule (another
+   event or head repository) is an `ERROR`: no approval. The fork rule protects the
    reviewer only once `<A>` contains this check's commit (before the first publish: the commit the owner read in full). `repairbase`
-   stays on branch only, so a fork re-run (attempt 2 or later) blocks recovery R2 until the owner deletes that run (fail closed). Exit 0: `<A>` found, status `ahead` or `identical`; 1: `NO APPROVAL`, `NOT A FIRST
+   stays on branch only, so a fork re-run (attempt 2 or later) blocks recovery R2 only when its attempt 1 had a job named `sign`
+   that succeeded (the tool then stops with an `ERROR` at that run) until the owner deletes that run (fail closed). Exit 0: `<A>` found, status `ahead` or `identical`; 1: `NO APPROVAL`, `NOT A FIRST
    PUBLISH` (step 4) or `ERROR` (a
    failed request, an incomplete list or an environment without exactly one reviewer is an error, never "no approved run"); 3:
    `FIRST PUBLISH` (step 4). A re-run counts by its attempt 1: every job refuses any attempt but the first, so the tool reads the
@@ -352,9 +356,11 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    `vendor/` against it as step 0.3 says. A failed check, or a desktop commit you do not accept: no approval.
    When `<A>...<B>` changes `vendor/` and also `tools/vendor-host.mjs`, `tools/base-tree.mjs`, `tools/lib/basetree.mjs` or
    `tools/lib/gitsafe.mjs`: no approval, whatever the check prints (step 0.2); the tool change must first reach `<A>` through an
-   approved run whose `sign` and `upload` succeeded, and the `vendor/` change comes in a later run.
+   approved run whose `sign` and `upload` succeeded, and the `vendor/` change comes in a later run. Merge order: the tool change
+   merges first and is approved first; a pull request holding both is never merged. Once both are on `main`, no run can be built
+   (a build refuses a run not on `main`'s head), so the way out is a revert of the `vendor/` change through a pull request.
 6. **Repair runs only** (`repair: true`): the coordinator hands over the output of a local
-   `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` that shows the live index
+   `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` (not paced: it reads every archive without a pause) that shows the live index
    failing to verify. Read in the run
    summary which candidate runs gave the base and where the floor came from; check each named run on its own page and against your
    list: every entry younger than 90 days with a successful `sign` must be among the candidates, and one missing means no approval.
@@ -583,15 +589,17 @@ input names it exactly, one `<id> <versions>` per line; `build` fails otherwise.
 | `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run. The re-run itself needs no recovery: `approved-base.mjs` and the repair base read the jobs of every attempt and judge attempt 1, and skip the run when it has no `index` approval and its attempt 1 did not sign. Only when they stop with an ERROR at that run (attempt 1 not readable from its jobs list, a later attempt's `sign` or `upload` shown as succeeded, or attempt 1 signed with no `index` approval listed) does the owner read each of its attempts on the run page against his list, and find `<A>` (or, for a repair, the candidates) by hand while that run is newer than `<A>` |
 | `build` or `head` | a check failed, or the commit is no longer `main`'s head | read the summary; fix through a pull request; dispatch a new run |
 | `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; set the `index` secrets again with the command of "Secrets and variables" and check the head; dispatch a new run |
-| `build` or `upload`, `LIVE UNVERIFIED: catalog/<sha256>.json: HTTP 404` or `not the one the live head names` | the head and signature verify, but the catalog they name is gone or another file (the pair verifies, the catalog does not; also a head over its size cap) | recovery R2: the coordinator confirms with `index-verify.mjs --live --archives`, then the owner dispatches `publish.yml` with `repair: true` |
+| `build` or `upload`, `LIVE UNVERIFIED: catalog/<sha256>.json: HTTP 404` | the head and signature verify, but the catalog they name is gone (also a head over its size cap) | recovery R2: the coordinator confirms with `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` (not paced: it reads every archive without a pause), then the owner dispatches `publish.yml` with `repair: true` |
+| `build` or `upload`, `LIVE UNVERIFIED: ... its size or SHA-256 is not the one the live head names` | the catalog the verified head names is served as another file (swapped at the edge or in R2) | a security event first (REPLAYED below: the owner finds the writer), then recovery R2 |
 | `build` or `upload`, `NOT BROKEN` | head, signature and catalog verify, so there is nothing to repair | dispatch without `repair` |
-| `build`, `upload` or `resign`, "cannot be read" | a read of the live index or the mirror failed for another reason than a 404 or a size cap (a 429, a 503, a time-out) | nothing was written; dispatch again later |
-| `upload`, "the index served is not the pair in R2" | the edge serves another index than the bucket holds | edge lag lasts seconds: dispatch again. When it persists past about 10 minutes it is a security event: see REPLAYED below |
-| `upload` (resign), "the live catalog is not in R2, only in the edge cache" | a re-sign writes the head and signature only, and the catalog it names is not in the bucket | look into the deletion first; then dispatch `publish.yml` |
+| `build`, `upload` or the `check` and `head` jobs of `resign.yml`, "cannot be read" | a read of the live index or the mirror failed for another reason than a 404 or a size cap (a 429, a 503, a time-out): transient, waiting helps | nothing was written; dispatch again later |
+| `build`, "cannot be read" of a lift file, the base, the new index or `entries/` (check C1) | a local file or tree read failed: not transient | waiting does not fix it; read the message, fix through a pull request or the worktree, then dispatch a new run |
+| `upload`, "the index served over the prefix is not the head and signature in R2" | the edge serves another index than the bucket holds | edge lag lasts seconds: dispatch again. When it persists past about 10 minutes it is a security event: see REPLAYED below |
+| `upload` (resign), "the live catalog" `<name>` "is not in R2, only in the edge cache" | a re-sign writes the head and signature only, and the catalog it names is not in the bucket | look into the deletion first; then dispatch `publish.yml` |
 | `upload`, `swapped in R2` | an archive or catalog in the mirror has other bytes than the catalog names | a security event before any repair: the owner finds the writer (R2 audit) before anything else and deletes the object; a normal run then re-uploads it create-only |
 | `upload`, a 412 | someone changed the live index during the run | stop; find out who wrote it (R2 audit, other runs) before anything else; then dispatch a new run |
 | `upload`, other | see the R1 outcome in the job log and summary | below |
-| `verify` | the live index does not read back as published | **never re-run**: the coordinator re-checks it locally with `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives`; a confirmed failure goes to recovery R2 |
+| `verify` | the live index does not read back as published | **never re-run**: the coordinator re-checks it locally with `node ../eve-cyno-plugins-trusted/tools/publish/verify-live.mjs --target <target> --in <new folder>` (paced to 100 requests per 10 s; for `--target test` the folder must hold the run's `test.pub`, from its test-key artifact); a confirmed failure goes to recovery R2 |
 
 **Recovery R1** (inside `upload`). After a failed or unanswered PUT the job reads the live objects again and ends with a final re-read
 and a verification of the pair. Its outcomes:
@@ -661,7 +669,7 @@ Found in review, accepted, and named here so nobody counts on more than the tool
   installer's folder keys). Carried to the desktop.
 - Any edit of the `sign` job, an action pin bump included, needs its new pin in `SIGN_STEPS` in `tools/lib/wfrules.mjs` in the same
   commit; the error prints the new hash.
-- C-WF1 and C-WF11 treat ` #` inside a `run:` block as a comment; C-ENV1 backstops this.
+- C-WF1 and C-WF11 treat ` #` inside a `run:` block as a comment; C-ENV1 backstops C-WF11 only. For C-WF1 the backstop is its parsed `on:` check (`tools/lib/wfrules.mjs`, the triggers rule).
 
 ## Measurements
 

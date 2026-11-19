@@ -2,8 +2,8 @@
 # - on: pull_request only, never pull_request_target, workflow_run or issue_comment: a pull request from a fork gets no secret and a
 #   read-only GITHUB_TOKEN. No environment and no secret here; every job reads only (contents: read).
 # - A pull request can change this workflow and the tools it runs, so a green check proves nothing about such a pull request: check
-#   C13 flags it (NEEDS REVIEW maintenance), the owner reviews and merges locally, and publish.yml runs every check again on main.
-# - A red review job is expected on a new plugin or an escalation: the owner's local merge after the review is the override.
+#   C13 flags it (NEEDS REVIEW maintenance), the owner reviews and says "merge" with the 40-hex head commit, the coordinator merges locally, and publish.yml runs every check again on main.
+# - A red review job is expected on a new plugin or an escalation: the owner's "merge" after the review (made locally by the coordinator) is the override.
 # - Values from the event reach the tools through env and arguments, never through an expression inside run.
 # - The base tree is the first parent of the merge commit GitHub made for the pull request (the checkout's default commit),
 #   written by tools/base-tree.mjs (git ls-tree and git cat-file), never by git archive, which obeys a .gitattributes in that tree.
