@@ -94,7 +94,12 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   `vendor/eve-cyno-host/host/src/keys/index.pub`, so nothing is uploaded; other R2 keys or variables fail the upload or put the files
   where `plugins.eve-cyno.dev` does not serve them, which the `verify` job reports as a failure. Both are a failed run, not a
   forged index; the values are then set again with the commands of "Secrets and variables". A replaced value is not visible
-  in the run before the approval (GitHub shows only the secret's update time).
+  in the run before the approval, but its update time is: C-ENV1 prints `updated_at` for each of the six (`MINISIGN_INDEX_KEY`,
+  `MINISIGN_INDEX_PASSWORD`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`), and the reviewer compares
+  each with the date the owner or the coordinator set it; a later date that nobody set means no approval. C-ENV1 also checks the
+  two variables' values (`R2_BUCKET` is `eve-cyno-plugins`, `R2_ACCOUNT_ID` is 32 lower-case hex; it prints only ok or fail, never
+  the value), and fails on any secret or variable named `MINISIGN_*` or `R2_*` at repository or organization level: one there
+  reaches every job of the repository without an approval of `index` or `mirror`.
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
@@ -117,6 +122,8 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
 - **Repository permissions:** reads (Metadata, Contents, Actions, Issues, Pull requests), plus **Secrets and Environments, read and
   write, for good** (owner decision 2026-11-18): the coordinator sets secrets and environment variables with the commands of
   "Secrets and variables", and the permissions are never added for a task and taken away after it.
+- **Variables, read** is needed since 2026-11-19: C-ENV1 lists the repository's and the organization's variables to check that no
+  `MINISIGN_*` or `R2_*` is set there, and without that read it fails closed.
 - **Off, and checked before every approval:** **Administration** (it creates and changes environments, their reviewers, branch
   rules and admin bypass), **Deployments write** (it approves or rejects a waiting run) and **Actions write** (it dispatches runs
   and deletes runs and artifacts). No Workflows permission.
@@ -135,7 +142,7 @@ every dispatch, test runs included, is the owner's own. It can replace secret va
 - **Two must be allowed:** the secrets lists answer HTTP 200 with a list. They show names only, never values, and the check prints
   neither. A refusal there fails too: it means the token is not the one described here.
 - **The create probe** first checks with a GET that the environment `c-env1-probe-denied` does not exist (HTTP 404), then asks to
-  create it. It is the only probe that could change something. If it is ever allowed, the token has Administration: the check
+  create it; on any other answer to the GET the check fails and sends no request to create it. It is the only probe that could change something. If it is ever allowed, the token has Administration: the check
   fails with an `ALARM` line, first in its output and on stderr, and the owner deletes that environment (Settings, Environments,
   `c-env1-probe-denied`, Delete environment) and takes Administration off the token before any approval. If the environment
   exists when the check starts, the check fails until the owner has deleted it.
@@ -190,6 +197,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    prevention off, admin bypass off, `main` only, no other rule), that the reviewer's login and id appear in no path, file or commit at
    `<B>`, and that the six probes of "The agents' token" answer as its table expects: the four refusals exactly HTTP 403 with the
    message "Resource not accessible by personal access token" and an `x-ratelimit-remaining` above 0, the two secrets lists HTTP 200.
+   It lists the six secrets and variables the workflows read, each in its environment with its `updated_at`: compare each date with
+   the day the owner or the coordinator set that value ("One account"). It checks the two variables' values without printing them,
+   and that no secret or variable named `MINISIGN_*` or `R2_*` is set at repository or organization level.
    Any other answer fails, and no option skips the probes. An `ALARM` line means the check created the environment
    `c-env1-probe-denied`: no approval until the owner has deleted it and taken Administration off the token. A pass is not proof
    that nothing changed between the check and the approval; that rests on the owner's rules above.

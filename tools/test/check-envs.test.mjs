@@ -2,7 +2,9 @@
 // like GitHub's REST answers; the run's commit <B> is a temp git repository. The reviewer is read from the environments, never from
 // the repository, and its login and id must appear nowhere at <B>. The probe rule is fail-closed: a refusal probe passes only on HTTP
 // 403 with the exact message "Resource not accessible by personal access token" and an x-ratelimit-remaining above 0, and the two
-// secrets lists (Secrets and Environments, granted for good on 2026-11-18) only on HTTP 200 with a list of secrets.
+// secrets lists (Secrets and Environments, granted for good on 2026-11-18) only on HTTP 200 with a list of secrets. The six secrets
+// and variables the workflows read are listed with their updated_at in their environments, the two variables' values are checked
+// and never printed, and none of the names MINISIGN_* and R2_* may be set at repository or organization level.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -38,6 +40,29 @@ const ENV_PUT = `PUT ${R}/environments/${PROBE_ENV}`;
 const ALLOWED = PROBES.filter((p) => p.expect === 200);
 const DENIED = PROBES.filter((p) => p.expect === 403);
 
+const STAMP = '2026-11-18T19:00:00Z';
+const ACCOUNT = '0123456789abcdef0123456789abcdef';
+const secretList = (names, at = STAMP) => [{ total_count: names.length, secrets: names.map((name) => ({ name, created_at: '2026-11-01T08:00:00Z', updated_at: at })) }];
+const variableList = (vars, at = STAMP) => [{ total_count: vars.length, variables: vars.map(([name, value]) => ({ name, value, created_at: '2026-11-01T08:00:00Z', updated_at: at })) }];
+const STORED = {
+  indexSecrets: `GET ${R}/environments/index/secrets?per_page=100`,
+  mirrorSecrets: `GET ${R}/environments/mirror/secrets?per_page=100`,
+  mirrorVariables: `GET ${R}/environments/mirror/variables?per_page=30`,
+  repoSecrets: `GET ${R}/actions/secrets?per_page=100`,
+  orgSecrets: `GET ${R}/actions/organization-secrets?per_page=100`,
+  repoVariables: `GET ${R}/actions/variables?per_page=30`,
+  orgVariables: `GET ${R}/actions/organization-variables?per_page=30`,
+};
+const STORED_DEFAULT = {
+  indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_PASSWORD']) },
+  mirrorSecrets: { stdout: secretList(['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) },
+  mirrorVariables: { stdout: variableList([['R2_ACCOUNT_ID', ACCOUNT], ['R2_BUCKET', 'eve-cyno-plugins']]) },
+  repoSecrets: { stdout: secretList(['DISCORD_WEBHOOK']) },
+  orgSecrets: { stdout: secretList([]) },
+  repoVariables: { stdout: variableList([['SITE', 'plugins.eve-cyno.dev']]) },
+  orgVariables: { stdout: variableList([]) },
+};
+
 function routes(o = {}) {
   const r = {
     [`GET ${R}/environments/index`]: o.index ?? { stdout: envDoc('index') },
@@ -47,6 +72,7 @@ function routes(o = {}) {
   };
   for (const pr of PROBES) r[probeKey(pr)] = o.probes?.[pr.key] ?? (pr.expect === 200 ? http(200) : http(403, PROBE_MESSAGE));
   r[ENV_GET] = o.probeEnvGet ?? http(404, 'Not Found');
+  for (const [k, route] of Object.entries(STORED)) r[route] = o.stored?.[k] ?? STORED_DEFAULT[k];
   return r;
 }
 
@@ -73,8 +99,9 @@ describe('C-ENV1 settings', () => {
     assert.doesNotMatch(r.text, NAMES_REVIEWER, 'neither the reviewer\'s login nor its id is printed');
     assert.deepEqual(r.calls.map(keyOf).sort(), Object.keys(routes()).sort(), 'exactly these requests');
     for (const a of r.calls) assert.ok(a.includes('--hostname=github.com'), `the host is an argument: ${a}`);
-    const secretReads = r.calls.filter((a) => /secrets/.test(a[a.length - 1])).map(keyOf).sort();
-    assert.deepEqual(secretReads, [`GET ${R}/actions/secrets`, `GET ${R}/environments/index/secrets`], 'only the two probes name secrets, as lists');
+    const secretReads = r.calls.filter((a) => /secrets|variables/.test(a[a.length - 1])).map(keyOf).sort();
+    assert.deepEqual(secretReads, [`GET ${R}/actions/secrets`, `GET ${R}/environments/index/secrets`, ...Object.values(STORED)].sort(),
+      'the two probes and the lists of secrets and variables, all GET');
     for (const k of [...PROBES.map(probeKey), ENV_GET]) {
       const a = r.calls.find((c) => keyOf(c) === k);
       assert.ok(a.includes('-i'), `${k} is read with its status line and headers`);
@@ -219,11 +246,11 @@ describe('C-ENV1 the six probes of the agents\' token', () => {
       });
     }
   }
-  test('CE-probe-secret-names-not-printed: the lists answer names only, and not even those are printed', async () => {
-    const list = '{"total_count":2,"secrets":[{"name":"MINISIGN_INDEX_KEY","created_at":"2026-11-18T19:00:00Z"},{"name":"R2_SECRET_ACCESS_KEY"}]}';
+  test('CE-probe-secret-names-not-printed: the probes print no name of their lists', async () => {
+    const list = '{"total_count":2,"secrets":[{"name":"PROBE_ONLY_NAME","created_at":"2026-11-18T19:00:00Z"},{"name":"OTHER_PROBE_NAME"}]}';
     const r = await run({ probes: { env: http(200, null, '4999', list), secrets: http(200, null, '4999', list) } });
     assert.equal(r.ok, true, r.text);
-    assert.doesNotMatch(r.text, /MINISIGN_INDEX_KEY|R2_SECRET_ACCESS_KEY|created_at/);
+    assert.doesNotMatch(r.text, /PROBE_ONLY_NAME|OTHER_PROBE_NAME|created_at/);
   });
   for (const pr of DENIED) {
     const name = pr.name.replace(/[()]/g, '\\$&');
@@ -266,17 +293,87 @@ describe('C-ENV1 the six probes of the agents\' token', () => {
   test('CE-probe-envcreate-exists fails: the probe must name an environment that does not exist', async () => {
     const r = await fails({ probeEnvGet: http(200, null, '4999', '{"id":1,"name":"c-env1-probe-denied"}') },
       /FAIL probe Administration \(create environment\): the environment c-env1-probe-denied exists \(HTTP 200\); the owner deletes it \(Settings, Environments, c-env1-probe-denied, Delete environment\)/);
-    assert.ok(r.calls.map(keyOf).includes(ENV_PUT), 'the refusal is still checked');
+    assert.ok(!r.calls.map(keyOf).includes(ENV_PUT), 'no PUT unless the GET answered exactly 404');
   });
-  test('CE-probe-envcreate-unconfirmed fails: anything but 404 on the GET', async () => {
-    await fails({ probeEnvGet: http(403, PROBE_MESSAGE) }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(HTTP 403; expected 404\)/);
-    await fails({ probeEnvGet: { stdout: '', stderr: 'error connecting to api.github.com\n', exit: 1 } }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(no answer/);
+  test('CE-probe-envcreate-unconfirmed fails: anything but 404 on the GET, and the PUT is never sent', async () => {
+    const a = await fails({ probeEnvGet: http(403, PROBE_MESSAGE) }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(HTTP 403; expected 404\)/);
+    const b = await fails({ probeEnvGet: { stdout: '', stderr: 'error connecting to api.github.com\n', exit: 1 } }, /FAIL probe Administration \(create environment\): could not confirm that the environment c-env1-probe-denied does not exist \(no answer/);
+    const c = await fails({ probeEnvGet: http(502, 'Server Error') }, /could not confirm that the environment c-env1-probe-denied does not exist \(HTTP 502; expected 404\)/);
+    for (const r of [a, b, c]) {
+      assert.ok(!r.calls.map(keyOf).includes(ENV_PUT), 'no PUT unless the GET answered exactly 404');
+      assert.deepEqual(r.alarms, []);
+    }
   });
   test('CE-probe-5xx fails', async () => { await fails({ probes: { env: http(502, 'Server Error') } }, /FAIL probe Environments: HTTP 502/); });
   test('CE-probe-network-error fails', async () => { await fails({ probes: { admin: { stdout: '', stderr: 'error connecting to api.github.com\n', exit: 1 } } }, /FAIL probe Administration: no answer/); });
   test('CE-probe-two-answers fails', async () => {
     const one = http(403, PROBE_MESSAGE).stdout;
     await fails({ probes: { actions: { stdout: `${one}\r\n\r\n${one}`, exit: 1 } } }, /FAIL probe Actions write: no answer/);
+  });
+});
+
+describe('C-ENV1 the secrets and variables the workflows read', () => {
+  const SIX = [['secret', 'MINISIGN_INDEX_KEY', 'index'], ['secret', 'MINISIGN_INDEX_PASSWORD', 'index'], ['secret', 'R2_ACCESS_KEY_ID', 'mirror'],
+    ['secret', 'R2_SECRET_ACCESS_KEY', 'mirror'], ['variable', 'R2_ACCOUNT_ID', 'mirror'], ['variable', 'R2_BUCKET', 'mirror']];
+  test('CE-stored-updated-at: each of the six is printed with its environment and updated_at, for the reviewer to compare', async () => {
+    const r = await run();
+    assert.equal(r.ok, true, r.text);
+    for (const [kind, name, env] of SIX) assert.match(r.text, new RegExp(`^PASS ${kind} ${name} \\(environment ${env}\\): updated_at ${STAMP}`, 'm'));
+    assert.match(r.text, /^PASS variable R2_ACCOUNT_ID \(environment mirror\): updated_at \S+; the value is a Cloudflare account id \(32 lower-case hex; not printed\)$/m);
+    assert.match(r.text, /^PASS variable R2_BUCKET \(environment mirror\): updated_at \S+; the value is eve-cyno-plugins$/m);
+    assert.match(r.text, /^updated_at: compare each date above with the day the owner or the coordinator set that value/m);
+    assert.doesNotMatch(r.text, new RegExp(ACCOUNT), 'the account id is never printed');
+    assert.doesNotMatch(r.text, /created_at|2026-11-01/, 'only updated_at');
+    for (const what of ['repository secrets', 'organization secrets', 'repository variables', 'organization variables']) {
+      assert.match(r.text, new RegExp(`^PASS ${what}: none named MINISIGN_\\* or R2_\\*`, 'm'));
+    }
+    assert.doesNotMatch(r.text, /plugins\.eve-cyno\.dev|DISCORD_WEBHOOK/, 'no other name or value is printed');
+  });
+  test('CE-stored-missing fails: each of the six must be set in its environment, once', async () => {
+    await fails({ stored: { indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY']) } } }, /^FAIL secret MINISIGN_INDEX_PASSWORD \(environment index\): not set$/m);
+    await fails({ stored: { mirrorSecrets: { stdout: secretList(['R2_SECRET_ACCESS_KEY']) } } }, /^FAIL secret R2_ACCESS_KEY_ID \(environment mirror\): not set$/m);
+    await fails({ stored: { mirrorVariables: { stdout: variableList([['R2_ACCOUNT_ID', ACCOUNT]]) } } }, /^FAIL variable R2_BUCKET \(environment mirror\): not set$/m);
+    await fails({ stored: { mirrorVariables: { stdout: variableList([['R2_BUCKET', 'eve-cyno-plugins']]) } } }, /^FAIL variable R2_ACCOUNT_ID \(environment mirror\): not set$/m);
+    await fails({ stored: { indexSecrets: { stdout: secretList(['MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_KEY', 'MINISIGN_INDEX_PASSWORD']) } } }, /^FAIL secret MINISIGN_INDEX_KEY \(environment index\): listed 2 times$/m);
+  });
+  test('CE-stored-updated-at-invalid fails', async () => {
+    for (const at of [undefined, '', 'yesterday', '2026-11-18', '2026-13-45T99:00:00Z']) {
+      const list = [{ total_count: 2, secrets: [{ name: 'R2_ACCESS_KEY_ID', updated_at: at }, { name: 'R2_SECRET_ACCESS_KEY', updated_at: STAMP }] }];
+      await fails({ stored: { mirrorSecrets: { stdout: list } } }, /^FAIL secret R2_ACCESS_KEY_ID \(environment mirror\): no valid updated_at$/m);
+    }
+  });
+  test('CE-stored-values fail: R2_BUCKET is eve-cyno-plugins and R2_ACCOUNT_ID 32 lower-case hex; neither value is printed', async () => {
+    for (const bucket of ['eve-cyno-plugins-old', 'EVE-CYNO-PLUGINS', '', null]) {
+      const r = await fails({ stored: { mirrorVariables: { stdout: variableList([['R2_ACCOUNT_ID', ACCOUNT], ['R2_BUCKET', bucket]]) } } },
+        /^FAIL variable R2_BUCKET \(environment mirror\): the value is not eve-cyno-plugins \(not printed\)$/m);
+      if (bucket) assert.ok(!r.text.includes(bucket), 'the wrong value is not printed');
+    }
+    for (const id of [ACCOUNT.toUpperCase(), `${ACCOUNT}0`, ACCOUNT.slice(1), 'not-an-account-id-not-an-account', null]) {
+      const r = await fails({ stored: { mirrorVariables: { stdout: variableList([['R2_ACCOUNT_ID', id], ['R2_BUCKET', 'eve-cyno-plugins']]) } } },
+        /^FAIL variable R2_ACCOUNT_ID \(environment mirror\): the value is not a Cloudflare account id \(32 lower-case hex\) \(not printed\)$/m);
+      if (id) assert.ok(!r.text.includes(id), 'the value is not printed');
+    }
+  });
+  test('CE-stored-repo-or-org-level fails: MINISIGN_* or R2_* outside the environments reach jobs without an approval', async () => {
+    const cases = [
+      ['repoSecrets', { stdout: secretList(['DISCORD_WEBHOOK', 'R2_SECRET_ACCESS_KEY']) }, 'repository secrets', 'R2_SECRET_ACCESS_KEY'],
+      ['orgSecrets', { stdout: secretList(['MINISIGN_INDEX_KEY']) }, 'organization secrets', 'MINISIGN_INDEX_KEY'],
+      ['repoVariables', { stdout: variableList([['R2_BUCKET', 'eve-cyno-plugins']]) }, 'repository variables', 'R2_BUCKET'],
+      ['orgVariables', { stdout: variableList([['r2_account_id', ACCOUNT]]) }, 'organization variables', 'r2_account_id'],
+      ['repoSecrets', { stdout: secretList(['MINISIGN_OTHER']) }, 'repository secrets', 'MINISIGN_OTHER'],
+    ];
+    for (const [k, answer, what, name] of cases) {
+      const r = await fails({ stored: { [k]: answer } }, new RegExp(`^FAIL ${what}: ${name} is set outside the environments: `, 'm'));
+      assert.doesNotMatch(r.text, new RegExp(ACCOUNT));
+    }
+  });
+  test('CE-stored-unreadable fails closed: a list that cannot be read or is incomplete', async () => {
+    const denied = { stdout: '{"message":"Resource not accessible by personal access token","status":"403"}', exit: 1, stderr: 'gh: Resource not accessible by personal access token (HTTP 403)\n' };
+    for (const k of Object.keys(STORED)) {
+      await fails({ stored: { [k]: denied } }, /^FAIL .*HTTP 403.*\(a list that cannot be read fails closed\)$/m);
+    }
+    await fails({ stored: { orgVariables: { stdout: [{ total_count: 3, variables: [] }] } } }, /^FAIL organization variables: .*the list is incomplete/m);
+    await fails({ stored: { repoSecrets: { stdout: [{ total_count: 1, secrets: [{ created_at: STAMP }] }] } } }, /^FAIL repository secrets: an item without a name/m);
   });
 });
 

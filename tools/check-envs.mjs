@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // tools/check-envs.mjs: C-ENV1 (plan 4.1), run by the coordinator with the agents' token before every approval of environment index
-// or mirror (4.5). It reads only ids and settings, never a secret's value, and passes only when:
+// or mirror (4.5). It reads ids, settings and the names of secrets and variables, never a secret's value (GitHub returns none), and
+// the values of the two mirror variables only to check them; it prints neither value. It passes only when:
 // - both environments index and mirror exist, with can_admins_bypass false, deployment branches "selected" with exactly the
 //   branch policy main, protection rules of the types required_reviewers and branch_policy only (no wait timer, no custom rule),
 //   prevent_self_review false (the owner both dispatches and approves; on, GitHub would refuse his approval) and exactly one
@@ -13,9 +14,15 @@
 //   (owner decision 2026-11-18, so agents set secrets with the scripted flows), and their secrets lists must answer HTTP 200 with a
 //   list (names only; nothing of it is printed).
 //   Requests: three read lists; two name a run or an artifact that does not exist, and the approve request asks to reject; one PUT
-//   names the environment PROBE_ENV, which a GET must first show does not exist (404). That PUT is the only probe that could change
-//   something: a token wrongly allowed to make it creates PROBE_ENV, and the check then fails with an ALARM line, first in the
-//   output and on stderr, that names the environment the owner deletes.
+//   names the environment PROBE_ENV, which a GET must first show does not exist (exactly 404; on any other answer the PUT is not
+//   sent). That PUT is the only probe that could change something: a token wrongly allowed to make it creates PROBE_ENV, and the
+//   check then fails with an ALARM line, first in the output and on stderr, that names the environment the owner deletes;
+// - the six secrets and variables the workflows read (STORED) are each set once in their environment with a valid updated_at, which
+//   is printed for the reviewer to compare with the day the owner or the coordinator set it (docs/RUNBOOK.md); R2_BUCKET is
+//   eve-cyno-plugins and R2_ACCOUNT_ID is 32 lower-case hex (ok or fail only, never the value);
+// - no secret or variable named MINISIGN_* or R2_* is set at repository or organization level (OUTSIDE): one there reaches every
+//   job of the repository without an approval of index or mirror. Listing the variables needs read access to Variables; a list
+//   that cannot be read, or did not come back whole, fails closed.
 // The agents' token was switched on 2026-11-18 (plan 4.1, Q16: T1 done), so there is no mode without the probes (the former --t2 is
 // a usage error): with one account as dispatcher and approver, the token's refusals are the safeguard.
 //
@@ -49,6 +56,28 @@ export const PROBES = Object.freeze([
   { key: 'actions', name: 'Actions write', expect: 403, method: 'DELETE', endpoint: `${R}/actions/artifacts/1`, on404: ' (the token may be able to delete workflow runs and artifacts)' },
   { key: 'envcreate', name: 'Administration (create environment)', expect: 403, method: 'PUT', endpoint: `${R}/environments/${PROBE_ENV}`, on404: '', creates: PROBE_ENV },
 ]);
+/**
+ * The secrets and variables the workflows read, each in its environment: the reviewer compares the printed updated_at with the day
+ * it was set. `value` checks a variable's value (never printed); `rule` says what it must be.
+ */
+export const STORED = Object.freeze([
+  { kind: 'secret', name: 'MINISIGN_INDEX_KEY', env: 'index' },
+  { kind: 'secret', name: 'MINISIGN_INDEX_PASSWORD', env: 'index' },
+  { kind: 'secret', name: 'R2_ACCESS_KEY_ID', env: 'mirror' },
+  { kind: 'secret', name: 'R2_SECRET_ACCESS_KEY', env: 'mirror' },
+  { kind: 'variable', name: 'R2_ACCOUNT_ID', env: 'mirror', value: (v) => /^[0-9a-f]{32}$/.test(v), rule: 'a Cloudflare account id (32 lower-case hex)', shown: 'a Cloudflare account id (32 lower-case hex; not printed)' },
+  { kind: 'variable', name: 'R2_BUCKET', env: 'mirror', value: (v) => v === 'eve-cyno-plugins', rule: 'eve-cyno-plugins', shown: 'eve-cyno-plugins' },
+]);
+/** The lists outside the environments where no name MINISIGN_* or R2_* may be set (the repository's own and the organization's). */
+export const OUTSIDE = Object.freeze([
+  { what: 'repository secrets', endpoint: `${R}/actions/secrets?per_page=100`, key: 'secrets' },
+  { what: 'organization secrets', endpoint: `${R}/actions/organization-secrets?per_page=100`, key: 'secrets' },
+  { what: 'repository variables', endpoint: `${R}/actions/variables?per_page=30`, key: 'variables' },
+  { what: 'organization variables', endpoint: `${R}/actions/organization-variables?per_page=30`, key: 'variables' },
+]);
+const OWN_NAME_RE = /^(?:MINISIGN_|R2_)/i;
+const STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const UNREADABLE = 'a list that cannot be read fails closed';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** The problems of one environment as GET .../environments/<name> answers it, its reviewer aside (reviewerOf). */
@@ -183,6 +212,7 @@ export async function checkEnvs({ rev, repoDir, env }) {
       if (g.error || g.status !== 404) {
         fail(`probe ${pr.name}`, g.status === 200 ? `the environment ${pr.creates} exists (HTTP 200); ${DELETE_IT}, so the probe names a new one`
           : `could not confirm that the environment ${pr.creates} does not exist (${g.error ? `no answer: ${oneLine(g.error)}` : `HTTP ${g.status}`}; expected 404)`);
+        continue; // the PUT is sent only after a GET that answered exactly 404
       }
     }
     const answer = await probe(pr.method, pr.endpoint, opts, pr.fields ?? []);
@@ -193,6 +223,36 @@ export async function checkEnvs({ rev, repoDir, env }) {
     if (pr.creates && !answer.error && answer.status >= 200 && answer.status < 300) {
       alarms.push(`ALARM: the agents' token created the environment ${pr.creates} in ${REPO}: ${DELETE_IT} and takes Administration off the token; no approval until then`);
     }
+  }
+  // ---- the six secrets and variables in their environments, and none of their names outside them
+  const lists = new Map();
+  for (const s of STORED) {
+    const k = `${s.env} ${s.kind}`;
+    if (!lists.has(k)) lists.set(k, await getAll(`${R}/environments/${s.env}/${s.kind}s?per_page=${s.kind === 'secret' ? 100 : 30}`, `${s.kind}s`, opts));
+  }
+  for (const s of STORED) {
+    const what = `${s.kind} ${s.name} (environment ${s.env})`;
+    const l = lists.get(`${s.env} ${s.kind}`);
+    if (l.error) { fail(what, `${oneLine(l.error)} (${UNREADABLE})`); continue; }
+    const found = l.items.filter((x) => isObj(x) && x.name === s.name);
+    if (found.length !== 1) { fail(what, found.length === 0 ? 'not set' : `listed ${found.length} times`); continue; }
+    const at = found[0].updated_at;
+    if (typeof at !== 'string' || !STAMP_RE.test(at) || !Number.isFinite(Date.parse(at))) { fail(what, 'no valid updated_at'); continue; }
+    if (s.value && (typeof found[0].value !== 'string' || !s.value(found[0].value))) { fail(what, `the value is not ${s.rule} (not printed)`); continue; }
+    lines.push(`PASS ${what}: updated_at ${at}${s.value ? `; the value is ${s.shown}` : ''}`);
+  }
+  lines.push('updated_at: compare each date above with the day the owner or the coordinator set that value; a later date that nobody '
+    + 'set means no approval (docs/RUNBOOK.md)');
+  for (const o of OUTSIDE) {
+    const l = await getAll(o.endpoint, o.key, opts);
+    if (l.error) { fail(o.what, `${oneLine(l.error)} (${UNREADABLE})`); continue; }
+    const names = l.items.map((x) => (isObj(x) && typeof x.name === 'string' && x.name !== '' ? x.name : null));
+    if (names.includes(null)) { fail(o.what, 'an item without a name'); continue; }
+    const own = names.filter((n) => OWN_NAME_RE.test(n));
+    if (own.length) {
+      fail(o.what, `${own.map(oneLine).join(', ')} is set outside the environments: there it reaches every job of the repository without an `
+        + 'approval of index or mirror. MINISIGN_* and R2_* belong to the environments only; the owner or the coordinator deletes it');
+    } else lines.push(`PASS ${o.what}: none named MINISIGN_* or R2_* (${names.length} listed; names not printed)`);
   }
   lines.push(ok ? 'C-ENV1 PASS' : 'C-ENV1 FAIL');
   return { ok, lines: [...alarms, ...lines], alarms };
