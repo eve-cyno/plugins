@@ -371,6 +371,14 @@ describe('E2E check.mjs', () => {
     const x = await check('publish', path.join(T, 'base'), removed, ['--target', 'production']);
     assert.equal(x.code, 1, x.stdout + x.stderr);
     assert.match(x.stdout, /^FAIL C8 dev\.example\.intel 1\.1\.0: a merged version is never removed/m);
+    // C8 holds a live version to all the catalog holds of it: its permissions, engines, release date and changes too.
+    const wider = { characters: 'selected', network: ['https://api.example.com', 'https://collect.example.net'] };
+    for (const [k, value] of [['permissions', wider], ['engines', '^1.21.0'], ['released', '2026-12-02'], ['changes', 'Slower.']]) {
+      const changed = writeTree(path.join(T, `tree-changed-${k}`), { entries: [pluginEntry([version('1.1.0', A110, { [k]: value, unlisted: true }), version('1.0.0', A100)]), ENTRIES[1]], revoked: REVOKED });
+      const c = await check('publish', path.join(T, 'base'), changed, ['--target', 'production']);
+      assert.equal(c.code, 1, `${k}\n${c.stdout}${c.stderr}`);
+      assert.match(c.stdout, new RegExp(`^FAIL C8 dev\\.example\\.intel 1\\.1\\.0: ${k} of a merged version never changes`, 'm'), k);
+    }
     const gone = writeTree(path.join(T, 'tree-gone'), { entries: [ENTRIES[1]], revoked: REVOKED });
     const g = await check('publish', path.join(T, 'base'), gone, ['--target', 'production']);
     assert.equal(g.code, 1, g.stdout + g.stderr);

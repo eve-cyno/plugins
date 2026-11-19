@@ -267,6 +267,23 @@ describe('EN C8 version rules', () => {
       assert.ok(has(checkVersionRules(head, entry()), 'C8', /1\.0\.0/), k);
     }
   });
+  test('EN-c8-merged-version-frozen: a merged version never changes but for "unlisted": true added (trust check 2026-11-19)', () => {
+    const wider = { characters: 'selected', network: ['https://api.example.com', 'https://collect.example.net'] };
+    for (const [k, value] of [['permissions', wider], ['engines', '^1.21.0'], ['released', '2026-12-02'], ['changes', 'Slower.']]) {
+      for (const unlisted of [{}, { unlisted: true }]) {
+        const head = entry(); head.versions[1] = { ...head.versions[1], [k]: value, ...unlisted };
+        assert.ok(has(checkVersionRules(head, entry()), 'C8', new RegExp(`1\\.0\\.0: ${k} of a merged version never changes`)), `${k} ${JSON.stringify(unlisted)}`);
+      }
+    }
+    const dropped = entry(); delete dropped.versions[1].released;
+    assert.ok(has(checkVersionRules(dropped, entry()), 'C8', /1\.0\.0: released of a merged version never changes/), 'a field dropped');
+    const base = entry(); delete base.versions[1].changes;
+    assert.ok(has(checkVersionRules(entry(), base), 'C8', /1\.0\.0: changes of a merged version never changes/), 'a field added');
+    // The same JSON value with its keys in another order is no change; unlisting is the one change allowed.
+    const reordered = entry();
+    reordered.versions[1] = { ...reordered.versions[1], permissions: { network: ['https://api.example.com'], characters: 'selected' }, unlisted: true };
+    assert.deepEqual(checkVersionRules(reordered, entry()), []);
+  });
   test('EN-c8-new-below-base-max: an added version must exceed every base version', () => {
     const head = entry({ versions: [version('1.1.0', SHA_B), version('1.0.5', SHA_C), version('1.0.0', SHA_A)] });
     assert.ok(has(checkVersionRules(head, entry()), 'C8', /1\.0\.5/));

@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import semver from 'semver';
+import { sameEntry as sameValue } from './diff.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST = path.join(ROOT, 'vendor', 'eve-cyno-host', 'host', 'dist');
@@ -158,9 +159,11 @@ export function checkIds(files) {
 
 /**
  * C8: versions newest first and strictly increasing by semver; against `base` (the entry on the base branch, or null): a version
- * that is on the base stays in the entry (it is unlisted with `"unlisted": true`, never removed) with its url, sha256 and size, and
- * stays unlisted once it is; an added version is listed and strictly above every base version, unlisted ones included. So a version
- * number, once merged, never comes back with other bytes, across any number of pull requests.
+ * that is on the base stays in the entry (it is unlisted with `"unlisted": true`, never removed) exactly as it was merged, its url,
+ * sha256, size, engines, permissions, released and changes, and stays unlisted once it is; adding `"unlisted": true` is the one change
+ * allowed. An added version is listed and strictly above every base version, unlisted ones included. So a version number, once
+ * merged, never comes back with other bytes, across any number of pull requests, and an unlisted version, whose archive no check reads
+ * again, never claims other permissions than the ones it was reviewed with (C10 compares with it).
  */
 export function checkVersionRules(head, base) {
   const out = [];
@@ -180,8 +183,9 @@ export function checkVersionRules(head, base) {
   for (const v of versions) {
     const b = onBase.get(v?.version);
     if (b) {
-      for (const k of ['url', 'sha256', 'size']) {
-        if (v[k] !== b[k]) out.push(prob('C8', `${id} ${v.version}: ${k} of a merged version never changes (add a new version instead)`));
+      // Every field, by JSON value (a field left out equals one that is undefined), but `unlisted`, checked on its own below.
+      for (const k of new Set([...Object.keys(b), ...Object.keys(v)])) {
+        if (k !== 'unlisted' && !sameValue(v[k], b[k])) out.push(prob('C8', `${id} ${v.version}: ${k} of a merged version never changes (add a new version instead)`));
       }
       if (!isListed(b) && isListed(v)) out.push(prob('C8', `${id} ${v.version}: an unlisted version stays unlisted (add a new version instead)`));
       continue;

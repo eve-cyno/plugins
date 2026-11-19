@@ -246,7 +246,16 @@ describe('PR fixture suite', () => {
     }
   });
 
-  test('ESC-base-version-not-semver:a base version that is not semver leaves C10 nothing to compare: review escalation, not a crash', async () => {
+  test('PR-merged-version-frozen: the first pull request of ESC-widen (unlist 1.0.0, widen its entry permissions) is refused at C8', async () => {
+    await refused(tree({ entries: [pluginEntry([version('1.0.0', A100, { unlisted: true, permissions: MORE })])] }),
+      /^FAIL C8 dev\.example\.intel 1\.0\.0: permissions of a merged version never changes/m);
+    await refused(tree({ entries: [pluginEntry([version('1.0.0', A100, { engines: '^1.21.0' })])] }),
+      /^FAIL C8 dev\.example\.intel 1\.0\.0: engines of a merged version never changes/m);
+    const r = await check('refuse', baseTree(), tree({ entries: [pluginEntry([version('1.0.0', A100, { unlisted: true })])] }));
+    assert.equal(r.code, 0, `unlisting alone is allowed\n${r.stdout}${r.stderr}`);
+  });
+
+  test('ESC-base-version-not-semver: a base version that is not semver leaves C10 nothing to compare: review escalation, not a crash', async () => {
     const A110 = pluginZip(manifest({ version: '1.1.0' }));
     const base = tree({ entries: [pluginEntry([version('1.0.0', A100), { ...version('1.0.0', A100), version: 'one' }])] });
     const v = await check('review', base, head(A110), ['--author', 'example-login']);

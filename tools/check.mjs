@@ -16,7 +16,7 @@
 //     NEEDS REVIEW <classes> when any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
-//     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on SHA-256 and size (a catalog holds no author URL); the review
+//     publish; with --repair true a verified candidate run's catalog and the union of revocations, recovery R2), C15 only "well-formed, not in the future" (UTC), C8 on all a catalog holds of a version (it holds no author URL); the review
 //     classes are printed as information.
 // A base folder is a tree (entries/, revoked.json) or a base written by build-index.mjs base (catalog.json). Archives come from
 // --archive-cache (<sha256>.zip; checked like a download, C5) or from the author's URL (C4), and are kept there. A version on the base
@@ -108,7 +108,8 @@ function readBase(dir) {
     if (!isObj(cat.value) || !Array.isArray(cat.value.plugins) || !Array.isArray(cat.value.revoked)) { R.fail('base', 'catalog.json is not a catalog'); return null; }
     const entries = cat.value.plugins.filter(l => isObj(l) && typeof l.id === 'string' && Array.isArray(l.versions)).map(l => ({
       id: l.id, type: l.type, name: l.name, author: l.author, firstParty: l.firstParty === true, maintainers: [],
-      versions: l.versions.map(v => ({ version: v.version, sha256: v.archive?.sha256, size: v.archive?.size, engines: v.engines, permissions: v.permissions })),
+      // every field of a version as the head wrote it (index-build.mjs copies them unchanged) but the author URL, which a catalog names not
+      versions: l.versions.map(v => ({ version: v.version, released: v.released, changes: v.changes, sha256: v.archive?.sha256, size: v.archive?.size, engines: v.engines, permissions: v.permissions })),
     }));
     // A repair base (build-index.mjs base --repair true, recovery R2) is a verified candidate run's catalog, not the live one; its lifts
     // count against the union of every verified candidate's revocations, as the compare step counts them.
@@ -174,7 +175,7 @@ function checkRules(head, base) {
   const before = R.failed;
   for (const e of head.entries) {
     let b = base.entries.get(e.id) ?? null;
-    // A live catalog names no author URL: C8 holds a live version to its SHA-256 and size (plan 4.2).
+    // A live catalog names no author URL: C8 holds a live version to everything else the catalog holds of it (plan 4.2).
     if (base.kind === 'catalog') b = liveBase(e, b, base);
     for (const p of checkVersionRules(e, b)) R.fail(p.check, p.message);
     for (const why of checkNames(e, base.entries.get(e.id) ?? null, head.entries)) R.fail('C3', why.replace(/^C3 /, ''));

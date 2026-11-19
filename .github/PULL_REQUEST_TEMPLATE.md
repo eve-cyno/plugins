@@ -18,4 +18,4 @@
 
 - [ ] I read POLICY.md.
 - [ ] The entry's `engines` and `permissions` equal the archive's `plugin.json`.
-- [ ] I did not change the `url`, `sha256` or `size` of a version already merged.
+- [ ] I did not change a version already merged (adding `"unlisted": true` is the one change it takes).
