@@ -9,18 +9,22 @@ Roles:
 - **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
   and `mirror`. He approves only from GitHub Mobile, after the steps in "Before every index and mirror approval".
 - **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs` and local verifications, and hands their output
-  to the owner. It sets secrets only with the two commands of "Secrets and variables", which never show it a value. It never approves
-  a deployment, never dispatches `publish.yml` with `target: production`, and never reads a secret's value.
+  to the owner. It sets secrets only with the commands of "Secrets and variables", which move each value on stdin and print none. It
+  never approves a deployment, never dispatches `publish.yml` with `target: production`, and never reads a secret's value.
 - **Agents** work with the agents' token (below). It cannot approve a deployment, dispatch a run, change an environment's protection
   rules, or delete runs or artifacts. It can write secrets and environment variables (owner decision 2026-11-18; "One account" names
   what that allows). Agents push over SSH.
 
-**Hard rule.** No private key, passphrase or token is ever seen by an agent: never in an argument list, an output, a file an agent
-writes, a log or a message. The commands of "Secrets and variables" move each value on stdin only.
+**Hard rule.** No private key, passphrase or token is ever put in an argument list, an output, a file an agent writes, a log or a
+message. The commands of "Secrets and variables" move each value on stdin only. This is a rule of conduct, not a barrier: "One
+account" names what any process of the agents' user can still do with the keys.
+
+**The owner never runs a decrypt command.** Every command below that decrypts a backup is run by the coordinator; the owner only
+types a value into a password dialog that a command opens.
 
 ## Secrets and variables
 
-Names only. No value is ever written here, typed into a web page or seen by an agent.
+Names only. No value is ever written here or typed into a web page.
 
 | Environment | Kind | Name | Used by |
 |---|---|---|---|
@@ -34,8 +38,8 @@ Names only. No value is ever written here, typed into a web page or seen by an a
 None of them is a repository or organization secret. The static rule C-WF5 fails if a `MINISIGN_` name appears outside a job with
 `environment: index`, or an `R2_` name outside a job with `environment: mirror`.
 
-All six were set on 2026-11-18. To set them, or set them again, run these from a checkout of the infra repository
-(`eve-cyno-infra`). The owner or the coordinator runs them; nobody pastes a value anywhere:
+All six were set on 2026-11-18. To set them, or set them again, the coordinator runs these from a checkout of the infra
+repository (`eve-cyno-infra`); the owner only types into the password dialogs of step 2, and nobody pastes a value anywhere:
 
 1. **`index`:** `scripts/desktop-signing-rotate.sh secrets index index --env index --repo eve-cyno/plugins`. It takes the index
    primary from the encrypted backup, proves it against its `.pub` and the key the app pins (key id `F5F7F2E299DF08D4` on
@@ -44,7 +48,7 @@ All six were set on 2026-11-18. To set them, or set them again, run these from a
 2. **`mirror` secrets:** `scripts/secret-dialog.sh --gh eve-cyno/plugins --env mirror 'R2_ACCESS_KEY_ID:^[0-9a-f]{32}$'
    'R2_SECRET_ACCESS_KEY:^[0-9a-f]{64}$'`. It opens one password dialog per name, the owner types the value of the R2 token made
    for this bucket, and the value goes to `gh secret set` on stdin. A value that does not match its pattern is refused before
-   anything is written. The agents never see the values.
+   anything is written, and no value is printed.
 3. **`mirror` variables:** `R2_ACCOUNT_ID` and `R2_BUCKET` are plain values, not secrets, set with `gh variable set --env mirror
    --repo eve-cyno/plugins`.
 
@@ -100,6 +104,10 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   two variables' values (`R2_BUCKET` is `eve-cyno-plugins`, `R2_ACCOUNT_ID` is 32 lower-case hex; it prints only ok or fail, never
   the value), and fails on any secret or variable named `MINISIGN_*` or `R2_*` at repository or organization level: one there
   reaches every job of the repository without an approval of `index` or `mirror`.
+- **The key-custody residual, named exactly.** Any process of the agents' user can decrypt `signing/desktop/keys.enc.yaml` (the
+  release keys included) with the age identity under `~/.config/sops/age` and sign a head offline; the phone approval guards only
+  the CI copy of the key; publishing such a head would still need R2 write; the key-custody fix (a passphrase-protected age identity
+  for `signing/desktop` only) is the owner's decision. So the hard rule above is a rule of conduct for the agents, not a barrier.
 - **The residual, named honestly.** Agents push to `main` over SSH with the owner's key, and the ruleset lets an organization admin
   bypass it. So an agent can push a changed workflow, tool, `package.json` or lock file. Such a workflow can ask for
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
@@ -406,9 +414,12 @@ verifies, the owner follows the emergency path.
 
 ## Emergency path (plan 5.4)
 
-If `eve-cyno/plugins` or its Actions are unusable, the owner re-sets the desktop secrets from the backup
-(`desktop-signing-secrets.sh` in the infra repository) and follows the desktop repository's `docs/release-checklist.md`, "The plugin
-index", by hand: build with the vendored tools, `release-sign.sh` with purpose `index`, upload with his own Cloudflare login.
+If `eve-cyno/plugins` or its Actions are unusable, the coordinator re-sets the desktop signing secrets from the backup
+(`scripts/desktop-signing-secrets.sh` in the infra repository: it decrypts into tmpfs and pipes each value to `gh secret set` on
+stdin; the owner runs no decrypt command). Then the desktop repository's `docs/release-checklist.md`, "The plugin index", is followed
+by hand: the coordinator builds with the vendored tools; the owner runs `scripts/release-sign.sh` with purpose `index`, which only
+dispatches the desktop `sign.yml` (it signs in CI after his approval, decrypts nothing and reads no secret) and verifies the
+signature it downloads; the owner uploads with his own Cloudflare login.
 
 ## Rotation (plan 4.4)
 
