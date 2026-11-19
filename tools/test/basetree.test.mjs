@@ -105,6 +105,21 @@ describe('base tree (check.yml)', () => {
     }
   });
 
+  test('BT-github-link: a link at or under .github is refused, nothing is written (check-workflows would read through it)', async () => {
+    for (const [rel, target] of [['.github', '/etc'], ['.github/workflows', '/etc'], ['.github/workflows/check.yml', '/etc/hostname']]) {
+      const { dir } = repo();
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.symlinkSync(target, path.join(dir, rel));
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', 'a link');
+      const out = tempDir('out');
+      const r = await baseTree(['--repo', dir, '--rev', git(dir, 'rev-parse', 'HEAD'), '--out', out]);
+      assert.equal(r.code, 1, `${rel}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`^REFUSED: "${rel.replace(/\./g, '\\.')}": a link under \\.github`, 'm'), rel);
+      assert.deepEqual(fs.readdirSync(out), [], rel);
+    }
+  });
+
   test('BT-usage: a full commit id is required, and it must name a commit of the repository', async () => {
     const { dir } = repo();
     const out = path.join(tempDir('out'), 'base');

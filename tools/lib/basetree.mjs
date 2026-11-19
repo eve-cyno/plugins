@@ -2,8 +2,9 @@
 // It reads the commit with `git ls-tree -r -z --full-tree` and `git cat-file --batch`, which never apply .gitattributes. `git archive`
 // does, and reads them from the archived tree itself (core.attributesFile does not turn that off): a merged `.gitattributes` with
 // export-ignore would empty every later base, and export-subst would rewrite files in it. Regular files keep their executable bit, a
-// link is written as a link; a submodule or any other mode refuses (fail closed). After writing, the folder must hold exactly the
-// tree's paths, each hashed again as a git object equal to the one the tree names.
+// link is written as a link, except at or under .github, which refuses: tools/check-workflows.mjs reads that folder of a written
+// tree (RUNBOOK approval step 1), and a link there could point out of it. A submodule or any other mode refuses (fail closed).
+// After writing, the folder must hold exactly the tree's paths, each hashed again as a git object equal to the one the tree names.
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -88,6 +89,9 @@ export function writeCommitTree({ repo, rev, out }) {
     if (!MODES[mode]) return refuse(`${p}: mode ${mode} (${type}) is not a file or a link; the base tree holds files and links only`);
     const bad = pathProblem(p);
     if (bad) return refuse(`${JSON.stringify(p.slice(0, 200))}: ${bad}`);
+    if (MODES[mode] === 'link' && /^\.github(?:\/|$)/i.test(p)) {
+      return refuse(`${JSON.stringify(p.slice(0, 200))}: a link under .github (the workflows' folder holds files only)`);
+    }
     items.push({ mode: MODES[mode], oid, path: p });
   }
   let st = null;

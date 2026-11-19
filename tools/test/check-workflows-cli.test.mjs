@@ -4,7 +4,7 @@
 // replaced by modules that record that they ran, so a pass or a failure can only come from the trusted copy. No network.
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,8 +25,8 @@ function otherCheckout() {
   fs.writeFileSync(path.join(t, 'tools', 'check-workflows.mjs'), trap('tools/check-workflows.mjs'));
   return t;
 }
-const cli = (args, cwd) => new Promise((resolve) => {
-  execFile(process.execPath, [TOOL, ...args], { cwd, encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+const cli = (args, cwd, timeout = 120_000) => new Promise((resolve) => {
+  execFile(process.execPath, [TOOL, ...args], { cwd, encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024 },
     (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout, stderr }));
 });
 /** The one WORKFLOWS line of the output; the test fails if there is none or more than one. */
@@ -65,6 +65,44 @@ describe('check-workflows CLI (RUNBOOK approval step 1)', () => {
     assert.equal(res.code, 1);
     assert.match(verdict(res.stdout), /^WORKFLOWS FAIL C-WF1( |$)/);
     for (const l of res.stdout.split('\n')) assert.ok(!/[\u0000-\u001f\u007f]/.test(l), 'no control character in any line');
+  });
+
+  test('CWF-cli-links: a link under .github, or at tools or docs, is refused before any rule reads through it', async () => {
+    // Files outside the tree that a followed link would read; the YAML reader echoes a line it cannot read into the FAIL line.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cwf-outside-'));
+    temps.push(outside);
+    fs.mkdirSync(path.join(outside, 'workflows'));
+    fs.writeFileSync(path.join(outside, 'workflows', 'check.yml'), 'OUTSIDE-SECRET-LINE\n');
+    fs.writeFileSync(path.join(outside, 'secret.yml'), 'OUTSIDE-SECRET-LINE\n');
+    const swap = (d, rel, target) => { fs.rmSync(path.join(d, rel), { recursive: true, force: true }); fs.symlinkSync(target, path.join(d, rel)); };
+    const cases = {
+      '.github/workflows': (d) => swap(d, '.github/workflows', path.join(outside, 'workflows')),
+      '.github': (d) => swap(d, '.github', outside),
+      '.github/workflows/check.yml': (d) => swap(d, '.github/workflows/check.yml', path.join(outside, 'secret.yml')),
+      '.github/ISSUE_TEMPLATE': (d) => fs.symlinkSync(outside, path.join(d, '.github', 'ISSUE_TEMPLATE')),
+      tools: (d) => swap(d, 'tools', outside),
+      docs: (d) => swap(d, 'docs', outside),
+    };
+    for (const [rel, make] of Object.entries(cases)) {
+      const d = otherCheckout();
+      make(d);
+      const res = await cli(['--dir', d], d);
+      assert.equal(res.code, 1, `${rel}: ${res.stdout}${res.stderr}`);
+      assert.equal(verdict(res.stdout), 'WORKFLOWS FAIL tree', rel);
+      assert.ok(res.stdout.split('\n').includes(`TREE FAIL ${rel}: a link (the rules read no link: it can point out of the tree)`), `${rel}:\n${res.stdout}`);
+      assert.doesNotMatch(res.stdout + res.stderr, /OUTSIDE-SECRET-LINE/, `${rel}: nothing outside the tree is printed`);
+      assert.doesNotMatch(res.stdout, /^C-WF/m, `${rel}: no rule ran`);
+    }
+  });
+
+  test('CWF-cli-fifo: a file under .github that is neither a regular file nor a folder is refused, never opened', async () => {
+    const d = otherCheckout();
+    const mk = spawnSync('mkfifo', [path.join(d, '.github', 'workflows', 'pipe.yml')]);
+    assert.equal(mk.status, 0, 'mkfifo');
+    const res = await cli(['--dir', d], d, 30_000);
+    assert.equal(res.code, 1, res.stdout + res.stderr);
+    assert.equal(verdict(res.stdout), 'WORKFLOWS FAIL tree');
+    assert.ok(res.stdout.split('\n').includes('TREE FAIL .github/workflows/pipe.yml: neither a regular file nor a folder'), res.stdout);
   });
 
   test('CWF-cli-usage: no --dir is a usage error; a folder without workflows fails every rule', async () => {

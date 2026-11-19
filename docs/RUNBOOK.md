@@ -7,10 +7,10 @@ rules (C-WF1 to C-WF11).
 Roles:
 
 - **The owner** (his own GitHub account) merges, dispatches runs, and is the **only required reviewer** of the environments `index`
-  and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for it, an entries-only one included
-  (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push of
-  "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. He approves only from GitHub
-  Mobile, after the steps in "Before every index and mirror approval".
+  and `mirror`. He reviews every merge: no pull request is merged before he has said "merge" for its head commit, an entries-only
+  one included (owner ruling of 2026-11-19, SA-2 of the stage-fixes plan); the coordinator then makes the local merge and the push
+  of "Publishing" step 1, and `tools/merge-scope.mjs` decides how much of the pull request he reads first. He approves only from
+  GitHub Mobile, after the steps in "Before every index and mirror approval".
 - **The coordinator** (an agent) runs `tools/check-envs.mjs`, `tools/approved-base.mjs`, `tools/merge-scope.mjs`,
   `tools/check-workflows.mjs` and local verifications, always from the trusted worktree (below), and hands their output to the owner.
   It never merges a pull request the owner has not said "merge" for, whatever the tools print. It sets secrets only with the
@@ -22,17 +22,22 @@ Roles:
 
 **The trusted worktree.** A pull request or a run's commit can change the tools themselves, so a tool run from the checkout under
 review prints whatever that change wants (a `tools/check.mjs` that never names `maintenance`, say). The coordinator therefore runs
-every `node` command of this runbook (`tools/...`, `vendor/...`) from `../eve-cyno-plugins-trusted`, a worktree of its checkout at a
-commit whose code the owner has read and approved: `<A>` (step 2 of "Before every index and mirror approval"), and before the first
-publish the commit the owner last read in full (step 4), which his list records. It has its own `npm ci --ignore-scripts` and is
-never edited; the checkout under review is only ever named as `--repo-dir`, `--dir` or `--repo`. To set it up, and to move it
-after each production run whose `sign` and `upload` succeeded and which the owner entered in his list (that run's commit is the
-next `<A>`):
+every `node` command of this runbook that a merge or an approval rests on from `../eve-cyno-plugins-trusted`, a worktree beside
+its checkout at a commit whose code the owner has read: `<A>` (step 2 of "Before every index and mirror approval"), or, until the
+first production run whose `sign` and `upload` succeeded, `<X>`, the commit of the newest `read in full <X> <date>` line of his
+list ("Owner steps before the first production publish", step 0, which comes before the first merge and the first tool run). The
+commands are written for a shell in `<checkout>`: `node ../eve-cyno-plugins-trusted/tools/...` runs the trusted copy, and the
+checkout under review is only ever named as `--repo-dir`, `--dir` or `--repo`, never run. The worktree has its own
+`npm ci --ignore-scripts` and is never edited. To set it up at `<X>`, to move it to a later commit read in full (step 4 of "Before
+every index and mirror approval"), and to move it after each production run whose `sign` and `upload` succeeded and which the owner
+entered in his list (that run's commit is the next `<A>`):
 
 ```
-git -C <checkout> worktree add --detach ../eve-cyno-plugins-trusted <A>   # once; later: git checkout -q --detach <A> in it
-cd <the trusted worktree> && npm ci --ignore-scripts
-git rev-parse HEAD                                                         # must print <A>; git status --porcelain prints nothing
+git -C <checkout> worktree add --detach ../eve-cyno-plugins-trusted <X>   # once
+git -C ../eve-cyno-plugins-trusted checkout -q --detach <commit>          # each later move
+(cd ../eve-cyno-plugins-trusted && npm ci --ignore-scripts)               # after the owner read package.json and the lock there
+git -C ../eve-cyno-plugins-trusted rev-parse HEAD                         # must print that commit
+git -C ../eve-cyno-plugins-trusted status --porcelain                     # must print nothing
 ```
 
 **Hard rule.** No private key, passphrase or token is ever put in an argument list, an output, a file an agent writes, a log or a
@@ -230,20 +235,23 @@ This comes before **every** approval of `index` or `mirror`: both workflows, bot
 approval only). The owner (the environments' only reviewer) does the reading in a browser and approves only from GitHub Mobile.
 `<B>` is the run's single commit (`github.sha`, shown on the run page).
 
-1. **Settings and workflows.** The coordinator has run, for this run, in the trusted worktree ("Roles"), with the agents' token and
-   `<B>` fetched into its checkout:
+1. **Settings and workflows.** The coordinator has run, for this run, the trusted worktree's tools ("Roles") in a shell in
+   `<checkout>`, with the agents' token and `<B>` fetched into `<checkout>`:
 
    ```
-   node tools/check-envs.mjs --rev <B> --repo-dir <checkout>
-   node tools/base-tree.mjs --rev <B> --out <new empty folder> --repo <checkout>
-   node tools/check-workflows.mjs --dir <that folder>
+   node ../eve-cyno-plugins-trusted/tools/check-envs.mjs --rev <B> --repo-dir <checkout>
+   node ../eve-cyno-plugins-trusted/tools/base-tree.mjs --rev <B> --out <new empty folder> --repo <checkout>
+   node ../eve-cyno-plugins-trusted/tools/check-workflows.mjs --dir <that folder>
    ```
 
    `check-workflows.mjs` runs the trusted worktree's rules (C-WF1 onwards, `tools/lib/wfrules.mjs`) over `<B>`'s workflows and the
    files they read, in `<B>`'s tree written byte for byte as `check.yml` writes its base. It must print `WORKFLOWS PASS` (exit 0).
-   A `FAIL` line means no approval, with one exception: a commit that changes a rule together with the workflow it pins fails the
-   older rules once; then every failing line must name a workflow part that the compare view of step 5 shows changed, and the owner
-   reads that part there.
+   The rules follow links, so a link at or under `.github` (which `base-tree.mjs` already refuses to write) or at `tools` or `docs`,
+   or anything under `.github` that is neither a file nor a folder, is a `TREE FAIL` line and no rule runs (`WORKFLOWS FAIL tree`).
+   A `FAIL` line means no approval, with one exception, a judgment call kept on purpose (no tool decides it; the owner does): a
+   commit that changes a rule together with the workflow it pins fails the older rules once; then every failing line must name a
+   workflow part that the compare view of step 5 (step 4 for a first publish) shows changed, and the owner reads that part there.
+   `TREE FAIL` has no exception.
    `check-envs.mjs` must print `C-ENV1 PASS` (exit 0). It checks both environments (one required reviewer, the same user on both,
    self-review prevention off, admin bypass off, `main` only, no other rule), that the reviewer's login and id appear in no path,
    file or commit at `<B>`, and that the six probes of "The agents' token" answer as its table expects: the four refusals exactly
@@ -259,10 +267,10 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 2. **Find `<A>`, the last approved base.** `<A>` is the commit of the newest run of `publish.yml` or `resign.yml`, **other than the
    run under review**, that has an approval of `index` by the environment's reviewer (the owner) and whose `sign` and `upload` jobs
    both concluded `success`. Not the newest green run: a no-op re-sign ends green at `check`, a scheduled run takes `main`'s head, and
-   a `target: test` run has no `index` approval. The coordinator runs, in the trusted worktree:
+   a `target: test` run has no `index` approval. The coordinator runs the trusted worktree's copy:
 
    ```
-   node tools/approved-base.mjs --run <run id>
+   node ../eve-cyno-plugins-trusted/tools/approved-base.mjs --run <run id>
    ```
 
    It reads the reviewer from environment `index`, and prints `<B>`, one `skip` line per newer run with the reason, `<A>` with its
@@ -279,9 +287,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    ("When a run is red", the `Refuse a re-run` row). The tool is a convenience: confirm on `<A>`'s run page that the `index`
    approval shown is your own.
    The `<A>` it prints must be the trusted worktree's commit (`git -C ../eve-cyno-plugins-trusted rev-parse HEAD`; with `FIRST
-   PUBLISH`, the commit read in full of step 4). When it is not, stop: either the worktree was not moved after the last approved run
-   (move it once step 3 has confirmed `<A>` against the list, then start again at step 1), or the list does not hold that run (no
-   approval).
+   PUBLISH`, that commit must be `<X>`, the newest `read in full` line of the list). When it is not, stop: either the worktree was
+   not moved after the last approved run (move it once step 3 has confirmed `<A>` against the list, then start again at step 1), or
+   the list does not hold that run (no approval).
    The agents' token cannot write an approval record or change who may approve, so an approval by the owner's account means the
    owner approved, on his phone.
 3. **Check against your own list.** GitHub's run history can be deleted by a workflow with `actions: write`, and an agent can push
@@ -292,7 +300,9 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    |---|---|---|---|---|---|
 
    Write the first four at the `index` approval (the `generated` from the run summary, after step 5), and the outcome of `sign` and
-   `upload` after the run. Test runs are not entries; refused approvals and failed runs are entries only as far as they got.
+   `upload` after the run. Test runs are not entries; refused approvals and failed runs are entries only as far as they got. The
+   list also holds the lines `read in full <commit> <date>` ("Owner steps before the first production publish", step 0, and step 4
+   below); they are not run entries.
    **No approval** when: `<A>` is not the newest entry of the list whose `sign` and `upload` both succeeded (the run under review
    aside); a run of the list no longer shows on GitHub; or the live base (the verified live head, or R2's base) has a `generated` older
    than that newest entry's (an older verified head was replayed).
@@ -300,20 +310,24 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    successful `sign` (a signed head may have gone live, as recovery R2 counts it). After such an entry, a run that calls itself a
    first publish means **no approval**. When GitHub shows such a run but none with a successful `upload`, the tool says `NOT A FIRST
    PUBLISH`: then only a repair run (`repair: true`, step 6) may be approved, read as this step says, since there is no `<A>`
-   (once that run is 90 days old, not even that: "Recovery R2", a dead end at 90 days). Read every file other
-   than the `entries/<id>.json` files and `revoked.json` at `<B>` (or the compare view from the repository's root commit to `<B>`),
-   `package-lock.json` included, and `vendor/` against the coordinator's `node tools/vendor-host.mjs --check --from <desktop
-   checkout> --rev <pinned commit>` output. With no `<A>`, this reading comes first and the tools run after it: the owner reads
-   the files, adds a line `read in full <B> <date>` to his list, the coordinator moves the trusted worktree to `<B>` ("Roles"), and
-   `vendor-host.mjs --check` and steps 1 and 2 run from there.
-5. **Check the direction, then read the change.** The compare status of `<A>` to `<B>` must be `ahead` or `identical`; `behind` or
-   `diverged` means **no approval**. Then read `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change other than
-   the `entries/<id>.json` files and `revoked.json`** (anything else in `entries/` too, such as a `.gitattributes`; workflows, tools,
+   (once that run is 90 days old, not even that: "Recovery R2", a dead end at 90 days). In place of `<A>`, the base is `<X>`, the
+   newest `read in full <X> <date>` line of your list, at which the trusted worktree stands (step 2 checked it). Unless `<B>` is
+   `<X>`, read `<B>` in full in the order of "Owner steps before the first production publish", step 0, with `<B>` as `<Y>`: the
+   compare status of `<X>` to `<B>` `ahead` or `identical`, and every change of
+   `https://github.com/eve-cyno/plugins/compare/<X>...<B>` other than the `entries/<id>.json` files, `revoked.json` and `vendor/`,
+   `package-lock.json` included; then the coordinator moves the worktree to `<B>` and hands over its `vendor-host.mjs --check`
+   output; then you read `vendor/` against that output and add `read in full <B> <date>`. Steps 1 and 2 then run again from the
+   moved worktree. For a first publish this reading is step 5.
+5. **Check the direction, then read the change** (after `FIRST PUBLISH`, step 4 is this step). The compare status of `<A>` to
+   `<B>` must be `ahead` or `identical`; `behind` or `diverged` means **no approval**. Then read
+   `https://github.com/eve-cyno/plugins/compare/<A>...<B>`: **every change other than the `entries/<id>.json` files and
+   `revoked.json`** (anything else in `entries/` too, such as a `.gitattributes`; workflows, tools,
    vendor, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs), because `npm ci` in `build` and `upload` runs what the
    manifest and lock file name, with the `mirror` secrets in `upload`. Read the
    entries and revocations in the summary and the pull request. Anything unexpected: no approval.
 6. **Repair runs only** (`repair: true`): the coordinator hands over the output of a local
-   `node vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` that shows the live index failing to verify. Read in the run
+   `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` that shows the live index
+   failing to verify. Read in the run
    summary which candidate runs gave the base and where the floor came from; check each named run on its own page and against your
    list: every entry younger than 90 days with a successful `sign` must be among the candidates, and one missing means no approval.
    The word REPAIR in the run name and summary is printed by workflow code, so trust it only after steps 2 and 5 showed that code
@@ -322,11 +336,15 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 
 **At the `mirror` approval of the same run**, repeat steps 1, 2, 3, 5 and (for a repair) 6 with the same `<B>`. `<A>` excludes the run
 under review, so it is the same `<A>`; read the change again with the `upload` job's code in mind (it runs with the `mirror` secrets).
-For a `target: test` run, this is the first and only reading.
+After `FIRST PUBLISH`, `<B>` is by then the newest `read in full` line, so step 4 has nothing left to read; read `<B>` again with the
+`upload` job in mind. For a `target: test` run, this is the first and only reading (with `FIRST PUBLISH`, step 4 included).
 
 ## Owner steps before the first production publish
 
-Three steps come first; each is repeated in the list below. O1 is the owner's alone.
+Step 0 comes before everything else: before the first entry pull request is merged, before the next `target: test` run is
+approved, and before any `node` command of this runbook runs (steps 2, 3 and 6 of the list included), since every such command
+runs from the trusted worktree ("Roles") and there is none before it. Three more steps come first; each is repeated in the list
+below. O1 is the owner's alone.
 
 - **O1, the approver.** The environments list the owner's own account as their only reviewer ("The environments"). The owner
   installs GitHub Mobile on his phone, signs in with 2FA and turns on its push notifications; he approves only there. He sets the
@@ -340,10 +358,30 @@ Three steps come first; each is repeated in the list below. O1 is the owner's al
   commands of "Secrets and variables": the index key from the encrypted backup on stdin, the R2 keys typed by the owner into a
   password dialog. Nobody pasted a value into a web page, a chat or a terminal.
 
+0. **The first trusted commit `<X>`.** The coordinator names `<X>`, the head of `main` then (`git rev-parse origin/main`, 40 hex),
+   and adds the trusted worktree at it without installing anything (`git -C <checkout> worktree add --detach
+   ../eve-cyno-plugins-trusted <X>`). Then the owner reads `<X>` in full, in this order. The same order reads a later commit `<Y>`
+   in full ("Before every index and mirror approval", step 4), with `<Y>` in place of `<X>` and the compare view from the newest
+   `read in full` commit in place of every file:
+   1. The owner reads every file at `<X>` (`https://github.com/eve-cyno/plugins/tree/<X>`) other than the `entries/<id>.json`
+      files, `revoked.json` and `vendor/`: tools, workflows, `package.json`, `package-lock.json`, any `.npmrc`, schemas, docs. For
+      `<Y>`: the compare status of the newest `read in full` commit to `<Y>` is `ahead` or `identical`, and he reads every such
+      change of `https://github.com/eve-cyno/plugins/compare/<that commit>...<Y>`.
+   2. The coordinator (for `<Y>`, after `git -C ../eve-cyno-plugins-trusted checkout -q --detach <Y>`) runs
+      `(cd ../eve-cyno-plugins-trusted && npm ci --ignore-scripts)`, then `node ../eve-cyno-plugins-trusted/tools/vendor-host.mjs
+      --check --from <desktop checkout> --rev <the desktop commit that vendor/eve-cyno-host/MANIFEST.json names there>`, and hands
+      over its output. That check compares files and loads no vendored module; no other tool runs from the worktree until the
+      owner has read `vendor/`.
+   3. The owner reads `vendor/` against that output: the check passes (no difference from a fresh make), and the desktop commit it
+      names is one of desktop `main` that he accepts. Any doubt, or a failed check: no line, and the coordinator moves the worktree
+      back to the newest `read in full` commit (or removes it when there is none).
+   4. He adds `read in full <X> <date>` to his list (outside GitHub and the workstation, "Before every index and mirror approval"
+      step 3). Until the first production run whose `sign` and `upload` succeeded, the newest such line names the trusted
+      worktree's commit.
 1. The environments exist with the settings above; the written confirmation in "One account" is filled in.
-2. The token is switched (O2, done): `tools/check-envs.mjs` passes, the probe table is filled in, and the empirical approve check
-   is recorded with a refusal.
-3. Nothing in the repository names the owner's login or user id: `tools/check-envs.mjs` passes at `main`'s head.
+2. The token is switched (O2, done): `node ../eve-cyno-plugins-trusted/tools/check-envs.mjs --rev <main's head> --repo-dir
+   <checkout>` passes, the probe table is filled in, and the empirical approve check is recorded with a refusal.
+3. Nothing in the repository names the owner's login or user id: that `check-envs.mjs` run passes at `main`'s head.
 4. The secrets and variables are set (O3, done; "Secrets and variables" has the commands to set them again).
 5. **Pinned actions** (done 2026-11-18). Every `uses:` names the full 40-hex commit of a release tag, with the tag as a trailing
    comment, and the static rule C-WF2 fails on anything else (a tag, a short SHA, a placeholder, a missing tag comment, or one action
@@ -361,7 +399,10 @@ Three steps come first; each is repeated in the list below. O1 is the owner's al
    A new pin is read the same way and changes every `uses:` line of that action in one commit; the owner reads it in the compare
    view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
-   `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass.
+   `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
+   in the checkout that holds the change (the coordinator's gate on its own change, not a reading). The owner reads the new
+   `vendor/` against the trusted worktree's check, in the order of step 0 (or of step 4 of "Before every index and mirror
+   approval").
 7. **Free tier.** The R2 free-tier table (storage, Class A, Class B headroom) in the infra repository's hosting runbook holds the
    owner's dashboard reading of 2026-11-19 (confirmed; billable usage $0.00 then). Storage beyond the free
    10 GB-month is accepted (owner, 2026-11-18); another paid product, Infrequent Access, a cache purge token or a monthly R2 bill
@@ -373,7 +414,7 @@ Three steps come first; each is repeated in the list below. O1 is the owner's al
 
 ## First test publish (Phase 2 proof)
 
-The owner dispatches `publish.yml` with `target: test`. `build` uses the prefix `https://plugins.eve-cyno.dev/test/v1/`, `sign-test`
+After step 0 of the owner steps (the trusted worktree), the owner dispatches `publish.yml` with `target: test`. `build` uses the prefix `https://plugins.eve-cyno.dev/test/v1/`, `sign-test`
 (no environment) signs with a throwaway key made in the run, and `upload` writes under `test/v1/` after the owner's `mirror`
 approval (steps above). The app never reads `test/v1/`. Record from this run, in "Measurements" below: whether a run waiting for
 approval holds the `index-sign` group, and how long a pending approval stays open.
@@ -381,9 +422,9 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
 ## Publishing
 
 1. Merge the entry pull requests locally on `main` and push them, one pull request at a time, only after the owner has said "merge"
-   for that pull request ("Roles"), and merge only the commits the checks ran on. `<checkout>` is the coordinator's checkout where
-   the merge happens; every `node` command runs from the trusted worktree ("Roles"), never from `<checkout>`. For pull request
-   `<n>`:
+   for that pull request's head commit ("Roles"), and merge only the commits the checks ran on. `<checkout>` is the coordinator's
+   checkout where the merge happens, and the shell's folder; every `node` command runs the trusted worktree's copy
+   (`node ../eve-cyno-plugins-trusted/tools/...`, "Roles"), never `<checkout>`'s. For pull request `<n>`:
    1. Read its head commit `<H>`: `gh pr view <n> --repo eve-cyno/plugins --json headRefOid --jq .headRefOid`.
    2. Find the newest `check.yml` run of `<H>`: `gh run list --repo eve-cyno/plugins --workflow check.yml --commit <H> --json
       databaseId,headSha,conclusion,createdAt`. Its `checks` job must be green and its `review` job green or reviewed by the owner.
@@ -395,25 +436,37 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
       the run checked another base: do not merge; close and reopen the pull request so `check.yml` runs on the current `main`, and
       start again at step 2.
 
-      **4a, the scope, before the merge.** `node tools/merge-scope.mjs --repo-dir <checkout> --base <B> --head <H> --merge-base`
-      (what `<B>...<H>` shows; it reads git plumbing only and runs no code of the pull request).
+      **4a, the scope, before the merge.** `node ../eve-cyno-plugins-trusted/tools/merge-scope.mjs --repo-dir <checkout> --base <B>
+      --head <H> --merge-base` (what `<B>...<H>` shows; it reads git plumbing only and runs no code of the pull request). Its first
+      line names the merge base `<MB>`. The coordinator hands the owner the output and the link
+      `https://github.com/eve-cyno/plugins/compare/<MB>...<H>`, both as full commit ids: it shows the pull request's change at
+      `<H>` and nowhere else. The owner reads there, never in "Files changed", which shows whatever head the pull request has by
+      the time he looks (a force-push after step 3 changes that, not `<H>`).
       - `SCOPE ENTRIES-ONLY` (exit 0): the pull request changes only regular files `entries/<id>.json` and `revoked.json`, so the
-        jobs ran `<B>`'s own tools and workflow and their results stand. The owner reads the entries and revocations in the pull
-        request and the jobs' summaries (review classes included) and says "merge", or not.
-      - `SCOPE OWNER <names>` (exit 3), an `ERROR` or any other exit: the jobs' green proves nothing. The coordinator hands the
-        output to the owner, who reads every named change in the pull request ("Files changed" at `<H>`) before he says "merge":
-        a tool, a workflow, `package.json` or `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change.
+        jobs ran `<B>`'s own tools and workflow and their results stand. The owner reads the entries and revocations at the link
+        and the jobs' summaries (review classes included).
+      - `SCOPE OWNER <names>` (exit 3): the jobs' green proves nothing. The owner reads every change at the link: the entries and
+        revocations as above, and every other change (the lines marked `owner`: a tool, a workflow, `package.json` or
+        `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change).
+      - An `ERROR` or any other exit: no merge, and nothing to read. The pull request is rebased or fixed (two merge bases: rebase
+        it on `main`), then start again at step 1.
 
-      No merge without his "merge", an entries-only pull request included; nothing here merges on a tool's answer.
+      Then he says "merge" with the first 12 hex digits of `<H>` ("merge 0123456789ab"), or not. A "merge" without them, or with
+      other digits (he read another head), is no "merge" for this `<H>`: start again at step 1. No merge without his "merge", an
+      entries-only pull request included; nothing here merges on a tool's answer.
    5. Merge `<H>` with a merge commit (`git merge --no-ff <H>`), then confirm `git rev-parse HEAD^1` is `<B>` and
-      `git rev-parse HEAD^2` is `<H>`. While GitHub still serves `<M>` (`git fetch origin pull/<n>/merge`, then
-      `git rev-parse FETCH_HEAD` is `<M>`), `git rev-parse HEAD^{tree}` must equal `git rev-parse FETCH_HEAD^{tree}`: the merged
-      files are the files the jobs checked. Any difference: `git reset --hard <B>`, and do not push.
+      `git rev-parse HEAD^2` is `<H>`. Then `git fetch origin pull/<n>/merge`: `git rev-parse FETCH_HEAD` must still be `<M>`, and
+      `git rev-parse HEAD^{tree}` must equal `git rev-parse FETCH_HEAD^{tree}`: the merged files are the files the jobs checked.
+      This check is never skipped. When GitHub serves another merge commit (`<M>` moved: a push to the pull request or to `main`),
+      or the trees differ: `git reset --hard <B>`, do not push, and start again at step 1.
 
-      **5a, the scope of the merge, before the push.** `node tools/merge-scope.mjs --repo-dir <checkout> --base <B> --head HEAD`
-      (what the merge commit changes on `<B>`, its first parent). It must print `SCOPE ENTRIES-ONLY`, or, when step 4a printed
-      `SCOPE OWNER`, a `SCOPE OWNER` line that names only paths step 4a named (the changes the owner read). Anything else, an
-      `ERROR` included: `git reset --hard <B>`, and do not push.
+      **5a, the scope of the merge, before the push.** `node ../eve-cyno-plugins-trusted/tools/merge-scope.mjs --repo-dir
+      <checkout> --base <B> --head HEAD --read <H>` (what the merge commit changes on `<B>`, its first parent). With `--read`, every
+      path it marks `owner` must be the object `<H>` names there, and a path that `<H>` changed from `<MB>`, so the link of step 4a
+      showed it; the tool compares git objects, not the printed names. It must print `SCOPE ENTRIES-ONLY` (exit 0), or, when step
+      4a printed `SCOPE OWNER`, a `read <H>` line and `SCOPE OWNER` (exit 3). Anything else (`SCOPE OWNER` after an entries-only
+      step 4a, `SCOPE UNREAD`, exit 4, for a path the owner did not read at `<H>`, an `ERROR`): `git reset --hard <B>`, do not push,
+      and start again at step 1.
    6. Push `main` (`git push origin main`). The next pull request's run checked the old `main`, so step 4 sends it round again.
 2. Before the dispatch, `git rev-parse origin/main` must be the merge commit of the last step 1.5. The owner dispatches
    `publish.yml` with `target: production` (`lift` empty unless a revocation is being lifted; `repair` false), and
@@ -465,7 +518,7 @@ input names it exactly, one `<id> <versions>` per line; `build` fails otherwise.
 | `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; set the `index` secrets again with the command of "Secrets and variables" and check the head; dispatch a new run |
 | `upload`, a 412 | someone changed the live index during the run | stop; find out who wrote it (R2 audit, other runs) before anything else; then dispatch a new run |
 | `upload`, other | see the R1 outcome in the job log and summary | below |
-| `verify` | the live index does not read back as published | **never re-run**: the coordinator re-checks it locally with `node vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives`; a confirmed failure goes to recovery R2 |
+| `verify` | the live index does not read back as published | **never re-run**: the coordinator re-checks it locally with `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives`; a confirmed failure goes to recovery R2 |
 
 **Recovery R1** (inside `upload`). After a failed or unanswered PUT the job reads the live objects again and ends with a final re-read
 and a verification of the pair. Its outcomes:
@@ -517,7 +570,8 @@ As in the desktop repository's `docs/release-checklist.md`, "Key compromise and 
 index key, and a rotation is an app release that pins the new pair. In addition, for this repository: after
 `rotate.sh promote index ...` the new primary goes into the `index` environment of `eve-cyno/plugins` with the command of
 "Secrets and variables" (`--repo eve-cyno/plugins`), and the vendor pin moves to the desktop commit with the new `.pub` files
-(`node tools/vendor-host.mjs --check` passes). Both index keys lost is not fatal (checklist, "Keys lost, not leaked").
+(`node tools/vendor-host.mjs --check` passes in the checkout of that change, a gate on it; the owner reads the change at the next
+approval, step 5 of "Before every index and mirror approval"). Both index keys lost is not fatal (checklist, "Keys lost, not leaked").
 
 ## Measurements
 

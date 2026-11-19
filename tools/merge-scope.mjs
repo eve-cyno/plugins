@@ -7,13 +7,18 @@
 //   SCOPE OWNER <names> (exit 3): anything else, named: a path outside those names (entries/.gitattributes and entries/.gitkeep
 //     included), a deletion, a link, a submodule, an executable file, a mode or type change. The owner reads those changes in the
 //     pull request before he says "merge"; a green job proves nothing about them.
+//   SCOPE UNREAD <names> (exit 4, only with --read <H>): an owner path of <head> that the owner did not read at <H> (step 1.5a, after
+//     the merge): <head> does not hold the object <H> names at that path (a force-push after his reading, a file main changed too,
+//     a path only the merge commit holds), or <H> holds it as the merge base of <base> and <H> did, so the compare view
+//     <merge base>...<H> of step 1.4a never showed it. The objects are compared, never the printed names.
 // It reads git plumbing only (rev-parse, merge-base, diff-tree of two commits: no worktree, no index, no diff driver, no
-// .gitattributes, no rename detection), imports nothing from the candidate repository and runs none of its code: run it from the
-// trusted worktree of docs/RUNBOOK.md "Roles", never from the checkout under review. With --merge-base it compares <head> with the
-// one merge base of <base> and <head> (what `git diff <base>...<head>` shows); more than one merge base is an error.
+// .gitattributes, no .gitmodules, no replace refs, no rename detection), imports nothing from the candidate repository and runs
+// none of its code: run it from the trusted worktree of docs/RUNBOOK.md "Roles", never from the checkout under review. With
+// --merge-base it compares <head> with the one merge base of <base> and <head> (what `git diff <base>...<head>` shows); more than
+// one merge base is an error.
 //
-// Usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base]
-// Exit 0 ENTRIES-ONLY, 3 OWNER, 1 error (no SCOPE line), 2 usage. Paths are printed as they are when they hold only
+// Usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <rev>]
+// Exit 0 ENTRIES-ONLY, 3 OWNER, 4 UNREAD, 1 error (no SCOPE line), 2 usage. Paths are printed as they are when they hold only
 // [A-Za-z0-9._/@+=,-], else quoted with every other character as \u{hex}, so a path cannot forge a line.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -52,11 +57,14 @@ export function ownerReason(r) {
   return null;
 }
 
-/** Runs git without a shell in `repoDir`, minus the variables that redirect it: { out: Buffer } or { why }. */
+/**
+ * Runs git without a shell in `repoDir`, minus the variables that redirect it and with replace refs off (a refs/replace entry
+ * would show another commit or tree in place of the one named): { out: Buffer } or { why }.
+ */
 function git(repoDir, args, env) {
-  const childEnv = { ...env };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE']) delete childEnv[k];
-  const r = spawnSync('git', ['-C', repoDir, ...args], { env: childEnv, maxBuffer: MAX_BUFFER, timeout: 120_000, windowsHide: true });
+  const childEnv = { ...env, GIT_NO_REPLACE_OBJECTS: '1' };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_REPLACE_REF_BASE']) delete childEnv[k];
+  const r = spawnSync('git', ['--no-replace-objects', '-C', repoDir, ...args], { env: childEnv, maxBuffer: MAX_BUFFER, timeout: 120_000, windowsHide: true });
   if (r.error) return { why: `git could not run (${r.error.code ?? r.error.message})` };
   if (r.status !== 0) return { why: `git ${args[0]} exited ${r.status ?? r.signal}: ${oneLine(r.stderr.toString('utf8').trim().split('\n')[0] ?? '')}` };
   return { out: r.stdout };
@@ -70,9 +78,13 @@ function commitOf(repoDir, rev, env) {
   return OID_RE.test(oid) ? { oid } : { why: `git rev-parse answered ${shown(oid)} for ${shown(rev)}` };
 }
 
-/** The changes from commit `from` to commit `to`: { changes: [{status, srcMode, dstMode, path}] } or { why }. */
+/**
+ * The changes from commit `from` to commit `to`: { changes: [{status, srcMode, dstMode, path, raw}] } or { why }. `raw` is the
+ * path's bytes as a latin1 string, the key that compares paths (decoded, two different byte paths can read the same).
+ * --ignore-submodules=none: a .gitmodules in the working folder (ignore = all) or diff.ignoreSubmodules would hide a gitlink.
+ */
 function changesOf(repoDir, from, to, env) {
-  const r = git(repoDir, ['diff-tree', '-r', '-z', '--raw', '--no-renames', '--no-ext-diff', '--no-textconv', '--end-of-options', from, to], env);
+  const r = git(repoDir, ['diff-tree', '-r', '-z', '--raw', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--end-of-options', from, to], env);
   if (r.why) return r;
   const fields = r.out.toString('latin1').split('\0');
   if (fields.pop() !== '') return { why: 'git diff-tree output does not end with NUL' };
@@ -81,16 +93,29 @@ function changesOf(repoDir, from, to, env) {
     const h = RAW_RE.exec(fields[i]);
     if (!h || i + 1 >= fields.length) return { why: `git diff-tree printed a record it cannot read (${shown(fields[i].slice(0, 120))})` };
     // Paths are bytes; decoded as UTF-8 a byte that is not UTF-8 becomes U+FFFD, which no in-scope name holds.
-    changes.push({ srcMode: h[1], dstMode: h[2], status: h[5], path: Buffer.from(fields[i + 1], 'latin1').toString('utf8') });
+    changes.push({ srcMode: h[1], dstMode: h[2], status: h[5], path: Buffer.from(fields[i + 1], 'latin1').toString('utf8'), raw: fields[i + 1] });
   }
   return { changes };
 }
 
+/** The one merge base of commits `a` and `b`: { oid } or { why }; more than one is an error (RUNBOOK 1.4a: rebase, then step 1). */
+function oneMergeBase(repoDir, a, b, env) {
+  const mb = git(repoDir, ['merge-base', '--all', '--end-of-options', a, b], env);
+  if (mb.why) return { why: `no merge base of ${a} and ${b} (${mb.why})` };
+  const all = mb.out.toString('utf8').split('\n').filter(Boolean);
+  if (all.length !== 1 || !OID_RE.test(all[0])) {
+    return { why: `${a} and ${b} have ${all.length} merge bases: rebase the pull request on main, then start again at step 1 of "Publishing"` };
+  }
+  return { oid: all[0] };
+}
+
 /**
- * The scope of `head` against `base` in `repoDir`: { ok: true, lines, owner: [paths] } (owner empty: ENTRIES-ONLY) or
- * { ok: false, why }. `mergeBase`: compare with the one merge base of the two.
+ * The scope of `head` against `base` in `repoDir`: { ok: true, lines, owner: [paths], unread: [paths] } (owner empty:
+ * ENTRIES-ONLY; unread not empty: UNREAD) or { ok: false, why }. `mergeBase`: compare with the one merge base of the two.
+ * `read`: the commit <H> the owner read; every owner path must be the object <H> names there, and one <H> changed from the merge
+ * base of `base` and <H> (so the compare view <merge base>...<H> showed it), else it is unread.
  */
-export function mergeScope({ repoDir, base, head, mergeBase = false, env = process.env }) {
+export function mergeScope({ repoDir, base, head, mergeBase = false, read = null, env = process.env }) {
   const b = commitOf(repoDir, base, env);
   if (b.why) return { ok: false, why: b.why };
   const h = commitOf(repoDir, head, env);
@@ -98,13 +123,9 @@ export function mergeScope({ repoDir, base, head, mergeBase = false, env = proce
   let from = b.oid;
   let header = `base ${b.oid}, head ${h.oid}`;
   if (mergeBase) {
-    const mb = git(repoDir, ['merge-base', '--all', '--end-of-options', b.oid, h.oid], env);
-    if (mb.why) return { ok: false, why: `no merge base of ${b.oid} and ${h.oid} (${mb.why})` };
-    const all = mb.out.toString('utf8').split('\n').filter(Boolean);
-    if (all.length !== 1 || !OID_RE.test(all[0])) {
-      return { ok: false, why: `${b.oid} and ${h.oid} have ${all.length} merge bases: rebase the pull request on main, or let step 1.5a decide on the merge commit` };
-    }
-    from = all[0];
+    const mb = oneMergeBase(repoDir, b.oid, h.oid, env);
+    if (mb.why) return { ok: false, why: mb.why };
+    from = mb.oid;
     header = `base ${b.oid} (merge base ${from}), head ${h.oid}`;
   }
   const c = changesOf(repoDir, from, h.oid, env);
@@ -113,21 +134,43 @@ export function mergeScope({ repoDir, base, head, mergeBase = false, env = proce
   const owner = [];
   for (const [i, r] of c.changes.entries()) {
     const why = ownerReason(r);
-    if (why) owner.push(r.path);
+    if (why) owner.push(r);
     if (i < SHOWN_LINES) lines.push(`${why ? 'owner' : 'entry'} ${r.status} ${shown(r.path)}${why ? `: ${why}` : ''}`);
   }
   if (c.changes.length > SHOWN_LINES) lines.push(`... ${c.changes.length - SHOWN_LINES} more changes (${c.changes.length} in all)`);
-  return { ok: true, lines, owner };
+  const unread = [];
+  if (read !== null) {
+    const r = commitOf(repoDir, read, env);
+    if (r.why) return { ok: false, why: r.why };
+    const mb = oneMergeBase(repoDir, b.oid, r.oid, env);
+    if (mb.why) return { ok: false, why: mb.why };
+    const notAsRead = changesOf(repoDir, r.oid, h.oid, env);
+    if (notAsRead.why) return { ok: false, why: notAsRead.why };
+    const inView = changesOf(repoDir, mb.oid, r.oid, env);
+    if (inView.why) return { ok: false, why: inView.why };
+    const differs = new Set(notAsRead.changes.map((x) => x.raw));
+    const shownInView = new Set(inView.changes.map((x) => x.raw));
+    for (const o of owner) {
+      const why = differs.has(o.raw) ? `not the object ${r.oid} names`
+        : !shownInView.has(o.raw) ? `unchanged from the merge base ${mb.oid} to ${r.oid}, so not in the compare view` : null;
+      if (!why) continue;
+      if (unread.length < SHOWN_LINES) lines.push(`unread ${o.status} ${shown(o.path)}: ${why}`);
+      unread.push(o.path);
+    }
+    if (unread.length > SHOWN_LINES) lines.push(`... ${unread.length - SHOWN_LINES} more unread paths (${unread.length} in all)`);
+    if (unread.length === 0) lines.push(`read ${r.oid} (merge base ${mb.oid}): ${owner.length} owner paths, each the object ${r.oid} names and changed by it`);
+  }
+  return { ok: true, lines, owner: owner.map((o) => o.path), unread };
 }
 
-const USAGE = 'usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base]';
+const USAGE = 'usage: node tools/merge-scope.mjs --repo-dir <checkout> --base <rev> --head <rev> [--merge-base] [--read <rev>]';
 
 function main(argv) {
   let a;
   try {
     a = parseArgs({
       args: argv, strict: true, allowPositionals: false,
-      options: { 'repo-dir': { type: 'string' }, base: { type: 'string' }, head: { type: 'string' }, 'merge-base': { type: 'boolean' } },
+      options: { 'repo-dir': { type: 'string' }, base: { type: 'string' }, head: { type: 'string' }, 'merge-base': { type: 'boolean' }, read: { type: 'string' } },
     }).values;
   } catch (e) {
     process.stderr.write(`${oneLine(e.message)}\n${USAGE}\n`);
@@ -139,15 +182,19 @@ function main(argv) {
       return 2;
     }
   }
-  const r = mergeScope({ repoDir: path.resolve(a['repo-dir']), base: a.base, head: a.head, mergeBase: a['merge-base'] === true });
+  if (a.read !== undefined && (a.read === '' || a.read.startsWith('-'))) {
+    process.stderr.write(`--read must name a commit, and must not start with "-"\n${USAGE}\n`);
+    return 2;
+  }
+  const r = mergeScope({ repoDir: path.resolve(a['repo-dir']), base: a.base, head: a.head, mergeBase: a['merge-base'] === true, read: a.read ?? null });
   if (!r.ok) {
     process.stderr.write(`ERROR ${oneLine(r.why)}\n`);
     return 1;
   }
-  const names = r.owner.slice(0, SHOWN_NAMES).map(shown).join(' ');
-  const more = r.owner.length > SHOWN_NAMES ? ` ... (${r.owner.length} paths in all)` : '';
-  process.stdout.write(`${[...r.lines, r.owner.length === 0 ? 'SCOPE ENTRIES-ONLY' : `SCOPE OWNER ${names}${more}`].join('\n')}\n`);
-  return r.owner.length === 0 ? 0 : 3;
+  const named = (ps) => `${ps.slice(0, SHOWN_NAMES).map(shown).join(' ')}${ps.length > SHOWN_NAMES ? ` ... (${ps.length} paths in all)` : ''}`;
+  const verdict = r.unread.length > 0 ? `SCOPE UNREAD ${named(r.unread)}` : r.owner.length === 0 ? 'SCOPE ENTRIES-ONLY' : `SCOPE OWNER ${named(r.owner)}`;
+  process.stdout.write(`${[...r.lines, verdict].join('\n')}\n`);
+  return r.unread.length > 0 ? 4 : r.owner.length === 0 ? 0 : 3;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
