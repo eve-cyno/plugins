@@ -194,7 +194,7 @@ before(async () => {
   // A re-sign of the live A: the same catalog, a new head (build-index.mjs resign reads the bucket through the server).
   current = path.join(T, 'bucket-A.json');
   writeBucket(current, { objects: objectsOf('A') });
-  const r = await run('tools/build-index.mjs', ['resign', '--out', path.join(T, 'R'), '--archives-json', path.join(T, 'R.archives.json'), '--prefix', P, '--key', PUB]);
+  const r = await run('tools/build-index.mjs', ['resign', '--out', path.join(T, 'R'), '--archives-json', path.join(T, 'R.archives.json'), '--tree', path.join(T, 'tree-A'), '--prefix', P, '--key', PUB]);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   signFolder(path.join(T, 'R'), signer);
   ix.R = { dir: path.join(T, 'R'), list: path.join(T, 'R.archives.json'), head: fs.readFileSync(path.join(T, 'R', 'index.json')), sig: fs.readFileSync(path.join(T, 'R', 'index.json.minisig')) };
@@ -528,17 +528,45 @@ describe('upload: target test and resign', () => {
   });
 
   test('PB-resign-pair-only: resign writes only the signature and the head, each on the live ETag', async () => {
-    const r = await upload(scenario({ input: 'R' }), 'resign');
+    const r = await upload(scenario({ input: 'R' }), 'resign', ['--tree', path.join(T, 'tree-A')]);
     assert.equal(r.code, 0, r.out);
     assert.match(r.last, /^PUBLISHED /);
     const A = objectsOf('A');
     assert.deepEqual(r.puts.map(p => [p.key, p.ifMatch]), [[SIG, A[SIG].etag], [HEAD, A[HEAD].etag]]);
     const live = objectsOf('A');
     delete live[HEAD];
-    const gone = await upload(scenario({ input: 'R', live }), 'resign');
+    const gone = await upload(scenario({ input: 'R', live }), 'resign', ['--tree', path.join(T, 'tree-A')]);
     assert.equal(gone.code, 1, gone.out);
     assert.match(gone.out, /resign never/);
     assert.equal(gone.puts.length, 0);
+  });
+
+  test('MV-diverged-upload: resign refuses to re-sign a live catalog that is not main\'s (an older verified head replayed into the mirror)', async () => {
+    const revoked = [{ id: 'dev.example.intel', versions: '*', reason: 'Revoked after the live head was made.', date: '2026-01-01' }];
+    const tree = writeTree(path.join(T, 'tree-mv-revoked'), { ...TREE_A, revoked });
+    const r = await upload(scenario({ input: 'R' }), 'resign', ['--tree', tree]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /REFUSED: MAIN DIVERGES: .*revocation on main only: dev\.example\.intel \*/);
+    assert.equal(r.puts.length, 0, 'nothing is written');
+    const more = writeTree(path.join(T, 'tree-mv-more'), TREE_B);
+    const m = await upload(scenario({ input: 'R' }), 'resign', ['--tree', more]);
+    assert.equal(m.code, 1, m.out);
+    assert.match(m.out, /MAIN DIVERGES: .*listing on main only: dev\.example\.dusk/);
+    assert.equal(m.puts.length, 0);
+  });
+
+  test('PB-resign-another-catalog: a resign whose new head names another catalog than the live head is refused, even when main has that catalog', async () => {
+    const r = await upload(scenario({ input: 'B' }), 'resign', ['--tree', path.join(T, 'tree-B')]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /REFUSED: resign: the new head names another catalog than the live head/);
+    assert.equal(r.puts.length, 0, 'nothing is written');
+  });
+
+  test('PB-tree-resign-only: --tree is a test option of the resign form only', async () => {
+    const sc = scenario();
+    const r = await run(TOOL, ['--target', 'production', '--repair', 'false', '--in', sc.inDir, '--tree', path.join(T, 'tree-B')], { env: sc.env });
+    assert.equal(r.code, 2, r.stdout + r.stderr);
+    assert.deepEqual(readAwsLog(sc.awsLog), []);
   });
 });
 

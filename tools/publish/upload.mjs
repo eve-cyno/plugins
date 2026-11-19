@@ -5,7 +5,8 @@
 //   node tools/publish/upload.mjs --target production|test --repair true|false --in <folder> [--summary <file>]   (publish.yml)
 //   node tools/publish/upload.mjs --resign --in <folder> [--summary <file>]                                        (resign.yml)
 // For tests only: --prefix <URL> (a local server), --key <pub>... (target production: instead of the pinned index keys),
-// --archive-cache <dir> (archives by SHA-256, read before an author's URL).
+// --archive-cache <dir> (archives by SHA-256, read before an author's URL), --tree <dir> (resign only: main's tree instead of this
+// repository's checkout).
 //
 // <folder> holds the run's artifacts: index.json, index.json.minisig, catalog/<sha256>.json, archives.json and, for target test, the
 // run's throwaway public key test.pub. Steps, in this order:
@@ -18,7 +19,9 @@
 //  4. The live pair (head and signature, at most 16,384 bytes each, with their ETags), read before any write and kept. Production and
 //     resign: it must verify with the pinned keys and the new head must not be older (LIVE UNVERIFIED otherwise; recovery R2). A
 //     missing head is a first publish only when GitHub shows no run with an approved index and successful sign and upload
-//     (tools/approved-base.mjs, fail closed; never for resign). Target test: the earlier test pair is not checked. --repair true
+//     (tools/approved-base.mjs, fail closed; never for resign). Resign: the new head names the live head's catalog, and that catalog
+//     is the one main builds (MAIN DIVERGES otherwise: re-signing a replayed older head would make it fresh again; plan section 8,
+//     test MV-diverged). Target test: the earlier test pair is not checked. --repair true
 //     (recovery R2, plan 4.2): a live pair that verifies is refused (NOT BROKEN); else the base is computed again from the candidate
 //     runs' artifacts (tools/lib/repairbase.mjs, GH_TOKEN with actions: read; a missing artifact or no verified candidate stops the
 //     run), the new head must be newer than the floor and its catalog not older than the base's, and every revocation of the union
@@ -42,7 +45,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from '../lib/summary.mjs';
-import { PREFIXES, ROOT, headBoundsProblem, indexKeys, obtainArchive, prefixProblem, refusalLines, revKey, runVendored, sha256 } from '../lib/indexbuild.mjs';
+import { PREFIXES, ROOT, headBoundsProblem, indexKeys, obtainArchive, prefixProblem, refusalLines, revKey, runVendored, sha256, treeDiff } from '../lib/indexbuild.mjs';
 import { IMMUTABLE, NO_CACHE, r2Client, takeCredentials } from '../lib/r2.mjs';
 
 // Step 1: nothing below, and no child, sees the mirror's values or the GitHub token in the environment.
@@ -56,7 +59,7 @@ const R2 = 'recovery R2 (docs/RUNBOOK.md): the coordinator confirms it with inde
 const USAGE = [
   'usage: node tools/publish/upload.mjs --target production|test --repair true|false --in <folder> [--summary <file>]',
   '       node tools/publish/upload.mjs --resign --in <folder> [--summary <file>]',
-  '       tests only: [--prefix <URL>] [--key <pub>...] [--archive-cache <dir>]',
+  '       tests only: [--prefix <URL>] [--key <pub>...] [--archive-cache <dir>] [--tree <dir>] (--tree with --resign only)',
 ].join('\n');
 const usage = (why) => { if (why) console.error(why); console.error(USAGE); process.exit(2); };
 
@@ -65,11 +68,12 @@ try {
   a = parseArgs({
     args: process.argv.slice(2), strict: true, allowPositionals: false,
     options: { target: { type: 'string' }, repair: { type: 'string' }, resign: { type: 'boolean' }, in: { type: 'string' }, summary: { type: 'string' },
-      prefix: { type: 'string' }, key: { type: 'string', multiple: true }, 'archive-cache': { type: 'string' } },
+      prefix: { type: 'string' }, key: { type: 'string', multiple: true }, 'archive-cache': { type: 'string' }, tree: { type: 'string' } },
   }).values;
 } catch (e) { usage(e.message); }
 const resign = a.resign === true;
 if (resign && (a.target !== undefined || a.repair !== undefined)) usage('--resign takes no --target and no --repair');
+if (!resign && a.tree !== undefined) usage('--tree: the resign form only');
 if (!resign && (a.target !== 'production' && a.target !== 'test')) usage('--target: production or test');
 if (!resign && a.repair !== 'true' && a.repair !== 'false') usage('--repair: true or false');
 if (typeof a.in !== 'string' || a.in === '') usage('--in <folder> is required');
@@ -205,6 +209,16 @@ if (target === 'test') {
   const dg = Date.parse(head.generated) - Date.parse(live.generated);
   if (dg < 0 || (dg === 0 && head.catalog.sha256 !== live.catalog.sha256)) refuse(`the new head (${head.generated}) is older than the live head (${live.generated}), or the same time with another catalog: a rollback`);
   if (resign && JSON.stringify(head.catalog) !== JSON.stringify(live.catalog)) refuse('resign: the new head names another catalog than the live head');
+  if (resign) {
+    // The catalog re-signed is the live one (above); it must be the one main builds, or a replayed older head would come back fresh.
+    const diff = treeDiff(path.resolve(a.tree ?? ROOT), cat);
+    if (diff.length > 0) {
+      refuse(`MAIN DIVERGES: the live catalog is not the one main builds (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''}); `
+        + 'a re-sign never makes a replayed older head fresh again. If main was not published yet, run publish.yml; if it was, the live head '
+        + 'is a replay: a security event (docs/RUNBOOK.md)');
+    }
+    R.pass('main', 'the re-signed catalog is main\'s: the same revocations, listings, versions and archives');
+  }
   R.pass('live', `the live pair verifies (generated ${live.generated}); the new head replaces it on its ETags`);
 }
 

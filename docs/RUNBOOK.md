@@ -332,6 +332,11 @@ even its failed jobs: the first step of every job fails on any attempt but the f
   head with the same catalog and a new `generated` (60 days), and `sign` and `upload` need the owner's approvals of `index` and
   `mirror`, each after the steps above.
 - `resign.yml` never repairs: when the live head does not verify, `head` fails with a pointer to recovery R2.
+- `resign.yml` never re-signs a catalog that is not `main`'s: `check` (every week, even when no re-sign is due), `head` and `upload`
+  refuse with `MAIN DIVERGES` when the live catalog differs from the one `main` builds (a revocation on one side only, a listing, a
+  version or an archive). A re-sign gives the head a new `generated`, so an older verified head replayed into the mirror would come
+  back fresh and apps would drop the revocations it lacks. If `main` was not published yet, dispatch `publish.yml`; if it was, the
+  live head is a replay: treat it as a security event before anything else.
 - GitHub disables scheduled workflows in a public repository after 60 days without repository activity, and a re-sign makes no
   commit. The uptime alarm posts to Discord `#deploy-log` when fewer than 21 days remain. Then the owner re-enables the workflow
   (Actions tab, `resign`, "Enable workflow") and dispatches it.

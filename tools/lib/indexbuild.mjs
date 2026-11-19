@@ -238,3 +238,42 @@ export async function fetchArchive(prefix, name, size, sha, file, pace) {
 
 /** The text a lift line and index-verify.mjs give a revocation: `<id> *` or `<id> <versions, sorted, joined by commas>`. */
 export const revKey = (r) => `${r.id} ${r.versions === '*' ? '*' : [...r.versions].sort().join(',')}`;
+
+/**
+ * Where the catalog `catalog` (as the app parsed it) differs from the index main's tree `tree` (entries/, revoked.json) builds (plan
+ * 4.3 and section 8, "Mirror divergence"; test MV-diverged): the revocations, the listing ids, and each listing's versions with their
+ * archives' SHA-256, mapped as the build maps them (toIndexSource: unlisted and revoked versions left out). Listing texts (name,
+ * summary and the like) are not compared. Returns the differences as lines, [] when the catalog is main's. A tree whose entries or
+ * revoked.json cannot be read is one difference (fail closed). A re-sign keeps the live catalog as it is, so a difference means either
+ * a publish still to do or an older verified head replayed into the mirror: re-signing it would make that head fresh again, and apps
+ * would drop the revocations it lacks.
+ */
+export function treeDiff(tree, catalog) {
+  const read = readEntries(path.join(tree, 'entries'));
+  if (read.problems.length > 0) return [`main's entries cannot be read (${read.problems.slice(0, 3).map(p => `${p.file ?? ''} ${p.message}`.trim()).join('; ')})`];
+  const rev = readJson(tree, 'revoked.json');
+  if (!Array.isArray(rev.value)) return [`main's revoked.json: ${rev.why ?? (rev.missing ? 'missing' : 'not a JSON list')}`];
+  const entries = read.entries.map(x => x.entry);
+  let mainRevs, mainListings;
+  try {
+    mainRevs = new Set(rev.value.map(revKey));
+    const src = toIndexSource(entries, rev.value, (id, version) => entries.find(e => e.id === id).versions.find(v => v.version === version).sha256);
+    mainListings = new Map(src.plugins.map(l => [l.id, l.versions.map(v => ({ version: v.version, sha256: v.archive }))]));
+  } catch (e) { return [`main's entries or revoked.json cannot be mapped to a catalog (${e?.message ?? 'error'})`]; }
+  const liveRevs = new Set(catalog.revoked.map(revKey));
+  const liveListings = new Map(catalog.plugins.map(l => [l.id, l.versions.map(v => ({ version: v.version, sha256: v.archive.sha256 }))]));
+  const out = [
+    ...[...mainRevs].filter(k => !liveRevs.has(k)).sort().map(k => `revocation on main only: ${k}`),
+    ...[...liveRevs].filter(k => !mainRevs.has(k)).sort().map(k => `revocation live only: ${k}`),
+    ...[...mainListings.keys()].filter(id => !liveListings.has(id)).sort().map(id => `listing on main only: ${id}`),
+    ...[...liveListings.keys()].filter(id => !mainListings.has(id)).sort().map(id => `listing live only: ${id}`),
+  ];
+  const names = (vs) => vs.map(v => v.version).sort().join(', ');
+  const keys = (vs) => vs.map(v => `${v.version} ${v.sha256}`).sort().join('\n');
+  for (const [id, m] of [...mainListings].sort(([x], [y]) => (x < y ? -1 : 1))) {
+    const l = liveListings.get(id);
+    if (!l || keys(m) === keys(l)) continue;
+    out.push(names(m) !== names(l) ? `listing ${id}: the versions differ (main: ${names(m)}; live: ${names(l)})` : `listing ${id}: the archives of its versions differ`);
+  }
+  return out;
+}

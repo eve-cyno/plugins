@@ -25,10 +25,12 @@
 //     base only with it) the head must be newer than the floor, and the revocations kept or lifted are those of the union.
 //   resign-check --outputs <file> [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]
 //     Writes needed=true when the verified live head is 30 days old or more, or fewer than 30 days remain before it expires; a live
-//     index that does not verify fails (resign never repairs: recovery R2). Notes where main differs from the live catalog.
-//   resign --out <new folder> [--archives-json <new file>] [--summary <file>] [--prefix <URL>] [--key <pub>...]
+//     index that does not verify fails (resign never repairs: recovery R2). A live catalog that is not the one main (--tree, default
+//     this repository) builds is refused, MAIN DIVERGES (plan section 8, test MV-diverged): a publish still to do, or an older
+//     verified head replayed into the mirror, which a re-sign would make fresh again (its missing revocations lost to the apps).
+//   resign --out <new folder> [--archives-json <new file>] [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]
 //     The verified live head, signature, catalog and archives (paced: at most 50 requests per 10 s) into a temp folder, then
-//     index-build.mjs --resign: the same catalog, a new head generated now, 60 days.
+//     index-build.mjs --resign: the same catalog, a new head generated now, 60 days. MAIN DIVERGES refuses it as in resign-check.
 // --prefix and --key replace the target's prefix and the pinned keys (a local test server, a private source). Exit 0 done, 1 refused,
 // 2 usage.
 import fs from 'node:fs';
@@ -37,10 +39,9 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { createReport } from './lib/summary.mjs';
-import { readEntries } from './lib/entries.mjs';
 import {
   LIFETIME_MS, PREFIXES, ROOT, buildIndex, fetchArchive, headBoundsProblem, indexKeys, pacer, prefixProblem, readJson, readLive,
-  refusalLines, revKey, runVendored, sha256,
+  refusalLines, revKey, runVendored, sha256, treeDiff,
 } from './lib/indexbuild.mjs';
 
 const require = createRequire(import.meta.url);
@@ -54,14 +55,14 @@ const USAGE = [
   '       node tools/build-index.mjs base --target production|test --repair true|false --out <new folder> [--summary <file>] [--prefix <URL>] [--key <pub>...]',
   '       node tools/build-index.mjs --compare-live --base <folder> --index <folder> --lift <file> --repair true|false [--summary <file>]',
   '       node tools/build-index.mjs resign-check --outputs <file> [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]',
-  '       node tools/build-index.mjs resign --out <new folder> [--archives-json <file>] [--summary <file>] [--prefix <URL>] [--key <pub>...]',
+  '       node tools/build-index.mjs resign --out <new folder> [--archives-json <file>] [--summary <file>] [--tree <dir>] [--prefix <URL>] [--key <pub>...]',
 ].join('\n');
 const ALLOWED = {
   build: ['target', 'prefix', 'out', 'tree', 'archives-json', 'archive-cache', 'mirror-url'],
   base: ['target', 'repair', 'out', 'summary', 'prefix', 'key'],
   '--compare-live': ['compare-live', 'base', 'index', 'lift', 'repair', 'summary'],
   'resign-check': ['outputs', 'summary', 'tree', 'prefix', 'key'],
-  resign: ['out', 'archives-json', 'summary', 'prefix', 'key'],
+  resign: ['out', 'archives-json', 'summary', 'tree', 'prefix', 'key'],
 };
 const REQUIRED = { build: ['out'], base: ['target', 'repair', 'out'], '--compare-live': ['base', 'index', 'lift', 'repair'], 'resign-check': ['outputs'], resign: ['out'] };
 
@@ -99,6 +100,19 @@ function refuse(why, ...cleanupDirs) {
   console.error(`REFUSED: ${why}`);
   R.fail('build-index', why);
   end(1, `REFUSED ${cmd}`);
+}
+/**
+ * Resign only: refuses the run unless the verified live catalog is the one main's tree builds (treeDiff). A re-sign keeps the live
+ * catalog as it is, so re-signing anything else would turn a replayed older head into a fresh one (plan section 8, MV-diverged).
+ */
+function refuseUnlessMain(catalog, ...cleanupDirs) {
+  const diff = treeDiff(path.resolve(a.tree ?? ROOT), catalog);
+  if (diff.length === 0) { R.pass('main', 'the live catalog is main\'s: the same revocations, listings, versions and archives'); return; }
+  for (const d of diff.slice(0, 20)) R.note(`main differs from the live catalog: ${d}`);
+  refuse(`MAIN DIVERGES: the live catalog is not the one main builds (${diff.slice(0, 5).join('; ')}${diff.length > 5 ? `; ${diff.length - 5} more` : ''}). `
+    + 'A re-sign would re-sign it with a new generated time, so an older verified head replayed into the mirror would come back fresh and '
+    + 'apps would drop the revocations it lacks. If main was not published yet, run publish.yml; if it was, the live head is a replay: '
+    + `treat it as a security event (docs/RUNBOOK.md) before anything else`, ...cleanupDirs);
 }
 const keysOrUsage = () => {
   const k = indexKeys(a.key ?? []);
@@ -268,17 +282,7 @@ async function stepResignCheck() {
   const now = Date.now(), g = Date.parse(live.head.generated), x = Date.parse(live.head.expires);
   const needed = now - g >= RESIGN_AT_MS || x - now < RESIGN_AT_MS;
   R.pass('live', `the live head verifies: generated ${live.head.generated} (${Math.floor((now - g) / DAY)} days ago), expires ${live.head.expires} (in ${Math.floor((x - now) / DAY)} days)`);
-  // main against the live catalog: a re-sign keeps the live catalog as it is, so a difference is a publish still to do.
-  const tree = path.resolve(a.tree ?? ROOT);
-  const rev = readJson(tree, 'revoked.json').value;
-  const mainRevs = new Set(Array.isArray(rev) ? rev.filter(r => r && typeof r.id === 'string').map(revKey) : []);
-  const liveRevs = new Set(live.catalog.revoked.map(revKey));
-  const mainIds = new Set(readEntries(path.join(tree, 'entries')).entries.map(e => e.entry.id));
-  const liveIds = new Set(live.catalog.plugins.map(l => l.id));
-  const diff = [...[...mainRevs].filter(k => !liveRevs.has(k)).map(k => `revocation on main only: ${k}`), ...[...liveRevs].filter(k => !mainRevs.has(k)).map(k => `revocation live only: ${k}`),
-    ...[...mainIds].filter(k => !liveIds.has(k)).map(k => `entry on main only: ${k}`), ...[...liveIds].filter(k => !mainIds.has(k)).map(k => `listing live only: ${k}`)];
-  for (const d of diff.slice(0, 20)) R.note(`main differs from the live catalog: ${d}`);
-  if (diff.length > 0) R.note('a re-sign re-signs the live catalog unchanged: run publish.yml to publish main');
+  refuseUnlessMain(live.catalog);
   fs.appendFileSync(path.resolve(a.outputs), `needed=${needed}\n`);
   end(0, needed ? 'RESIGN NEEDED' : 'RESIGN NOT NEEDED');
 }
@@ -293,6 +297,7 @@ async function stepResign() {
   const live = await readLive({ prefix, keys: keysOrUsage(), pace });
   if (live.status === 'missing') refuse(`the live head answers HTTP 404: nothing to re-sign (publish.yml, or ${R2})`);
   if (live.status !== 'ok') refuse(`the live index does not verify (${live.why}): resign never repairs; ${R2}`);
+  refuseUnlessMain(live.catalog);
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'evecyno-resign-'));
   try {
     const signed = path.join(work, 'signed');

@@ -241,7 +241,7 @@ describe('E2E live reads of build-index.mjs', () => {
     assert.equal(fs.readFileSync(outputs, 'utf8'), 'needed=true\n');
 
     const out = path.join(T, 'resigned');
-    const r = await run('tools/build-index.mjs', ['resign', '--out', out, '--archives-json', path.join(T, 'resign-archives.json'), ...keyArgs()]);
+    const r = await run('tools/build-index.mjs', ['resign', '--out', out, '--archives-json', path.join(T, 'resign-archives.json'), '--tree', path.join(T, 'tree'), ...keyArgs()]);
     assert.equal(r.code, 0, r.stdout + r.stderr);
     const nh = I.parseIndexHead(fs.readFileSync(path.join(out, 'index.json')), P);
     assert.deepEqual(nh.catalog, h.catalog, 'the same catalog');
@@ -252,10 +252,56 @@ describe('E2E live reads of build-index.mjs', () => {
     assert.equal(v.code, 0, v.stdout + v.stderr);
 
     servedRoot = path.join(T, 'other'); // signed with a key that is not ours
-    const bad = await run('tools/build-index.mjs', ['resign', '--out', path.join(T, 'resigned-bad'), ...keyArgs()]);
+    const bad = await run('tools/build-index.mjs', ['resign', '--out', path.join(T, 'resigned-bad'), '--tree', path.join(T, 'tree'), ...keyArgs()]);
     assert.equal(bad.code, 1);
     assert.match(bad.stdout + bad.stderr, /recovery R2/);
     servedRoot = path.join(T, 'index');
+  });
+
+  test('MV-diverged: resign-check and resign refuse a live catalog that is not main\'s (a replayed older head is never made fresh)', async () => {
+    servedRoot = path.join(T, 'index'); // built from tree: intel 1.1.0 (1.0.0 revoked) and dusk 2.0.0
+    const dusk = { id: 'dev.example.dusk', versions: '*', reason: 'Revoked after the live head was made.', date: today };
+    const trees = {
+      // main revokes dusk; the live catalog (an older verified head) lacks that revocation and still lists dusk
+      revoked: writeTree(path.join(T, 'mv-revoked'), { entries: ENTRIES, revoked: [...REVOKED, dusk] }),
+      // main lifted the revocation of intel 1.0.0, so main lists 1.0.0 and the live catalog does not
+      lifted: writeTree(path.join(T, 'mv-lifted'), { entries: ENTRIES, revoked: [] }),
+      // main has no dusk entry
+      fewer: writeTree(path.join(T, 'mv-fewer'), { entries: [ENTRIES[0]], revoked: REVOKED }),
+    };
+    const want = {
+      revoked: [/revocation on main only: dev\.example\.dusk \*/, /listing live only: dev\.example\.dusk/],
+      lifted: [/revocation live only: dev\.example\.intel 1\.0\.0/, /listing dev\.example\.intel: the versions differ \(main: 1\.0\.0, 1\.1\.0; live: 1\.1\.0\)/],
+      fewer: [/listing live only: dev\.example\.dusk/],
+    };
+    for (const [name, tree] of Object.entries(trees)) {
+      const outputs = path.join(T, `mv-outputs-${name}.txt`);
+      fs.writeFileSync(outputs, '');
+      const c = await run('tools/build-index.mjs', ['resign-check', '--outputs', outputs, '--tree', tree, ...keyArgs()]);
+      assert.equal(c.code, 1, `${name}: ${c.stdout}${c.stderr}`);
+      assert.match(c.stderr, /^REFUSED: MAIN DIVERGES: /m, name);
+      for (const re of want[name]) assert.match(c.stdout + c.stderr, re, name);
+      assert.equal(fs.readFileSync(outputs, 'utf8'), '', `${name}: no needed= output, so the head job never runs`);
+      const out = path.join(T, `mv-resigned-${name}`);
+      const r = await run('tools/build-index.mjs', ['resign', '--out', out, '--tree', tree, ...keyArgs()]);
+      assert.equal(r.code, 1, `${name}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /^REFUSED: MAIN DIVERGES: /m, name);
+      assert.ok(!fs.existsSync(out), `${name}: nothing is written`);
+    }
+    const bad = writeTree(path.join(T, 'mv-bad'), { entries: ENTRIES, revoked: null });
+    const b = await run('tools/build-index.mjs', ['resign-check', '--outputs', path.join(T, 'mv-outputs-bad.txt'), '--tree', bad, ...keyArgs()]);
+    assert.equal(b.code, 1, b.stdout + b.stderr);
+    assert.match(b.stderr, /^REFUSED: MAIN DIVERGES: .*\(main's revoked\.json: missing\)/m, 'a tree that cannot be read is a difference (fail closed)');
+    const junk = writeTree(path.join(T, 'mv-junk'), { entries: ENTRIES, revoked: REVOKED, files: { 'entries/dev.example.junk.json': 'not JSON' } });
+    const j = await run('tools/build-index.mjs', ['resign-check', '--outputs', path.join(T, 'mv-outputs-junk.txt'), '--tree', junk, ...keyArgs()]);
+    assert.equal(j.code, 1, j.stdout + j.stderr);
+    assert.match(j.stderr, /^REFUSED: MAIN DIVERGES: .*main's entries cannot be read \(dev\.example\.junk\.json not JSON/m, 'an entry file that cannot be read is never skipped');
+    const same = path.join(T, 'mv-outputs-same.txt');
+    fs.writeFileSync(same, '');
+    const ok = await run('tools/build-index.mjs', ['resign-check', '--outputs', same, '--tree', path.join(T, 'tree'), ...keyArgs()]);
+    assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+    assert.match(ok.stdout, /^PASS main the live catalog is main's/m);
+    assert.equal(fs.readFileSync(same, 'utf8'), 'needed=false\n');
   });
 });
 
