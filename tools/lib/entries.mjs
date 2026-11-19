@@ -136,8 +136,14 @@ function urlProblem(u) {
 }
 
 /**
- * C2 over entries [{file, entry}]: the file name is `<id>.json`, the id is a plugin id, not the host's prefix, not a Windows device
- * name, and unique across all entries.
+ * The project's id prefix: only an entry with `firstParty: true` uses it (the host gives some of these ids data packs, dataallow.js).
+ * The host's own prefix stays closed to every entry, first-party ones included.
+ */
+const FIRST_PARTY_ID_PREFIX = 'dev.evecyno.';
+
+/**
+ * C2 over entries [{file, entry}]: the file name is `<id>.json`, the id is a plugin id, not the host's prefix, not the project's prefix
+ * unless the entry is first-party, not a Windows device name, and unique across all entries.
  */
 export function checkIds(files) {
   const out = [];
@@ -149,6 +155,7 @@ export function checkIds(files) {
     if (!M.isPluginId(id)) out.push(prob('C2', 'the id is not a plugin id (lower-case dotted, 3 or more segments, at most 100 characters)', file));
     else {
       if (id.startsWith(M.HOST_ID_PREFIX)) out.push(prob('C2', `the id prefix ${M.HOST_ID_PREFIX} is reserved for the host`, file));
+      if (id.startsWith(FIRST_PARTY_ID_PREFIX) && entry.firstParty !== true) out.push(prob('C2', `the id prefix ${FIRST_PARTY_ID_PREFIX} is reserved for first-party entries`, file));
       if (Z.isDeviceNameId(id)) out.push(prob('C2', 'the first segment of the id is a Windows device name', file));
     }
     if (seen.has(id)) out.push(prob('C2', `duplicate id, also in ${seen.get(id)}`, file));
