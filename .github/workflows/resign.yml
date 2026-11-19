@@ -10,7 +10,7 @@
 #   checked out, no repository code, no Node, npm or AWS CLI.
 # - upload (environment mirror) writes only the signature and the head, each with a compare-and-swap on the live ETag.
 # - tools/build-index.mjs comes with plan task 1.7, tools/publish/ with task 2.4; the calls below are their command lines.
-#   tools/test/workflows.test.mjs checks the rules above on this file (C-WF1 to C-WF11).
+#   tools/test/workflows.test.mjs checks the rules above on this file (C-WF1 to C-WF12).
 name: resign
 
 on:

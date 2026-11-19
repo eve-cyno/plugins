@@ -9,7 +9,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { YamlSubsetError, parseYaml } from '../lib/yamlsub.mjs';
-import { GUARD_STEP, MAIN_HEAD_STEP, RULES, jobLines, loadWorkflows } from '../lib/wfrules.mjs';
+import { GUARD_STEP, MAIN_HEAD_STEP, RULES, UPLOAD_IF, VERIFY_IF, expr, jobLines, loadWorkflows } from '../lib/wfrules.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WF_DIR = path.join(ROOT, '.github', 'workflows');
@@ -169,6 +169,58 @@ describe('YS: the strict YAML subset reader', () => {
       }
     }
   });
+
+  // A literal block line is blank only when it holds spaces alone. JavaScript's trim() also strips U+00A0, U+3000, U+2000 to U+200A
+  // and U+FEFF, which YAML reads as text, so such a line would be a blank line of the block here and text outside it to GitHub.
+  const UNICODE_SPACES = ['\u00a0', '\u3000', ...Array.from({ length: 11 }, (_, k) => String.fromCharCode(0x2000 + k))];
+  test('YS a literal block line of Unicode spaces other than U+0020 is not blank', () => {
+    for (const c of UNICODE_SPACES) {
+      bad(`a: |\n  x\n${c}\n  y\n`, /^line 3: not a "key: value" line/);
+      bad(`a: |\n    x\n  ${c}\n`, /^line 3: a block scalar line less indented than its first line/);
+    }
+    assert.equal(parseYaml('a: |\n  x\n  \n\n  y\n').value.a, 'x\n\n\ny\n');
+  });
+
+  test('YS U+FEFF is refused on any line, not only at the start', () => {
+    bad('\ufeffa: 1\n', /^line 1: a byte order mark/);
+    bad('a: 1\nb: x\ufeffy\n', /^line 2: a byte order mark/);
+    bad('a: |\n  x\n\ufeff\n  y\n', /^line 3: a byte order mark/);
+  });
+
+  // Read without the fatal flag, a raw 0x85 byte (NEL to a Latin-1 reader) becomes U+FFFD and escapes the line-break check above.
+  test('YAML a workflow that is not valid UTF-8 fails every rule', () => {
+    const MARK = '@@0x85@@';
+    const hidden = `      # note${MARK}${CURL_STEP.replace(/\n(?=.)/g, MARK)}`;
+    const { root } = mutant(['publish.yml', 'resign.yml'].map((file) => ({ file, job: 'sign', from: MINISIGN_STEP, to: hidden + MINISIGN_STEP })));
+    for (const f of ['publish.yml', 'resign.yml']) {
+      const p = path.join(root, '.github', 'workflows', f);
+      const parts = fs.readFileSync(p, 'utf8').split(MARK).map((s) => Buffer.from(s, 'utf8'));
+      fs.writeFileSync(p, Buffer.concat(parts.flatMap((b, k) => (k === 0 ? [b] : [Buffer.from([0x85]), b]))));
+    }
+    const ws = loadWorkflows(root);
+    for (const [rule, fn] of Object.entries(RULES)) {
+      const problems = fn(ws);
+      for (const f of ['publish.yml', 'resign.yml']) assert.ok(problems.some((p) => p.startsWith(`${f}: not valid UTF-8`)), `${rule} reports ${f}: ${JSON.stringify(problems)}`);
+    }
+  });
+
+  test('YAML a workflow read from disk keeps its leading byte order mark, so every rule refuses it', () => {
+    const ws = mutant([{ file: 'check.yml', text: `\ufeff${fs.readFileSync(path.join(WF_DIR, 'check.yml'), 'utf8')}` }]);
+    for (const [rule, fn] of Object.entries(RULES)) assert.ok(fn(ws).some((p) => /^check\.yml: line 1: a byte order mark/.test(p)), rule);
+  });
+});
+
+describe('expr: an if as GitHub reads it', () => {
+  test('expr is the expression of exactly one ${{ }} with nothing outside it, and null for anything else', () => {
+    assert.equal(expr("${{ a == 'b' }}"), "a == 'b'");
+    assert.equal(expr('${{  a\n  &&  b }}'), 'a && b');
+    assert.equal(expr('!cancelled()  && b'), '!cancelled() && b', 'without ${{ GitHub reads the whole value as an expression');
+    assert.equal(expr("${{ 'x }}' }}"), "'x }}'", 'a }} inside quotes does not end the expression');
+    assert.equal(expr("${{ 'it''s }}' }}"), "'it''s }}'");
+    for (const v of ['${{ a }} ', ' ${{ a }}', '${{ a }}\n', '${{ a }} && ${{ b }}', '${{ a }}${{ b }}', '${{ a }}}', '${{ a', '${{ }}', "${{ 'a }}"]) {
+      assert.equal(expr(v), null, JSON.stringify(v));
+    }
+  });
 });
 
 describe('C-WF1 triggers', () => {
@@ -324,4 +376,43 @@ describe('C-WF12 a job after a job that can be skipped carries its own if', () =
   test('C-WF12 refuses a needs that names no job', () => refuses('C-WF12', [{ file: 'check.yml', job: 'review', from: '    needs: verify-vendor\n', to: '    needs: [verify-vendor, lint]\n' }], /^check\.yml job review: needs lint, not a job of check\.yml/));
   test('C-WF12 refuses a conditional job before jobs with the default if', () => refuses('C-WF12', [{ file: 'check.yml', job: 'verify-vendor', from: '    timeout-minutes: 15\n', to: '    timeout-minutes: 15\n    if: ${{ github.event.pull_request.draft == false }}\n' }], [/^check\.yml job checks: no if/, /^check\.yml job review: no if/]));
   test('C-WF12 counts the whole needs chain, not only the jobs named (resign.yml check before the head gate)', () => refuses('C-WF12', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.event_name == 'schedule' }}\n" }], [/^resign\.yml job sign: no if, so GitHub skips it whenever check is skipped/, /^resign\.yml job verify: no if, so GitHub skips it whenever check is skipped/]));
+
+  // check.yml review after a verify-vendor that can be skipped: review's own if is read term by term.
+  const GATE = { file: 'check.yml', job: 'verify-vendor', from: '    timeout-minutes: 15\n', to: '    timeout-minutes: 15\n    if: ${{ github.event.pull_request.draft == false }}\n' };
+  const review = (cond) => [GATE, { file: 'check.yml', job: 'review', from: '    needs: verify-vendor\n', to: `    needs: verify-vendor\n    if: ${cond}\n` }];
+  test('C-WF12 takes a job\'s own if in the form it asks for', () => {
+    const problems = RULES['C-WF12'](mutant(review("${{ !cancelled() && needs.verify-vendor.result == 'success' }}")));
+    assert.deepEqual(problems.filter((p) => p.startsWith('check.yml job review:')), []);
+  });
+  test('C-WF12 refuses a needs result inside an ||', () => refuses('C-WF12', review("${{ !cancelled() && (needs.verify-vendor.result == 'success' || true) }}"), /^check\.yml job review: if does not require needs\.verify-vendor\.result == 'success' as a top-level && term/));
+  test('C-WF12 refuses a needs result compared again', () => refuses('C-WF12', review("${{ !cancelled() && needs.verify-vendor.result == 'success' == false }}"), /^check\.yml job review: if does not require needs\.verify-vendor\.result == 'success' as a top-level && term/));
+  for (const fn of ['Always', 'SUCCESS', 'Failure']) {
+    test(`C-WF12 refuses ${fn}() (GitHub reads function names in any case)`, () => refuses('C-WF12', review(`\${{ !cancelled() && needs.verify-vendor.result == 'success' && ${fn}() }}`), new RegExp(`^check\\.yml job review: if calls ${fn}\\(\\)`)));
+  }
+  test('C-WF12 refuses an if with text outside its ${{ }} (GitHub reads it as a string, always true)', () => refuses('C-WF12', review("${{ needs.verify-vendor.result == 'success' && !cancelled() && 'x' }} && ${{ 'y' }}"), /^check\.yml job review: if is not one expression/));
+  test('C-WF12 reads upload\'s if term by term once it is not its pin', () => refuses('C-WF12', [{ file: 'publish.yml', job: 'upload', from: "(inputs.target == 'production' && needs.sign.result == 'success')", to: "(inputs.target == 'production' && needs.sign.result == 'success' || true)" }], /^publish\.yml job upload: if does not require needs\.sign\.result == 'success' as a top-level && term/));
+});
+
+describe('C-WF8, C-WF10, C-WF12 a pinned if is compared as written: GitHub never trims it', () => {
+  // Text outside the ${{ }} (a trailing space inside quotes, the line break a | block ends with, a second ${{ }}) makes GitHub
+  // evaluate format('...{0}...', ...), a non-empty string, so the if is always true: publish.yml sign would run for target test.
+  const PINS = [
+    ['C-WF8', 'publish.yml', 'sign', "inputs.target == 'production'"],
+    ['C-WF8', 'publish.yml', 'sign-test', "inputs.target == 'test'"],
+    ['C-WF8', 'publish.yml', 'upload', UPLOAD_IF],
+    ['C-WF10', 'resign.yml', 'head', "needs.check.outputs.needed == 'true'"],
+    ['C-WF12', 'publish.yml', 'verify', VERIFY_IF],
+  ];
+  const FORMS = [
+    ['a trailing space inside quotes', (e) => `    if: "\${{ ${e} }} "\n`],
+    ['a | block', (e) => `    if: |\n      \${{ ${e} }}\n`],
+    ['two ${{ }} joined by &&', (e) => `    if: \${{ ${e} }} && \${{ true }}\n`],
+  ];
+  for (const [rule, file, job, e] of PINS) {
+    const from = `    if: \${{ ${e} }}\n`;
+    for (const [what, form] of FORMS) {
+      test(`${rule} refuses ${file} ${job}'s if with ${what}`, () => refuses(rule, [{ file, job, from, to: form(e) }], new RegExp(`^${file.replace('.', '\\.')} job ${job}: .*\\bif\\b`)));
+    }
+    test(`${rule} takes ${file} ${job}'s if as a |- block that holds exactly the pin`, () => assert.deepEqual(RULES[rule](mutant([{ file, job, from, to: `    if: |-\n      \${{ ${e} }}\n` }])), []));
+  }
 });

@@ -2,7 +2,7 @@
 
 How the index at `plugins.eve-cyno.dev` is published, re-signed, revoked and repaired, and what must be true before anyone approves a
 run. The workflows are `.github/workflows/publish.yml`, `resign.yml` and `check.yml`; `tools/test/workflows.test.mjs` holds their
-rules (C-WF1 to C-WF11).
+rules (C-WF1 to C-WF12).
 
 Roles:
 

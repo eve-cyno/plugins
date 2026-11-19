@@ -1,9 +1,10 @@
 // tools/lib/yamlsub.mjs: a strict reader for the YAML subset this repository's workflow files are written in (static tests C-WF1 to
 // C-WF12, tools/test/workflows.test.mjs). It reads block mappings, block sequences, one-line plain and quoted scalars, flow sequences
 // of plain words and literal block scalars (`|`, `|-`). It refuses everything else: tabs, carriage returns, U+0085, U+2028 and
-// U+2029 (line breaks to YAML 1.1 readers such as YamlDotNet), anchors, aliases, tags, flow mappings, folded scalars, scalars over
-// several lines, duplicate keys, a sequence at its key's own indentation, document markers. So a workflow written outside the subset
-// fails the tests instead of being read one way here and another way by GitHub.
+// U+2029 (line breaks to YAML 1.1 readers such as YamlDotNet), U+FEFF (a byte order mark) on any line, anchors, aliases, tags, flow
+// mappings, folded scalars, scalars over several lines, duplicate keys, a sequence at its key's own indentation, document markers.
+// A blank line is one of spaces (U+0020) alone: any other space character is text, as it is to YAML. So a workflow written outside
+// the subset fails the tests instead of being read one way here and another way by GitHub.
 // No dependency: the repository's only packages are the host's ajv and semver, and npm ci runs in the jobs that hold secrets.
 
 export class YamlSubsetError extends Error {}
@@ -25,9 +26,9 @@ const OTHER_BREAK_RE = /[\u0085\u2028\u2029]/;
  */
 export function parseYaml(src) {
   if (typeof src !== 'string') throw new YamlSubsetError('the source is not a string');
-  if (src.charCodeAt(0) === 0xfeff) throw new YamlSubsetError('line 1: a byte order mark');
   const raw = src.split('\n');
   raw.forEach((l, k) => {
+    if (l.includes('\ufeff')) throw new YamlSubsetError(`line ${k + 1}: a byte order mark (U+FEFF)`);
     if (l.includes('\t')) throw new YamlSubsetError(`line ${k + 1}: a tab`);
     if (l.includes('\r')) throw new YamlSubsetError(`line ${k + 1}: a carriage return`);
     const b = OTHER_BREAK_RE.exec(l);
@@ -105,7 +106,8 @@ export function parseYaml(src) {
     let j = i + 1;
     for (; j < lines.length; j++) {
       const L = lines[j];
-      if (L.raw.trim() === '') { body.push(''); continue; }
+      // Spaces alone, never trim(): it also strips U+00A0, U+3000, U+2000 to U+200A and U+FEFF, which are text to YAML.
+      if (/^ *$/.test(L.raw)) { body.push(''); continue; }
       if (contentIndent === null) {
         if (L.indent <= indent) break;
         contentIndent = L.indent;

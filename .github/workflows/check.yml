@@ -8,7 +8,7 @@
 # - The base tree is the first parent of the merge commit GitHub made for the pull request (the checkout's default commit),
 #   written by tools/base-tree.mjs (git ls-tree and git cat-file), never by git archive, which obeys a .gitattributes in that tree.
 # - tools/check.mjs comes with plan task 1.7; the calls below are its command line. tools/test/workflows.test.mjs checks the rules
-#   above on this file (C-WF1 to C-WF11).
+#   above on this file (C-WF1 to C-WF12).
 name: check
 
 on:

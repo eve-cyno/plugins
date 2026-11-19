@@ -79,6 +79,20 @@ const PIN_HOW = 'a changed sign job needs its new pin in SIGN_STEPS, tools/lib/w
  * resign.yml head (check found no re-sign needed; sign, upload and verify have nothing to do). C-WF10 pins head's if.
  */
 const RUN_GATES = Object.freeze({ 'resign.yml': ['head'] });
+/**
+ * The job ifs the rules pin (C-WF8, C-WF10, C-WF12). Each is compared with the value as written, which must be exactly
+ * `${{ <pin> }}`: GitHub never trims an if, and any text outside its `${{ }}` makes it a string that is always true (see expr).
+ */
+const PINNED_IFS = Object.freeze({
+  'publish.yml': Object.freeze({ sign: "inputs.target == 'production'", 'sign-test': "inputs.target == 'test'", upload: UPLOAD_IF, verify: VERIFY_IF }),
+  'resign.yml': Object.freeze({ head: "needs.check.outputs.needed == 'true'" }),
+});
+const isPinned = (f, id) => Object.hasOwn(PINNED_IFS, f) && Object.hasOwn(PINNED_IFS[f], id);
+const pinText = (f, id) => `\${{ ${PINNED_IFS[f][id]} }}`;
+/** Job `id` of workflow `f` has an if pinned in PINNED_IFS, written exactly as pinned. */
+const hasPinnedIf = (f, id, job) => isPinned(f, id) && isMap(job) && job.if === pinText(f, id);
+/** The UTF-8 reader of the workflow files: a byte that is not UTF-8 is refused, never replaced; a byte order mark is kept. */
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const keys = (v) => (isMap(v) ? Object.keys(v) : []);
@@ -86,8 +100,29 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sorted = (a) => [...a].sort();
 const listOf = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []);
 const where = (f, id, k) => `${f} job ${id}${k ? ` step ${k}` : ''}`;
-/** The expression inside `${{ }}` with its whitespace collapsed; a value without the wrapper is collapsed as it is. */
-export const expr = (v) => (typeof v === 'string' ? v.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, '$1').replace(/\s+/g, ' ').trim() : v);
+/**
+ * The expression GitHub evaluates for an if, with its whitespace collapsed, or null when GitHub reads the value as no one expression.
+ * A value without `${{` is an expression as it is. A value with one is an expression only when it is exactly one `${{ ... }}` with
+ * nothing before or after it, its end the first `}}` outside single quotes (TemplateReader.ParseScalar in GitHub's runner). Text
+ * outside it, even one space or the line break a `|` block ends with, makes GitHub evaluate format('...{0}...', ...), a non-empty
+ * string, so the if is always true. The value is never trimmed, since GitHub does not trim it. A value that is not text is returned
+ * as it is.
+ */
+export function expr(v) {
+  if (typeof v !== 'string') return v;
+  const collapse = (s) => s.replace(/\s+/g, ' ').trim();
+  if (!v.includes('${{')) return collapse(v);
+  if (!v.startsWith('${{')) return null;
+  let quoted = false;
+  for (let k = 3; k < v.length; k++) {
+    if (v[k] === "'") quoted = !quoted;
+    else if (!quoted && v[k] === '}' && v[k - 1] === '}') {
+      const e = collapse(v.slice(3, k - 1));
+      return k === v.length - 1 && e !== '' ? e : null;
+    }
+  }
+  return null;
+}
 const exprs = (text) => [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
 /** `v` as canonical JSON: the mapping keys sorted at every level. */
 const canon = (v) => (isMap(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`
@@ -105,7 +140,20 @@ function triggersOf(on) {
   return keys(on);
 }
 
-/** Reads every file of <root>/.github/workflows. A file outside the YAML subset is an error that every rule reports. */
+/** The text of a workflow file, or an error when it is not valid UTF-8 (another reader may decode such a byte another way). */
+function readUtf8(file) {
+  const bytes = fs.readFileSync(file);
+  try {
+    return UTF8.decode(bytes);
+  } catch {
+    throw new Error('not valid UTF-8 (a byte this reader would replace and another reader may decode as a character, a line break among them)');
+  }
+}
+
+/**
+ * Reads every file of <root>/.github/workflows. A file that is not valid UTF-8 or is outside the YAML subset is an error that every
+ * rule reports.
+ */
 export function loadWorkflows(root) {
   const ws = { root, files: [], wf: Object.create(null), errors: [] };
   const dir = path.join(root, '.github', 'workflows');
@@ -114,7 +162,7 @@ export function loadWorkflows(root) {
   for (const f of names) {
     ws.files.push(f);
     try {
-      const text = fs.readFileSync(path.join(dir, f), 'utf8');
+      const text = readUtf8(path.join(dir, f));
       const { value, spans, lines } = parseYaml(text);
       ws.wf[f] = { text, doc: value, spans, lines };
     } catch (e) {
@@ -368,7 +416,10 @@ function cwf7(ws) {
   return [...new Set(p)];
 }
 
-/** C-WF8 (publish.yml): no job that runs for target test names index; upload has the plan's needs and if. */
+/**
+ * C-WF8 (publish.yml): no job that runs for target test names index; sign, sign-test and upload have the ifs PINNED_IFS pins,
+ * written exactly, and upload has the plan's needs.
+ */
 function cwf8(ws) {
   const f = 'publish.yml';
   const w = ws.wf[f];
@@ -383,12 +434,12 @@ function cwf8(ws) {
     p.push(`${f}: input target must be a choice of exactly production and test`);
   }
   for (const [id, job] of Object.entries(jobs)) if (isMap(job) && job.environment === 'index' && id !== 'sign') p.push(`${where(f, id)}: names environment index (only sign may)`);
-  if (!isMap(jobs.sign) || expr(jobs.sign.if) !== "inputs.target == 'production'") p.push(`${where(f, 'sign')}: if must be inputs.target == 'production'`);
+  if (!hasPinnedIf(f, 'sign', jobs.sign)) p.push(`${where(f, 'sign')}: if must be exactly ${pinText(f, 'sign')}`);
   const st = jobs['sign-test'];
-  if (!isMap(st) || 'environment' in st || expr(st.if) !== "inputs.target == 'test'") p.push(`${where(f, 'sign-test')}: must have no environment and if inputs.target == 'test'`);
+  if (!isMap(st) || 'environment' in st || !hasPinnedIf(f, 'sign-test', st)) p.push(`${where(f, 'sign-test')}: must have no environment and if exactly ${pinText(f, 'sign-test')}`);
   const up = jobs.upload;
   if (!isMap(up) || !same(listOf(up.needs), ['build', 'sign', 'sign-test'])) p.push(`${where(f, 'upload')}: needs must be exactly [build, sign, sign-test]`);
-  if (!isMap(up) || expr(up.if) !== UPLOAD_IF) p.push(`${where(f, 'upload')}: if must be \${{ ${UPLOAD_IF} }}`);
+  if (!hasPinnedIf(f, 'upload', up)) p.push(`${where(f, 'upload')}: if must be exactly ${pinText(f, 'upload')}`);
   return p;
 }
 
@@ -432,7 +483,7 @@ function cwf10(ws) {
   if (isMap(up) && 'if' in up) p.push(`${where(f, 'upload')}: if (GitHub's default runs it only when head and sign succeeded)`);
   const head = jobs.head;
   if (!isMap(head) || !same(listOf(head.needs), ['check'])) p.push(`${where(f, 'head')}: needs must be check`);
-  if (!isMap(head) || expr(head.if) !== "needs.check.outputs.needed == 'true'") p.push(`${where(f, 'head')}: if must be needs.check.outputs.needed == 'true'`);
+  if (!hasPinnedIf(f, 'head', head)) p.push(`${where(f, 'head')}: if must be exactly ${pinText(f, 'head')}`);
   const on = w.doc.on;
   const sched = isMap(on) ? on.schedule : undefined;
   if (!Array.isArray(sched) || sched.length !== 1 || !isMap(sched[0]) || !same(keys(sched[0]), ['cron']) || sched[0].cron !== '17 6 * * 1') {
@@ -545,9 +596,12 @@ function andTerms(e) {
  * C-WF12: GitHub gives a job without an if the default success(), which is false when any job before it in the needs chain was
  * skipped, not only the ones it names (publish run 44491400412: sign-test signed, sign was skipped, upload ran on its own if and
  * verify was skipped, a green run with no read-back). So a job after a job with an if keeps the default only when that job is a run
- * gate (RUN_GATES); otherwise its own if has !cancelled() as a top-level && term, calls no always(), success() or failure(), and
- * requires needs.<job>.result == 'success' for each job it names. Every needs names a job of the file. publish.yml verify: needs
- * exactly [upload] and if VERIFY_IF.
+ * gate (RUN_GATES); otherwise its own if is one expression (expr: text outside its `${{ }}` makes it always true), has !cancelled()
+ * as a top-level && term, calls no always(), success() or failure() in any case (GitHub reads function names in any case), and has
+ * needs.<job>.result == 'success' as a top-level && term for each job it names, so nothing around it (an ||, a second comparison)
+ * can make it true without that job's success. A job whose if is written exactly as PINNED_IFS pins it is not read term by term:
+ * its whole if is the reviewed one (upload's needs sign or sign-test by target). Every needs names a job of the file. publish.yml
+ * verify: needs exactly [upload] and if exactly `${{ VERIFY_IF }}`.
  */
 function cwf12(ws) {
   const p = [...ws.errors];
@@ -565,25 +619,26 @@ function cwf12(ws) {
         todo.push(...needsOf(n));
       }
       const skippable = [...before].filter((n) => 'if' in jobs[n] && !(RUN_GATES[f] ?? []).includes(n)).sort();
-      if (skippable.length === 0) continue;
+      if (skippable.length === 0 || hasPinnedIf(f, id, job)) continue;
       if (!('if' in job)) {
         p.push(`${where(f, id)}: no if, so GitHub skips it whenever ${orList(skippable)} is skipped (give it if: \${{ !cancelled() && needs.<job>.result == 'success' }} for each job it needs)`);
         continue;
       }
       const e = expr(job.if);
+      if (e === null) p.push(`${where(f, id)}: if is not one expression: GitHub reads text outside its \${{ }} as a string, always true (got ${JSON.stringify(job.if)})`);
       const terms = typeof e === 'string' ? andTerms(e) : null;
       if (!terms || !terms.includes('!cancelled()')) p.push(`${where(f, id)}: if must have !cancelled() as a top-level && term (got ${JSON.stringify(e)})`);
-      const status = typeof e === 'string' ? /\b(always|success|failure)\s*\(/.exec(e) : null;
+      const status = typeof e === 'string' ? /\b(always|success|failure)\s*\(/i.exec(e) : null;
       if (status) p.push(`${where(f, id)}: if calls ${status[1]}() (only !cancelled() decides on the jobs before it)`);
       for (const n of needsOf(id)) {
-        if (typeof e !== 'string' || !e.includes(`needs.${n}.result == 'success'`)) p.push(`${where(f, id)}: if does not require needs.${n}.result == 'success'`);
+        if (!terms || !terms.includes(`needs.${n}.result == 'success'`)) p.push(`${where(f, id)}: if does not require needs.${n}.result == 'success' as a top-level && term`);
       }
     }
   }
   const pw = ws.wf['publish.yml'];
   if (!pw) return [...p, 'publish.yml: missing'];
   const v = jobsOf(pw).verify;
-  if (!isMap(v) || !same(listOf(v.needs), ['upload']) || expr(v.if) !== VERIFY_IF) p.push(`publish.yml job verify: needs must be exactly [upload] and if \${{ ${VERIFY_IF} }}`);
+  if (!isMap(v) || !same(listOf(v.needs), ['upload']) || !hasPinnedIf('publish.yml', 'verify', v)) p.push(`publish.yml job verify: needs must be exactly [upload] and if exactly ${pinText('publish.yml', 'verify')}`);
   return [...new Set(p)];
 }
 
