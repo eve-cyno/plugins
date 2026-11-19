@@ -789,7 +789,7 @@ async function ensureGrantNow(store, prompter, m, providers, hooks, o) {
             plugin: { id: m.id, name: m.name, ...(m.author !== undefined ? { author: m.author } : {}), version: m.version }, delta: d, providers,
             requested: req, ...(previous ? { previous } : {}), background: bgKept, reset,
             ...(o?.source !== undefined ? { source: o.source } : {}), ...(o?.keep !== undefined && !optionalOnly ? { keep: o.keep } : {}), // "Keep <version>" is not the only way out of an optional-only ask
-            ...(o?.identity !== undefined ? { identity: o.identity } : {}), ...(confirm ? { staged: m } : {}),
+            ...(o?.identity !== undefined ? { identity: o.identity } : {}), ...(confirm ? { staged: m } : {}), ...(o?.sourceIndex !== undefined ? { sourceIndex: o.sourceIndex } : {}),
             ...((0, optional_1.isEmptySet)(offered) ? {} : { optional: offered }), ...(optionalOnly ? { optionalOnly: true } : {}), ...(resetWhen.length > 0 ? { resetWhen } : {}),
             ...(denyRevokes.length > 0 ? { denyRevokes: [...denyRevokes] } : {}),
         });

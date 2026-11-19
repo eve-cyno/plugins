@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PluginRegistry = exports.contentType = exports.startFailure = void 0;
+exports.PluginRegistry = exports.isSourceHold = exports.contentType = exports.startFailure = void 0;
 exports.inspectPluginDir = inspectPluginDir;
 exports.sameDirAsScanned = sameDirAsScanned;
 exports.isInstalledRoot = isInstalledRoot;
@@ -296,6 +296,12 @@ function readPluginFile(root, urlPath, strict = false, maxBytes = servebudget_1.
         catch { /* already closed */ }
     }
 }
+const SOURCE_HOLDS = new Set(['source_removed', 'source_unknown', 'source_busy']);
+/** True for the causes of a source that is not live (DP3). */
+const isSourceHold = (by) => by !== undefined && SOURCE_HOLDS.has(by);
+exports.isSourceHold = isSourceHold;
+/** The holds the user cannot switch on: a revocation (R28) and a source that is not live (DP3). */
+const isHold = (by) => by === 'revoked' || (0, exports.isSourceHold)(by);
 const noop = () => { };
 class PluginRegistry {
     deps;
@@ -392,9 +398,10 @@ class PluginRegistry {
             e.fresh = true; // D20: a reload of a folder plugin not allowed yet is still asked afresh
         this.entries.set(e.id, e);
         // R28: a revoked version is registered disabled (a cached revocation stops it before anything starts it); another version in its place
-        // (a fix installed or copied over it) is not. The user switched it off: never asked, never started.
-        if (this.isRevoked(e))
-            this.setState(e, 'disabled', 'revoked');
+        // (a fix installed or copied over it) is not. DP3: so is a plugin whose source is not live. The user switched it off: never asked, never started.
+        const hold = this.holdOf(e);
+        if (hold)
+            this.setState(e, 'disabled', hold);
         else if (this.deps.prefs?.isDisabled(e.id))
             this.setState(e, 'disabled', 'user');
         else
@@ -413,6 +420,26 @@ class PluginRegistry {
             return true;
         }
     }
+    // DP3 plan 7.5: the source hook's answer for a plugin of the installed root (only there can an install record bind one); a throw, or an
+    // answer that is no SourceHold, is `source_busy` (fail closed).
+    sourceHoldOf(e) {
+        const f = this.deps.sourceHold;
+        if (!f || !e.found.strict)
+            return null;
+        let r;
+        try {
+            r = f(e.id);
+        }
+        catch {
+            return 'source_busy';
+        }
+        if (r === null || r === undefined)
+            return null;
+        return typeof r === 'string' && SOURCE_HOLDS.has(r) ? r : 'source_busy';
+    }
+    // What holds the plugin off now: a revocation first, then a source that is not live; null, nothing.
+    holdOf(e) { return this.isRevoked(e) ? 'revoked' : this.sourceHoldOf(e); }
+    held(e) { return e.state === 'disabled' && isHold(e.disabledBy); }
     // ---- lifecycle ---------------------------------------------------------------------------------------------------
     /**
      * Registers everything, then settles every consent concurrently (a denied plugin is listed as disabled) and starts each `onStartup`
@@ -433,7 +460,7 @@ class PluginRegistry {
         await this.activate(e.id).catch(err => { if (err?.held !== true)
             console.error('PLUGIN_NOT_LOADED', e.id, codeOf(err)); });
     }
-    /** Why the plugin is disabled: the user switched it off, its consent is denied, or it is revoked. undefined when it is not disabled. */
+    /** Why the plugin is disabled: the user switched it off, its consent is denied, it is revoked, or its source is not live. undefined when it is not disabled. */
     disabledBy(id) {
         const e = this.entries.get(id);
         return e && e.state === 'disabled' ? e.disabledBy : undefined;
@@ -444,6 +471,9 @@ class PluginRegistry {
      *    hangs on it; the state is `disabled` by `revoked`. Nothing of its data, grant or files is touched.
      *  - No longer revoked: it returns to the state it had. Switched off by the user: disabled by the user. Otherwise `stopped`, its consent
      *    settled as at a start (a denied version stays disabled by consent and is not asked again) and started when it starts at startup.
+     * DP3 plan 7.5: the `sourceHold` hook's answers are applied in the same pass, the same way (a revocation wins): a plugin whose source is
+     * no longer live is held by the source's cause (its proxy first, then its page; never named here), one whose source is live again returns
+     * to the state it had, and a plugin held already only takes the new cause (nothing starts).
      * Returns the ids revoked now that it has not named yet at their registered version (revoked here, or registered revoked since the last
      * call: a cached revocation at a start); the notice is the caller's.
      */
@@ -453,11 +483,16 @@ class PluginRegistry {
             if (this.entries.get(e.id) !== e)
                 continue; // replaced meanwhile (a listener reacted to a change)
             const revoked = this.isRevoked(e);
-            const was = e.state === 'disabled' && e.disabledBy === 'revoked';
-            if (revoked && !was)
-                this.revokeNow(e);
-            else if (!revoked && was)
-                this.lift(e);
+            const hold = revoked ? 'revoked' : this.sourceHoldOf(e);
+            const was = this.held(e) ? e.disabledBy : null;
+            if (hold && !was)
+                this.holdNow(e, hold);
+            else if (!hold && was)
+                this.lift(e, was);
+            else if (hold && was !== hold) {
+                e.token = ++this.seq;
+                this.setState(e, 'disabled', hold);
+            } // off already: only its cause changes
             if (!revoked) {
                 this.named.delete(e.id);
                 continue;
@@ -472,16 +507,16 @@ class PluginRegistry {
                 this.named.delete(id);
         return out;
     }
-    // The proxy before the page (R28): from the first step on, nothing the page still sends reaches a server.
-    revokeNow(e) {
+    // The proxy before the page (R28): from the first step on, nothing the page still sends reaches a server. The same for a source's hold (DP3).
+    holdNow(e, by) {
         this.dropProxy(e, e.proxy);
-        this.teardown(e, 'disabled', 'revoked');
-        console.warn('PLUGIN_DISABLED', JSON.stringify(e.id), '(revoked)');
+        this.teardown(e, 'disabled', by);
+        console.warn('PLUGIN_DISABLED', JSON.stringify(e.id), `(${by})`);
     }
-    // Back to the state it had before the revocation (see applyRevocations).
-    lift(e) {
+    // Back to the state it had before the revocation or the source's hold (see applyRevocations).
+    lift(e, was) {
         e.token = ++this.seq;
-        console.warn('PLUGIN_REVOCATION_LIFTED', JSON.stringify(e.id));
+        console.warn(was === 'revoked' ? 'PLUGIN_REVOCATION_LIFTED' : 'PLUGIN_SOURCE_LIVE', JSON.stringify(e.id));
         if (this.deps.prefs?.isDisabled(e.id)) {
             this.setState(e, 'disabled', 'user');
             return;
@@ -511,20 +546,21 @@ class PluginRegistry {
     /**
      * The user's switch. Off: the plugin is stopped and listed as disabled (kept in the preferences). On: the flag is cleared, the
      * plugin is `stopped`, its consent is settled (a plugin whose consent is denied stays disabled, by consent) and it starts if it
-     * would start at startup; otherwise it waits for its first command or service as usual. A revoked plugin (R28): On throws `not_permitted`
-     * and changes nothing; Off is kept in the preferences and the plugin stays disabled by `revoked` until the revocation is lifted.
+     * would start at startup; otherwise it waits for its first command or service as usual. A revoked plugin (R28), or one whose source is not
+     * live (DP3): On throws `not_permitted` and changes nothing; Off is kept in the preferences and the plugin stays disabled by that cause
+     * until it is lifted.
      */
     async setEnabled(id, on) {
         const e = this.entries.get(id);
         if (!e)
             throw (0, errors_1.coded)('not_found', 'plugin');
-        const revoked = e.state === 'disabled' && e.disabledBy === 'revoked';
+        const revoked = this.held(e);
         if (on && revoked)
-            throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28: while it holds; the preference stays as it is
+            throw (0, errors_1.coded)('not_permitted', e.disabledBy === 'revoked' ? 'plugin is revoked' : 'plugin source is not available'); // R28: while it holds; the preference stays as it is
         this.deps.prefs?.setDisabled(id, !on);
         if (!on) {
             if (revoked)
-                return; // kept off by the user too: when the revocation is lifted it stays disabled (by the user)
+                return; // kept off by the user too: when the hold is lifted it stays disabled (by the user)
             if (e.state === 'disabled') {
                 e.token = ++this.seq;
                 this.setState(e, 'disabled', 'user');
@@ -553,8 +589,8 @@ class PluginRegistry {
         const e = this.entries.get(id);
         if (!e)
             throw (0, errors_1.coded)('not_found', 'plugin');
-        if (e.state === 'disabled' && (e.disabledBy === 'user' || e.disabledBy === 'revoked'))
-            return; // switched off by the user, or revoked (R28): never asked, its stored denial stays
+        if (e.state === 'disabled' && (e.disabledBy === 'user' || isHold(e.disabledBy)))
+            return; // switched off by the user, revoked (R28) or its source not live (DP3): never asked, its stored denial stays
         this.deps.grants.clearDenied(id);
         const token = e.token;
         const g = await this.grantOf(e);
@@ -715,7 +751,7 @@ class PluginRegistry {
         const finish = () => { if (this.swaps.get(id) === marker)
             this.swaps.delete(id); done(); };
         const live = o.restart === true || e.state === 'running' || e.state === 'starting';
-        const wasRevoked = e.state === 'disabled' && e.disabledBy === 'revoked';
+        const wasRevoked = this.held(e); // revoked (R28) or its source not live (DP3)
         const startAgain = async () => {
             const now = this.entries.get(id);
             if (!now || now.state === 'disabled')
@@ -908,8 +944,8 @@ class PluginRegistry {
             throw (0, errors_1.coded)('not_found', 'plugin');
         if (!Array.isArray(kinds) || !kinds.every(grants_1.isRevokeKind))
             throw (0, errors_1.coded)('bad_params', 'kinds');
-        if (e.state === 'disabled' && e.disabledBy === 'revoked')
-            throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28: nothing is asked while it holds
+        if (this.held(e))
+            throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28 (and DP3, a source not live): nothing is asked while it holds
         const wipe = this.wipeHooks(e, 'reset');
         const was = this.deps.grants.get(id)?.revoked ?? [];
         const r = await (0, grants_1.allowGrant)(this.deps.grants, this.deps.prompter, e.manifest, this.deps.services.providersFor(e.manifest), kinds, wipe.hooks, this.isBuiltIn(id));
@@ -931,8 +967,8 @@ class PluginRegistry {
             throw (0, errors_1.coded)('not_found', 'plugin');
         if (by !== 'user' && by !== 'plugin')
             throw (0, errors_1.coded)('bad_params', 'by');
-        if (e.state === 'disabled' && e.disabledBy === 'revoked')
-            throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28: nothing is asked while it holds
+        if (this.held(e))
+            throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28 (and DP3, a source not live): nothing is asked while it holds
         const wipe = this.wipeHooks(e, 'reset');
         const was = JSON.stringify(this.deps.grants.get(id)?.granted);
         const r = await (0, grants_1.allowOptional)(this.deps.grants, this.deps.prompter, e.manifest, this.deps.services.providersFor(e.manifest), items, wipe.hooks, by);
@@ -1098,33 +1134,51 @@ class PluginRegistry {
             return null;
         }
     }
-    /** Where a registered plugin came from, as its grant requests say it. */
+    /**
+     * Where a registered plugin came from, as its grant requests say it. The kind only: never the index it is bound to (sourceIndexOf reads
+     * the install record and the source store; every Settings > Plugins row reads this, DP3 re-review finding 4).
+     */
     sourceOf(id) {
         const e = this.entries.get(id);
-        return e === undefined ? undefined : this.askOf(e).source;
+        return e === undefined ? undefined : this.kindOf(e);
+    }
+    /** The `sourceOf` dep's answer for the entry (`manual` when it throws or answers anything else); undefined without the dep. */
+    kindOf(e) {
+        const of = this.deps.sourceOf;
+        if (!of)
+            return undefined;
+        try {
+            const s = of(e.id, e.manifest, e.found.strict);
+            if (s === 'bundled' || s === 'market')
+                return s;
+        }
+        catch { /* manual: never "signed" by mistake */ }
+        return 'manual';
     }
     askOf(e) {
-        const of = this.deps.sourceOf;
         let builtIn = false;
         try {
             builtIn = this.deps.builtIn?.(e.id) === true;
         }
         catch { /* not built-in */ }
-        if (!of)
+        const source = this.kindOf(e);
+        if (source === undefined)
             return builtIn ? { builtIn } : {};
-        let source = 'manual';
-        try {
-            const s = of(e.id, e.manifest, e.found.strict);
-            if (s === 'bundled' || s === 'market')
-                source = s;
-        }
-        catch { /* manual: never "signed" by mistake */ }
-        return builtIn ? { source, builtIn } : { source };
+        let sourceIndex;
+        if (source === 'market' && this.deps.sourceIndexOf) {
+            try {
+                sourceIndex = this.deps.sourceIndexOf(e.id);
+            }
+            catch {
+                sourceIndex = undefined;
+            }
+        } // review finding 1: the host names the index
+        return { source, ...(builtIn ? { builtIn } : {}), ...(sourceIndex ? { sourceIndex } : {}) };
     }
     // A plugin whose consent is denied is listed as disabled and never gets a view.
     async settleGrant(e) {
-        if (e.state === 'disabled' && (e.disabledBy === 'user' || e.disabledBy === 'revoked'))
-            return; // never asked (a revoked plugin: no prompt, R28)
+        if (e.state === 'disabled' && (e.disabledBy === 'user' || isHold(e.disabledBy)))
+            return; // never asked (a revoked plugin: no prompt, R28; nor one whose source is not live, DP3)
         const token = e.token;
         const g = await this.grantOf(e);
         if (e.token !== token || this.entries.get(e.id) !== e)

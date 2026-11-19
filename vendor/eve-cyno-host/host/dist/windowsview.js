@@ -37,6 +37,7 @@ exports.pollIntervalMs = exports.canSendOut = exports.characterKey = void 0;
 exports.loadHostKey = loadHostKey;
 exports.toWindowInfo = toWindowInfo;
 exports.pxToDipLinux = pxToDipLinux;
+exports.dipToPxLinux = dipToPxLinux;
 // What a plugin sees of the EVE windows: the cynod snapshot turned into WindowInfo. Pure (no Electron, no OS); the one place that
 // decides who gets a character name, a per-plugin key and a character id.
 const node_crypto_1 = require("node:crypto");
@@ -102,11 +103,15 @@ exports.canSendOut = canSendOut;
 // R2 (amended). `character` only for a plugin that cannot send data out: no network host, no consumed service, no provided service
 // (the services broker relays data to other plugins, which may have a network), and no `ai` or `account` permission (canSendOut above); `key` for every plugin, `client` windows only;
 // `characterId` only for a vault character the grant allows. `login` and `other` windows carry no name and no key.
+// `windowClass` (API 1.29.0) only on an `other` window and under the same rule as `character`: the classes name the user's other programs (coordinator Q3).
+// It is cynod's matched entry, never the title.
 function toWindowInfo(w, c) {
     const info = {
         id: w.id, kind: w.kind, key: null, active: w.id === c.active, minimized: w.minimized,
         bounds: c.toDip({ x: w.x, y: w.y, width: w.w, height: w.h }),
     };
+    if (w.kind === 'other' && typeof w.extra === 'string' && w.extra !== '' && !(0, exports.canSendOut)(c.granted, c.providesServices))
+        info.windowClass = w.extra;
     if (w.kind !== 'client' || w.character === '')
         return info;
     info.key = (0, exports.characterKey)(c.hostKey, c.pluginId, w.character);
@@ -139,5 +144,23 @@ function pxToDipLinux(r, displays) {
     return {
         x: Math.round((r.x - p.x) / s + d.bounds.x), y: Math.round((r.y - p.y) / s + d.bounds.y),
         width: Math.round(r.width / s), height: Math.round(r.height / s),
+    };
+}
+/**
+ * The inverse of `pxToDipLinux`, for `windows.setBounds` (API 1.29.0): a DIP rectangle to X11 physical pixels. The display holding the rectangle's
+ * centre (in DIP) decides the scale, as the centre in px does the other way; with no display, the rectangle is only rounded. A whole-DIP rectangle
+ * comes back exactly through pxToDipLinux at any scale of 1 or more; the size is at least 1x1 px.
+ */
+function dipToPxLinux(r, displays) {
+    const size = (v) => Math.max(1, Math.round(v));
+    if (displays.length === 0)
+        return { x: Math.round(r.x), y: Math.round(r.y), width: size(r.width), height: size(r.height) };
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const dist = (d) => { const b = d.bounds; return Math.hypot(Math.max(b.x - cx, 0, cx - (b.x + b.width)), Math.max(b.y - cy, 0, cy - (b.y + b.height))); };
+    const d = displays.reduce((best, x) => dist(x) < dist(best) ? x : best, displays[0]);
+    const s = d.scaleFactor > 0 ? d.scaleFactor : 1;
+    return {
+        x: Math.round((r.x - d.bounds.x) * s + d.bounds.x * s), y: Math.round((r.y - d.bounds.y) * s + d.bounds.y * s),
+        width: size(r.width * s), height: size(r.height * s),
     };
 }

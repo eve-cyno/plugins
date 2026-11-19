@@ -2,10 +2,10 @@
   "schema": 1,
   "generator": "tools/vendor-host.mjs",
   "desktop": {
-    "commit": "ef949cc52b10fe405de8e7858af683b6e481d66a"
+    "commit": "ceea208dd7e578f65aa061b4be332a1cab882799"
   },
   "build": "npm --prefix host run build (product: no test key)",
-  "hostApi": "1.28.0",
+  "hostApi": "1.29.0",
   "dependencies": {
     "ajv": {
       "version": "8.20.0",
@@ -76,17 +76,17 @@
       "origin": "build"
     },
     "host/dist/grants.js": {
-      "sha256": "f89b7e15c432396ccd0cd1e3aca3c1fdf1760476eccb21fbb3ff44595677d3c4",
-      "size": 66891,
+      "sha256": "ddf480876e357cfaf167891026979e1dda3f2b732e69cc23f00b1ba18502bdd7",
+      "size": 66964,
       "origin": "build"
     },
     "host/dist/loader.js": {
-      "sha256": "3694b34e131b96db1e60b63bb29a95a0fef70e0f0a7b9deea06e155448756f12",
-      "size": 62309,
+      "sha256": "9f5b37c81f6dbf5d29cca5b470ef7892ddcf2153ea62486125ba17c63267faa4",
+      "size": 65317,
       "origin": "build"
     },
     "host/dist/manifest.js": {
-      "sha256": "0d6b95725d2f3740a66eb1b48fbc7f65f69a33c632372519d0d1d2cdacc256bb",
+      "sha256": "44704680878ed13a9d907c99bbf4124b7ec704db0bbc3bb8397109a3da172905",
       "size": 39643,
       "origin": "build"
     },
@@ -176,8 +176,8 @@
       "origin": "build"
     },
     "host/dist/windowsview.js": {
-      "sha256": "984a8ebefa8d2d6dc8c4cd60be04b2cf0be47a779c36eefe3fd406c6f7c8ec90",
-      "size": 7473,
+      "sha256": "a425acfd308486c663f1500d668c2cc62a988f27b8e919cdd2ff7dd079c37459",
+      "size": 9081,
       "origin": "build"
     },
     "host/package.json": {
