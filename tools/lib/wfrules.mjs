@@ -40,6 +40,13 @@ export const MAIN_HEAD_STEP = Object.freeze({
 
 const SECRET_ENV = Object.freeze({ MINISIGN_INDEX_KEY: 'index', MINISIGN_INDEX_PASSWORD: 'index', R2_ACCESS_KEY_ID: 'mirror', R2_SECRET_ACCESS_KEY: 'mirror' });
 const VAR_ENV = Object.freeze({ R2_ACCOUNT_ID: 'mirror', R2_BUCKET: 'mirror' });
+/**
+ * C-WF5: the contexts that hold values only some jobs may read, with their names and what a read of one is called. Each pattern
+ * finds every read of the context: GitHub reads a context name in any case (Secrets, VARS) and skips whitespace between tokens, so
+ * the name in any case is a read, and only `<context>.<NAME>` with nothing between the three reads one value by its name.
+ */
+const VALUE_CONTEXTS = Object.freeze([['secrets', SECRET_ENV, 'secret'], ['vars', VAR_ENV, 'variable']]
+  .map(([ctx, table, kind]) => Object.freeze({ ctx, table, kind, re: new RegExp(`\\b${ctx}\\b(?:\\.([A-Za-z_][A-Za-z0-9_]*))?`, 'gi') })));
 const JOB_ENV = Object.freeze({ 'publish.yml': { sign: 'index', upload: 'mirror' }, 'resign.yml': { sign: 'index', upload: 'mirror' } });
 const ACTIONS_READ = Object.freeze({ 'publish.yml': ['build', 'upload'] });
 const ARTIFACT_DAYS = Object.freeze({ head: '90', signature: '90', catalog: '90', 'archives.json': '35', 'test-key': '35' });
@@ -129,7 +136,24 @@ export function expr(v) {
   }
   return null;
 }
-const exprs = (text) => [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+/**
+ * The expressions of a text: each runs from a `${{` to the first `}}` outside single quotes, where GitHub ends it (see expr), so a
+ * `}}` in a string literal never hides the rest of the expression. An expression whose quote is never closed runs to the end.
+ */
+function exprs(text) {
+  const out = [];
+  for (let from = text.indexOf('${{'); from !== -1;) {
+    let quoted = false;
+    let k = from + 3;
+    for (; k < text.length; k++) {
+      if (text[k] === "'") quoted = !quoted;
+      else if (!quoted && text[k] === '}' && text[k + 1] === '}') break;
+    }
+    out.push(text.slice(from + 3, k));
+    from = text.indexOf('${{', k + 2);
+  }
+  return out;
+}
 /** `v` as canonical JSON: the mapping keys sorted at every level. */
 const canon = (v) => (isMap(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`
   : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : JSON.stringify(v ?? null));
@@ -139,6 +163,8 @@ const isUpload = (s) => isMap(s) && typeof s.uses === 'string' && s.uses.startsW
 const isCheckout = (s) => isMap(s) && typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@');
 const stepsOf = (job) => (isMap(job) && Array.isArray(job.steps) ? job.steps : []);
 const jobsOf = (w) => (w && isMap(w.doc.jobs) ? w.doc.jobs : Object.create(null));
+/** The ifs of a job and of its steps written without `${{`: GitHub reads each such value whole as one expression. */
+const bareIfs = (job) => [job, ...stepsOf(job)].map((n) => (isMap(n) ? n.if : undefined)).filter((v) => typeof v === 'string' && !v.includes('${{'));
 
 function triggersOf(on) {
   if (typeof on === 'string') return [on];
@@ -287,24 +313,26 @@ function cwf4(ws) {
 
 /**
  * C-WF5: MINISIGN_ secrets only in jobs with environment index, R2_ secrets and variables only with environment mirror, no other
- * secret or variable, no toJSON(secrets), no secrets: inherit, nothing outside the jobs; index only on sign, mirror only on upload;
- * permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes. Every job runs on
- * runs-on: ubuntu-24.04 itself: no container, no services, no self-hosted runner or label list; no env at workflow level (it would
- * reach every job, the sign jobs included).
+ * secret or variable, no read of a whole context (toJSON(secrets), vars.*, an index), no secrets: inherit, nothing outside the jobs,
+ * each read found in any case, in every ${{ }} and in every if written without one (VALUE_CONTEXTS); index only on sign, mirror
+ * only on upload; permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes.
+ * Every job runs on runs-on: ubuntu-24.04 itself: no container, no services, no self-hosted runner or label list; no env at
+ * workflow level (it would reach every job, the sign jobs included).
  */
 function cwf5(ws) {
   const p = [...ws.errors];
   for (const [f, w] of Object.entries(ws.wf)) {
     if ('env' in w.doc) p.push(`${f}: env at workflow level (it reaches every job, the sign jobs included; set env on a job or a step)`);
-    if (/toJSON\s*\(\s*secrets\s*\)/i.test(w.text)) p.push(`${f}: toJSON(secrets)`);
+    // GitHub reads function and context names in any case: toJson(Secrets) and FROMJSON(vars) are toJSON(secrets) and fromJSON(vars).
+    for (const m of w.text.matchAll(/\b(to|from)JSON\s*\(\s*(secrets|vars)\s*\)/gi)) p.push(`${f}: ${m[1].toLowerCase()}JSON(${m[2].toLowerCase()})`);
     if (/^\s*secrets\s*:\s*inherit\b/m.test(w.text)) p.push(`${f}: secrets: inherit`);
-    if (/\bsecrets\s*\[/.test(w.text)) p.push(`${f}: secrets[...] (only secrets.<NAME> is read)`);
+    for (const m of w.text.matchAll(/\b(secrets|vars)\s*\[/gi)) p.push(`${f}: ${m[1].toLowerCase()}[...] (only ${m[1].toLowerCase()}.<NAME> is read)`);
     const perms = w.doc.permissions;
     if (!isMap(perms) || !same(keys(perms), ['contents']) || perms.contents !== 'read') p.push(`${f}: workflow permissions must be exactly contents: read`);
     const jobs = jobsOf(w);
     const inJobs = Object.values(jobs).map((j) => (isMap(j) ? w.spans.get(j) : null)).filter(Boolean);
     const outside = w.lines.filter((_, k) => !inJobs.some((s) => k >= s.start && k <= s.end)).join('\n');
-    for (const e of exprs(outside)) if (/\b(secrets|vars)\b/.test(e)) p.push(`${f}: a secret or variable outside the jobs: \${{${e}}}`);
+    for (const e of exprs(outside)) if (/\b(secrets|vars)\b/i.test(e)) p.push(`${f}: a secret or variable outside the jobs: \${{${e}}}`);
     for (const [id, job] of Object.entries(jobs)) {
       if (!isMap(job)) { p.push(`${where(f, id)}: not a mapping`); continue; }
       for (const k of ['container', 'services']) if (k in job) p.push(`${where(f, id)}: ${k} (a job runs on GitHub's hosted runner itself, with no image in or beside it)`);
@@ -314,15 +342,14 @@ function cwf5(ws) {
       if (env !== undefined && typeof env !== 'string') p.push(`${where(f, id)}: environment must be a plain name`);
       else if (env !== want) p.push(`${where(f, id)}: environment ${env ?? 'none'}, expected ${want ?? 'none'}`);
       if ('secrets' in job) p.push(`${where(f, id)}: passes secrets to a reusable workflow`);
-      for (const e of exprs(spanText(w, job))) {
-        for (const [table, kind] of [[SECRET_ENV, 'secret'], [VAR_ENV, 'variable']]) {
-          const ctx = kind === 'secret' ? 'secrets' : 'vars';
-          for (const m of e.matchAll(new RegExp(`\\b${ctx}\\.([A-Za-z_][A-Za-z0-9_]*)`, 'g'))) {
+      for (const e of [...exprs(spanText(w, job)), ...bareIfs(job)]) {
+        for (const { ctx, table, kind, re } of VALUE_CONTEXTS) {
+          for (const m of e.matchAll(re)) {
             const n = m[1];
-            if (!(n in table)) p.push(`${where(f, id)}: ${kind} ${n} is not one this repository names`);
+            if (n === undefined) p.push(`${where(f, id)}: the whole ${ctx} context in \${{${e}}} (only ${ctx}.<NAME> is read; not ${ctx}.*, an index or a spaced dot)`);
+            else if (!Object.hasOwn(table, n)) p.push(`${where(f, id)}: ${kind} ${n} is not one this repository names`);
             else if (table[n] !== env) p.push(`${where(f, id)}: ${kind} ${n} belongs only in a job with environment ${table[n]}`);
           }
-          if (new RegExp(`\\b${ctx}\\b(?!\\.)`).test(e)) p.push(`${where(f, id)}: the whole ${ctx} context in \${{${e}}}`);
         }
       }
       const jp = job.permissions;
@@ -560,7 +587,8 @@ function cwf11(ws) {
     w.text.split('\n').forEach((l, i) => {
       const code = uncommented(l);
       if (/reviewer/i.test(code)) p.push(`${f}: names a reviewer outside a comment (line ${i + 1})`);
-      if (LITERAL_USER_RES.some((re) => re.test(code))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
+      // GitHub reads context and property names in any case (GitHub.Actor, sender.ID), so a workflow line is matched in lower case.
+      if (LITERAL_USER_RES.some((re) => re.test(code.toLowerCase()))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
     });
     if (REVIEWER_KEY_RE.test(w.text)) p.push(`${f}: names a reviewer file or a reviewer id or login key`);
   }
