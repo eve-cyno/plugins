@@ -19,7 +19,8 @@ import { namespacesOf, parseDts } from '../lib/dts.mjs';
 const require = createRequire(import.meta.url);
 const HOST = join(REPO_ROOT, 'vendor', 'eve-cyno-host', 'host', 'dist');
 const { parseManifest, SHARED_HOSTS, DEFAULT_STORAGE_MB, OPTIONAL_API } = require(join(HOST, 'manifest.js'));
-const { requested, REVOKE_KINDS } = require(join(HOST, 'grants.js'));
+const { requested, REVOKE_KINDS, GrantStore, ensureGrant } = require(join(HOST, 'grants.js'));
+const { toWindowInfo } = require(join(HOST, 'windowsview.js'));
 const { nameAllowed } = require(join(HOST, 'market', 'names.js'));
 const { DATA_ALLOWLIST, PACK_IDS } = require(join(HOST, 'dataallow.js'));
 const { readZip, ZIP_LIMITS, entryNameProblem } = require(join(HOST, 'market', 'zipread.js'));
@@ -227,6 +228,40 @@ test('permissions: the shared hosts are SHARED_HOSTS and the revocable parts are
   assert.ok(rows.get('`storage`').includes(`the default is ${DEFAULT_STORAGE_MB} MB`));
   const optional = OPTIONAL_API.split('.').slice(0, 2).join('.');
   assert.ok(rows.get('`optional`').includes(`\`^${optional}\``) && source('permissions').includes(`Optional items need \`^${optional}\``));
+});
+
+test('permissions: optional items count for the chat-log rule switched on or off, for window names only when granted', async () => {
+  // The page: one intro that says nothing about optional items, and each rule with its own optional-item sentence.
+  const lines = source('permissions').split('\n');
+  const at = lines.findIndex((l) => l.startsWith('A plugin can send data out when'));
+  assert.ok(at >= 0, 'the "can send data out" paragraph');
+  const intro = lines.slice(at, lines.indexOf('', at)).join(' ');
+  assert.doesNotMatch(intro, /optional/i, 'the shared intro names no optional-item rule');
+  const chat = bulletOf('permissions', 'gets no `chat`');
+  const names = bulletOf('permissions', 'sees no character name');
+  assert.match(chat, /Optional items count here whether the user switches them on or off/);
+  assert.match(names, /Here only what the user granted counts: an optional item the user switched off is no way out/);
+  // The host: a plugin whose only way out is an optional origin, installed with that origin switched off and with it switched on.
+  const m = parseManifest({ ...MANIFEST, permissions: { windows: true, logs: ['chatlogs'], optional: { network: ['https://api.example.com'] } } });
+  const client = { id: 1, kind: 'client', character: 'Example Pilot', x: 0, y: 0, w: 800, h: 600, minimized: false };
+  const other = { id: 2, kind: 'other', extra: 'example-program', x: 0, y: 0, w: 800, h: 600, minimized: false };
+  const root = mkdtempSync(join(tmp, 'grants-'));
+  for (const declined of [true, false]) {
+    const store = new GrantStore(join(root, `${declined}.json`));
+    store.load();
+    let asked;
+    const prompter = { ask: async (q) => { asked = q; return { decision: 'allow', ...(declined ? { declined: { network: ['https://api.example.com'] } } : {}) }; } };
+    const g = await ensureGrant(store, prompter, m, {}, undefined, { recordDeny: false, fresh: true });
+    const at2 = declined ? 'origin switched off' : 'origin switched on';
+    // Chat logs: dropped from the request whatever the switch says, so the prompt never asks and the grant never holds them.
+    assert.ok(!asked.delta.logs.includes('chatlogs'), `${at2}: the prompt does not ask for chatlogs`);
+    assert.ok(!g.logs.includes('chatlogs') && !store.get(m.id).granted.logs.includes('chatlogs'), `${at2}: no chatlogs granted`);
+    // Window names and classes: read from the stored grant, which never holds a declined item.
+    assert.equal(store.get(m.id).granted.network.length, declined ? 0 : 1, `${at2}: the stored grant`);
+    const ctx = { granted: g, hostKey: Buffer.alloc(32), pluginId: m.id, providesServices: false, active: 1, toDip: (r) => r, vault: new Map() };
+    assert.equal(toWindowInfo(client, ctx).character, declined ? client.character : undefined, `${at2}: WindowInfo.character`);
+    assert.equal(toWindowInfo(other, ctx).windowClass, declined ? other.extra : undefined, `${at2}: windowClass`);
+  }
 });
 
 test('archive rules: the limits table is ZIP_LIMITS, the name segment rule and MAX_ARCHIVE_BYTES', () => {

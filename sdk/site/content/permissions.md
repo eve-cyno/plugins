@@ -54,10 +54,13 @@ that is not built in asks the user for it as for a permission, and the user can 
 ## Plugins that can send data out
 
 A plugin can send data out when it has a `network` origin, calls a service, provides one (`contributes.services`), or has `ai` or
-`account`. Optional items count, switched on or off. Such a plugin:
+`account`. Such a plugin:
 
-- gets no `chat`, even when it asks for `chatlogs`. The app drops `chatlogs` from its request, so the prompt does not ask for it;
+- gets no `chat`, even when it asks for `chatlogs`. The app drops `chatlogs` from its request, so the prompt does not ask for it.
+  Optional items count here whether the user switches them on or off: one optional `network` origin is enough.
 - sees no character name on an EVE window (`WindowInfo.character`) and no class on another program's window (`windowClass`).
+  Here only what the user granted counts: an optional item the user switched off is no way out, so a plugin with no other way out
+  sees the names and classes.
 
 A plugin with none of these keeps the chat logs and the names on this computer, which is why it may have them.
 
