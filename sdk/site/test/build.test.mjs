@@ -214,7 +214,9 @@ test('hand-written pages read site/content/<slug>.md when it exists', () => {
   const withContent = html(join(tmp, 'content-out'), 'local-testing');
   assert.match(withContent, /The folder reloads on every build\./);
   assert.doesNotMatch(withContent, /This page is a stub/);
-  assert.match(html(join(tmp, 'off'), 'local-testing'), /This page is a stub/);
+  const empty = join(tmp, 'no-content');
+  mkdirSync(empty);
+  assert.match(html(build({ out: join(tmp, 'no-content-out'), contentDir: empty }).out, 'local-testing'), /This page is a stub/);
   assert.equal(r.pages.length, PLAN_PAGES.length);
 });
 
