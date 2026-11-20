@@ -14,12 +14,9 @@ export const EXTERNAL_ALLOWLIST = new Set([
   'https://creativecommons.org/licenses/by-sa/4.0/', // licence of that attribution
   'https://eve-cyno.dev', // the project site
   'https://data.eve-cyno.dev/docs', // the data API docs
-  'https://fonts.googleapis.com', // the design's font preconnect
-  'https://fonts.gstatic.com', // the design's font preconnect
 ]);
 const EXTERNAL_PREFIX_ALLOWLIST = [
   'https://github.com/eve-cyno/plugins/', // files of the plugin repository
-  'https://fonts.googleapis.com/css2?', // the design's font stylesheet
 ];
 
 let tmp;

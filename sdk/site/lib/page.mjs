@@ -165,8 +165,7 @@ ${page.body}
 <meta name="description" content="${esc(page.description ?? page.lede ?? SITE_NAME)}">
 <link rel="icon" href="${asset('favicon.svg')}" type="image/svg+xml">
 <link rel="icon" type="image/svg+xml" sizes="16x16" href="${asset('favicon-small.svg')}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="${asset('fonts.css')}">
 <link rel="stylesheet" href="${asset('site-base.css')}">
 <link rel="stylesheet" href="${asset('data-docs.css')}">
 <link rel="stylesheet" href="${asset('plugin-docs.css')}">

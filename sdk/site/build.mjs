@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { render as renderScaffold } from '../create-plugin/lib/generate.mjs';
 import { parseDts } from './lib/dts.mjs';
+import { copyFonts, fontsCss } from './lib/fonts.mjs';
 import { loadDesign, makeSite, REPO } from './lib/page.mjs';
 import { ANSWERS, buildNav, buildPages, buildSearchIndex } from './lib/pages.mjs';
 import { frozenParts, mapSections, readReadme } from './lib/readme.mjs';
@@ -21,12 +22,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const SDK_ROOT = resolve(HERE, '..');
 export const REPO_ROOT = resolve(SDK_ROOT, '..');
 export const DESIGN_DIR = join(HERE, 'design');
+export const FONTS_DIR = join(HERE, 'assets', 'fonts');
 export const DESIGN_SNAPSHOT = join(DESIGN_DIR, 'plugin-docs-2026-11-20.html');
 const ASSETS = ['site-base.css', 'data-docs.css', 'plugin-docs.css', 'data-site.js', 'favicon.svg', 'favicon-small.svg'];
 const CALL_LIMIT = '100 calls, refilled at 100 a second';
 
 export const HEADERS = `/*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 `;
@@ -103,6 +105,8 @@ export function build({ out, base = '/plugins/', indexLive = flagOn(process.env.
   }
   mkdirSync(join(root, 'assets'), { recursive: true });
   for (const name of ASSETS) copyFileSync(join(DESIGN_DIR, name), join(root, 'assets', name));
+  writeFileSync(join(root, 'assets', 'fonts.css'), fontsCss());
+  copyFonts(FONTS_DIR, join(root, 'assets'));
   writeFileSync(join(out, '_headers'), HEADERS);
   return { out, base, indexLive, apiVersion: ctx.apiVersion, pages: written };
 }

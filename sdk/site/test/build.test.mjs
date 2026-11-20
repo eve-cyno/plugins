@@ -92,12 +92,12 @@ test('no script on a page except the search index (JSON) and the design script',
   }
 });
 
-test('styles: site-base, data-docs, then plugin-docs last; design files copied byte for byte', () => {
+test('styles: fonts, site-base, data-docs, then plugin-docs last; design files copied byte for byte', () => {
   const page = html(join(tmp, 'off'), 'start');
   const sheets = [...page.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
-  assert.deepEqual(sheets, ['/plugins/assets/site-base.css', '/plugins/assets/data-docs.css', '/plugins/assets/plugin-docs.css']);
+  assert.deepEqual(sheets, ['/plugins/assets/fonts.css', '/plugins/assets/site-base.css', '/plugins/assets/data-docs.css', '/plugins/assets/plugin-docs.css']);
   assert.ok(page.indexOf('plugin-docs.css') > page.indexOf('data-docs.css'));
-  for (const name of readdirSync(join(tmp, 'off', 'plugins', 'assets'))) {
+  for (const name of readdirSync(join(tmp, 'off', 'plugins', 'assets')).filter((n) => n !== 'fonts' && n !== 'fonts.css')) {
     assert.equal(sha(readFileSync(join(tmp, 'off', 'plugins', 'assets', name))), sha(readFileSync(join(DESIGN_DIR, name))), name);
   }
   assert.match(readFileSync(join(tmp, 'off', '_headers'), 'utf8'), /Content-Security-Policy: default-src 'self'; script-src 'self'/);

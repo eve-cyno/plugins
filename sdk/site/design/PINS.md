@@ -27,4 +27,5 @@ Notes:
 - `brand/wordmark-motion.css` is not loaded by the plugin docs (the static `.pd-mark` is used), so it is not pinned here.
 - The light theme (`prefers-color-scheme: light`, `[data-theme="light"]`) is part of `plugin-docs.css` as the design agent
   wrote it. The owner has not reviewed it yet.
-- The page loads the web fonts Space Grotesk and JetBrains Mono from Google Fonts, as the design does.
+- The design snapshot still has the Google Fonts link in its head. The build never copies that head (`site/lib/page.mjs` writes its own), and
+  the fonts are self-hosted from `site/assets/fonts/` (pinned in `FONTS.md` there); the next design port removes the link.

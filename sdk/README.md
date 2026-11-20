@@ -13,7 +13,8 @@ generated project builds with. That puts it in the npm cache, which the scaffold
 - `tools/vendor-api.mjs`: copies and checks that vendored copy.
 - `create-plugin/`: the scaffold package `@eve-cyno/create-plugin` and its template (see `create-plugin/README.md`).
 - `site/`: the docs site generator (`site/build.mjs`, `site/lib/`), the hand-written page text (`site/content/<slug>.md`), the
-  pinned design snapshot and its assets (`site/design/`, pinned in `site/design/PINS.md`) and the site's tests.
+  pinned design snapshot and its assets (`site/design/`, pinned in `site/design/PINS.md`), the self-hosted fonts (`site/assets/fonts/`, OFL
+  1.1, pinned with their licences in `FONTS.md` there) and the site's tests.
 - `test/`: the tests of the vendoring tool and of this package.
 
 ## Docs site
