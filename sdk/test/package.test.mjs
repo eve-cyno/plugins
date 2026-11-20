@@ -41,6 +41,18 @@ test('the SDK pins the template\'s TypeScript as a dev dependency, with a lockfi
   assert.ok(!pkg.dependencies, 'the SDK has no runtime dependency');
 });
 
+test('the SDK README gives the site build, the scaffold command, the tests and the Node minimum as the code has them', () => {
+  const readme = readFileSync(join(SDK, 'README.md'), 'utf8');
+  const usage = /^\/\/ {3}(node site\/build\.mjs .*)$/m.exec(readFileSync(join(SDK, 'site', 'build.mjs'), 'utf8'))?.[1];
+  assert.ok(usage && readme.includes(usage), `the site build line: ${usage}`);
+  assert.ok(readme.includes('npm run build:site') && pkg.scripts['build:site'] === 'node site/build.mjs');
+  const scaffold = /^(node sdk\/create-plugin\/bin\/create-plugin\.mjs .*)$/m.exec(readFileSync(join(SDK, 'create-plugin', 'README.md'), 'utf8'))?.[1];
+  assert.ok(scaffold && readme.includes(scaffold), `the scaffold line: ${scaffold}`);
+  assert.match(readme, /^ {4}npm test\b/m);
+  assert.ok(readme.includes(`Node ${pkg.engines.node.replace('>=', '')} or newer`));
+  assert.doesNotMatch(readme, /later commits|will hold|node --test sdk\/test/);
+});
+
 test('the SDK needs the Node of the scaffold package (zlib.crc32 of the template zip script)', () => {
   const scaffold = JSON.parse(readFileSync(join(SDK, 'create-plugin', 'package.json'), 'utf8'));
   assert.equal(pkg.engines?.node, scaffold.engines.node);
