@@ -222,7 +222,7 @@ describe('approved-base: direction and failures', () => {
     const r = await call({ under: UNDER, others: [{ run: run(251, 'publish.yml', sha('c'), '2026-12-05T10:00:00Z'), approvals: [approval(REVIEWER, ['mirror'])], jobs: jobs(251, [['sign-test', 'success'], ['upload', 'success']]) }] });
     assert.equal(r.code, 3, r.text);
     assert.match(r.text, /^FIRST PUBLISH: /m);
-    assert.match(r.text, /only while your own list has no entry with a successful sign/);
+    assert.match(r.text, /only while the Discord head log has no entry with a successful sign/);
   });
   test('AB-first-publish-signed: a run with an approved index and a successful sign but no successful upload means no first publish', async () => {
     // Its signed head may have gone live (it is a recovery R2 candidate), so a missing live head after it is a deleted head.
@@ -263,7 +263,7 @@ describe('approved-base: direction and failures', () => {
       const r = await call({ under: UNDER, others: [rerun(2, approvals, signed), ...others] });
       assert.equal(r.code, 1, r.text);
       assert.match(r.text, /^ERROR: run 254 \(publish\.yml, created [^)]*\) lists no approval of index by the environment's reviewer, yet job sign of attempt 1 concluded success/m);
-      assert.match(r.text, /read every attempt on the run page and against your own list \(docs\/RUNBOOK\.md, a re-run\)/);
+      assert.match(r.text, /read every attempt on the run page and against the Discord head log \(docs\/RUNBOOK\.md, a re-run\)/);
       assert.doesNotMatch(r.text, /^(A |FIRST PUBLISH)/m, 'neither an older <A> nor a first publish past it');
     }
     const unknown = await call({ under: UNDER, others: [rerun(undefined, [], []), GOOD] });
@@ -298,7 +298,7 @@ describe('approved-base: direction and failures', () => {
       const r = await call({ under: UNDER, others: [x, GOOD] });
       assert.equal(r.code, 1, r.text);
       assert.match(r.text, new RegExp(`^ERROR: run 254 \\(publish\\.yml, created [^)]*\\)[: ].*${re.source}`, 'm'));
-      assert.match(r.text, /read every attempt on the run page and against your own list \(docs\/RUNBOOK\.md, a re-run\)/);
+      assert.match(r.text, /read every attempt on the run page and against the Discord head log \(docs\/RUNBOOK\.md, a re-run\)/);
       assert.doesNotMatch(r.text, /^A /m, 'no older run becomes <A> past it');
     }
   });

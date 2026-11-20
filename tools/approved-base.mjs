@@ -85,7 +85,7 @@ export function notOwnRun(run) {
   return notOwnEvent(run) || notOwnRepo(run);
 }
 
-const BY_HAND = 'read every attempt on the run page and against your own list (docs/RUNBOOK.md, a re-run)';
+const BY_HAND = 'read every attempt on the run page and against the Discord head log (docs/RUNBOOK.md, a re-run)';
 
 /**
  * A run's review state: { why } when it has no approval of environment index by the user `id` (the environment's reviewer), else
@@ -185,7 +185,7 @@ export async function approvedBase({ runId, env }) {
       const A = run.head_sha;
       lines.push(`A ${A} from ${label(run)}: ${oneLine(run.html_url ?? '')}`);
       lines.push('Confirm on that run page that the index approval shown is your own, and that A is the newest entry');
-      lines.push('of your own list with a successful sign and upload.');
+      lines.push('of the Discord head log with a successful sign and upload.');
       const cmp = await getJson(`${R}/compare/${A}...${B}`, opts);
       if (cmp.error) throw cmp;
       const status = isObj(cmp.value) ? cmp.value.status : undefined;
@@ -203,7 +203,7 @@ export async function approvedBase({ runId, env }) {
         + 'publish and for a repair; any other run under review: no approval.');
     }
     return done(3, "FIRST PUBLISH: no other run of publish.yml or resign.yml has an approval of index by the environment's reviewer and "
-      + 'a successful sign job. Treat <B> as a first publish only while your own list has no entry with a successful sign; '
+      + 'a successful sign job. Treat <B> as a first publish only while the Discord head log has no entry with a successful sign; '
       + 'otherwise this is NO APPROVAL (runs or approvals may have been deleted).');
   } catch (e) {
     return done(1, `ERROR: ${oneLine(e && e.error ? e.error : e)}`);
