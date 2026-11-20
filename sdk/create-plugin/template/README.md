@@ -9,9 +9,10 @@ The plugin asks for no permission, so the app shows no consent question for it a
 
 ## Licence
 
-The files this project started from are MIT-0 (`LICENSE`, "MIT No Attribution"): you owe no notice. Your plugin may use any licence. Before
-you publish it, replace `LICENSE` with the licence you pick and add a `license` field to `package.json`. The
-files in `types/eve-cyno-plugin-api/` are the API's own declarations, under the MIT licence in that folder.
+The files this project started from are under MIT-0 ("MIT No Attribution", SPDX id `MIT-0`): you may use, copy, change and share
+them for any purpose, you owe no notice, and they come with no warranty. Your plugin may use any licence. Before you publish it,
+add a `LICENSE` file with the licence you pick and a `license` field to `package.json`. The files in `types/eve-cyno-plugin-api/`
+are the API's own declarations, under the MIT licence in that folder.
 
 ## What is here
 

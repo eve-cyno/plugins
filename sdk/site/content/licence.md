@@ -11,7 +11,7 @@ The plugin repository is MIT as a whole, except the files under `vendor/eve-cyno
 
 ## Your plugin
 
-The scaffold writes a `LICENSE` file with the MIT-0 text ("MIT No Attribution") into your project and no `license` field in `package.json`. The README it writes asks you to replace that file with the licence you pick before you publish. Your plugin may use any licence. The one folder with a licence of its own is `types/eve-cyno-plugin-api/`, the API's declarations: it carries its MIT `LICENSE`, which you keep when you ship it.
+The scaffold writes no `LICENSE` file at the root of your project and no `license` field in `package.json`. The README it writes says that the files the project started from are MIT-0 ("MIT No Attribution") and asks you to add a `LICENSE` file with the licence you pick, and a `license` field, before you publish. Your plugin may use any licence. The one folder with a licence of its own is `types/eve-cyno-plugin-api/`, the API's declarations: it carries its MIT `LICENSE`, which you keep when you ship it.
 
 Text on the API pages is taken from the plugin API README, which is under the same MIT licence.
 

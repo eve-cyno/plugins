@@ -32,7 +32,7 @@ The [page](#file-static-main-html) holds a heading, the description, a button an
 
 ## package.json and tsconfig.json
 
-The [package file](#file-package-json) is private, has no `license` field (the project's `LICENSE` file holds the MIT-0 text) and one dev dependency, TypeScript. Its scripts are the ones in [Getting started](@@start): `build`, `test`, `pack`, `entry` and `check`. Replace `LICENSE` with the licence you pick before you share the plugin. The [TypeScript config](#file-tsconfig-json) compiles `src/` into `build/` for the browser, in strict mode, with no ambient types.
+The [package file](#file-package-json) is private, has no `license` field and one dev dependency, TypeScript. Its scripts are the ones in [Getting started](@@start): `build`, `test`, `pack`, `entry` and `check`. The project has no `LICENSE` file: the files it started from are MIT-0, and its README asks you to add the licence you pick, as a `LICENSE` file and a `license` field, before you share the plugin. The [TypeScript config](#file-tsconfig-json) compiles `src/` into `build/` for the browser, in strict mode, with no ambient types.
 
 ## test/manifest.test.mjs
 

@@ -32,11 +32,8 @@ function walk(dir, base = dir, out = new Map()) {
 
 test('render: the file map for fixed answers', () => {
   const files = render(ANSWERS);
-  assert.match(files.get('LICENSE'), /^MIT No Attribution\n/);
-  assert.doesNotMatch(files.get('LICENSE'), /\bprovided that\b|notice shall be included/i);
   assert.deepEqual([...files.keys()], [
     '.gitignore',
-    'LICENSE',
     'README.md',
     'entry/com.example.hello-ledger.json',
     'package.json',
@@ -54,6 +51,19 @@ test('render: the file map for fixed answers', () => {
     'types/eve-cyno-plugin-api/LICENSE',
     'types/eve-cyno-plugin-api/index.d.ts',
   ]);
+});
+
+test('render: no licence file and no copyright holder; the README states MIT-0 and asks the author to add a licence', () => {
+  const files = render(ANSWERS);
+  assert.ok(!files.has('LICENSE'), 'no LICENSE: a licence names its copyright holder, and the project is the author\'s');
+  for (const [path, content] of files) {
+    if (path.startsWith('types/')) continue; // the API's declarations keep their own MIT licence and notice
+    assert.doesNotMatch(String(content), /Copyright|Bythlak/i, path);
+  }
+  const readme = files.get('README.md');
+  assert.match(readme, /The files this project started from are under MIT-0 \("MIT No Attribution"/);
+  assert.match(readme, /you owe no notice/);
+  assert.match(readme, /add a `LICENSE` file with the licence you pick and a `license` field to `package\.json`/);
 });
 
 test('render: plugin.json carries the answers, the API minor and no permission', () => {
