@@ -603,7 +603,7 @@ alone does not remove the archive; a takedown alone does not disable installed c
 1. The revocation (or unlisting) pull request is merged and published FIRST (`publish.yml`, `target: production`, PUBLISHED), and the live
    catalog no longer names the archive's SHA-256 in any version (versions with the same bytes share one archive).
 2. Then the object `v1/archives/<sha256>.zip` is deleted from the bucket. No `publish.yml` run of a catalog that still names the archive
-   runs in between: a publish re-takes every archive its catalog names (the mirror, else the archive cache, else the author's URL,
+   runs in between: a publish re-takes every archive its catalog names (the archive cache, else the mirror, else the author's URL,
    `obtainArchive` in `tools/lib/indexbuild.mjs`) and its create-only upload (`If-None-Match: *`) succeeds on a deleted key, so the
    archive comes back. Until such a catalog is replaced, `index-verify.mjs --live --archives` is red.
 
