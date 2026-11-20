@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { build, DESIGN_DIR, DESIGN_SNAPSHOT, readChecks, REPO_ROOT } from '../build.mjs';
 import { namespacesOf, parseDts } from '../lib/dts.mjs';
-import { frozenParts, mapSections, parseReadme, readReadme } from '../lib/readme.mjs';
+import { DROPPED_TEXT, EXCLUDED_SECTIONS, frozenParts, mapSections, parseReadme, readReadme, REWRITES, SECTION_PAGES, SPLIT_SECTIONS } from '../lib/readme.mjs';
 import { schemaCounts } from '../lib/schema.mjs';
 
 const API = new URL('../../vendor/plugin-api/', import.meta.url);
@@ -282,6 +282,53 @@ test('API pages built from the README name no desktop-internal path, command or 
     const text = textOf(main(join(tmp, 'off'), slug));
     for (const re of internal) assert.doesNotMatch(text, re, `${slug}: ${re}`);
   }
+});
+
+test('README prose: every paragraph, list item and code block of a mapped section is on its page, minus DROPPED_TEXT and REWRITES', () => {
+  // An independent read of the README: `##` and `###` headings outside fences; a `###` section goes where its `##` parent goes unless
+  // the map names it. The split and excluded sections are left out (api/versions and the drift test cover them).
+  const keyOf = (h) => h.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const sections = [];
+  let cur = null;
+  let top = null;
+  let fence = false;
+  for (const line of readFileSync(new URL('README.md', API), 'utf8').replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^(```|~~~)/.test(line)) fence = !fence;
+    const h = !fence && /^(#{2,3})\s+(.*?)\s*$/.exec(line);
+    if (h) {
+      if (h[1] === '##') top = keyOf(h[2]);
+      cur = { key: keyOf(h[2]), top, lines: [] };
+      sections.push(cur);
+    } else if (cur) cur.lines.push(line);
+  }
+  const norm = (s) => s.replace(/[`<>]|\*\*/g, '').replace(/\s+/g, ' ').trim();
+  let units = 0;
+  for (const s of sections) {
+    if (s.top in SPLIT_SECTIONS || s.top in EXCLUDED_SECTIONS) continue;
+    const slug = SECTION_PAGES[s.key] ?? SECTION_PAGES[s.top];
+    assert.ok(slug, `README section "${s.key}" has a page`);
+    let body = s.lines.join('\n');
+    for (const d of DROPPED_TEXT) if (d.section === s.top) body = body.replace(d.pattern, '');
+    for (const w of REWRITES) if (w.section === s.top) body = body.replace(w.pattern, w.replacement);
+    // Units: a paragraph, one list item with its continuation lines, or one fenced code block.
+    const prose = [];
+    const code = [];
+    let para = null;
+    let block = null;
+    for (const line of body.split('\n')) {
+      if (block) { if (/^(```|~~~)/.test(line)) { code.push(block.join('\n')); block = null; } else block.push(line); continue; }
+      if (/^(```|~~~)/.test(line)) { para = null; block = []; continue; }
+      if (!line.trim()) { para = null; continue; }
+      const item = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
+      if (item || para === null) { para = [item ? item[1] : line]; prose.push(para); } else para.push(line);
+    }
+    const page = main(join(tmp, 'off'), slug);
+    const text = textOf(page).replace(/[<>]/g, '').replace(/\s+/g, ' ');
+    const blocks = [...page.matchAll(/<pre><code>([\s\S]*?)<\/code><\/pre>/g)].map((m) => unescapeCode(m[1]));
+    for (const p of prose) { const t = norm(p.join(' ')); assert.ok(text.includes(t), `${slug} (${s.key}): ${t.slice(0, 80)}`); units++; }
+    for (const c of code) { assert.ok(blocks.some((b) => b.includes(c)), `${slug} (${s.key}) code: ${c.slice(0, 60)}`); units++; }
+  }
+  assert.ok(units >= 150, `${units} README units checked`);
 });
 
 test('overview: says what a plugin is, names the sandbox, and with the flag off says the Marketplace is not open', () => {
