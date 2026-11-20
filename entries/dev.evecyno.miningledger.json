@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "dev.evecyno.miningledger",
+  "type": "plugin",
+  "name": "Mining Ledger",
+  "author": "EVE-Cyno",
+  "firstParty": true,
+  "summary": "Mining ore, volume and ISK per session and per hour, for every character you play.",
+  "description": "Mining Ledger reads your game logs and adds up what each of your characters mines: ore by type, units, volume in m3, ISK, critical hits, and the residue lost from the rock. Two ISK per hour counters show how well the session went: one over the time you were actually mining, one over the whole session clock. It needs no setting in the game.\n\nPermissions and why:\n- gameEvents (mining only): reads what your game logs say about mining (yields, residue, and the lines that say a miner stopped) for the characters you play on this computer. It never sees chat or the raw log files.\n- characters (all): the names of your characters, so a row can say who mined.\n- network (https://data.eve-cyno.dev): the price lookup. It asks for the prices of the ore types it has seen (type ids and the Jita hub), never a character name, a log line or a number you mined. If you set a data key in the app, the app adds it to the request.\n- files: Export saves the session to a CSV file you pick. The plugin hands the CSV text to a save dialog and never learns the path or file name.\n- storage (1 MB): your settings, the names you gave, the last good prices and the point where you pressed Clear session.\n\nISK figures are units times one price per ore type, either the ESI average or the Jita best sell. They are rough figures, not what you would get selling the ore. The ledger understands the English game client only.",
+  "categories": [
+    "industry"
+  ],
+  "source": null,
+  "versions": [
+    {
+      "version": "0.2.0",
+      "released": "2026-11-20",
+      "changes": "First Marketplace release; before this the plugin shipped with the app.",
+      "engines": "^1.4",
+      "permissions": {
+        "gameEvents": [
+          "mining"
+        ],
+        "files": true,
+        "storage": {
+          "quotaMB": 1
+        },
+        "network": [
+          "https://data.eve-cyno.dev"
+        ],
+        "characters": "all"
+      },
+      "url": "https://downloads.eve-cyno.dev/plugins/dev.evecyno.miningledger/0.2.0/dev.evecyno.miningledger-0.2.0.zip",
+      "sha256": "91c5b1a22914ec89b26288559843419d016721d0294c89623d15d369e1ea5793",
+      "size": 107094
+    }
+  ]
+}
