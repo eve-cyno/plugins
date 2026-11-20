@@ -82,12 +82,14 @@ Names only. No value is ever written here or typed into a web page.
 None of them is a repository or organization secret. The static rule C-WF5 fails if a `MINISIGN_` name appears outside a job with
 `environment: index`, or an `R2_` name outside a job with `environment: mirror`.
 
-All six were set on 2026-11-18. To set them, or set them again, the coordinator runs these from a checkout of the infra
+The two `mirror` secrets and the two variables were set on 2026-11-18; the two `index` secrets were replaced on 2026-11-20
+(10:23Z, new index key id `38CDA934D4E16F2B`, standby `7DE598B6FEDF1D45`; the keys of 2026-11-18 are retired). To set them, or set
+them again, the coordinator runs these from a checkout of the infra
 repository (`eve-cyno-infra`); the owner only types into the password dialogs of step 2, and nobody pastes a value anywhere:
 
 1. **`index`:** `scripts/desktop-signing-rotate.sh secrets index index --env index --repo eve-cyno/plugins`. It takes the index
-   primary from the encrypted backup, proves it against its `.pub` and the key the app pins (key id `F5F7F2E299DF08D4` on
-   2026-11-18), and pipes
+   primary from the encrypted backup, proves it against its `.pub` and the key the app pins (key id `38CDA934D4E16F2B` since
+   2026-11-20; `F5F7F2E299DF08D4` was the id from 2026-11-18 until that rotation), and pipes
    the key and its passphrase to `gh secret set` on stdin.
 2. **`mirror` secrets:** `scripts/secret-dialog.sh --gh eve-cyno/plugins --env mirror 'R2_ACCESS_KEY_ID:^[0-9a-f]{32}$'
    'R2_SECRET_ACCESS_KEY:^[0-9a-f]{64}$'`. It opens one password dialog per name, the owner types the value of the R2 token made
@@ -96,8 +98,8 @@ repository (`eve-cyno-infra`); the owner only types into the password dialogs of
 3. **`mirror` variables:** `R2_ACCOUNT_ID` and `R2_BUCKET` are plain values, not secrets, set with `gh variable set --env mirror
    --repo eve-cyno/plugins`.
 
-After the first head signed here verifies, the two `MINISIGN_INDEX_*` secrets of `eve-cyno/desktop` are deleted with `gh secret
-delete`; its `sign.yml` purpose `index` then fails with "a secret of this key is not set" and stays as the emergency path.
+The two `MINISIGN_INDEX_*` secrets of `eve-cyno/desktop` (the retired primary) were deleted on 2026-11-20 with `gh secret
+delete`; its `sign.yml` purpose `index` now fails with "a secret of this key is not set" and stays as the emergency path.
 
 ## The environments
 
@@ -246,7 +248,7 @@ starts no such run, the first push included: `check.yml` runs on pull requests o
    that is why the request rejects), and no run is approved until the owner has replaced the token.
 4. The owner then approves or rejects the waiting run from his phone, after the steps below as for any test run.
 
-Result: 2026-11-19, on `target: test` run 44491400412 (commit `6925bbf`) waiting at `mirror`: `HTTP/2.0 403 Forbidden`, `Resource not accessible by personal access token`; the run kept waiting. The request was sent from the agents' token in the coordinator's shell (typed by the owner there, since the coordinator's own call was held back by its permission check). The owner then approved `mirror` from his phone (09:51Z) and the run ended `success` (`build`, `sign-test`, `upload`; `sign` and `verify` skipped, as for every test run). Since then the `verify` job runs after every successful `upload`, a test run's included. A run cancelled after its upload skips `verify`: the coordinator then re-checks the live index locally with `node ../eve-cyno-plugins-trusted/tools/publish/verify-live.mjs --target <target> --in <new folder>` (paced to 50 requests per 10 s (the zone blocks above 100); for `--target test` the folder must hold the run's `test.pub`, from its test-key artifact) before the next run.
+Result: 2026-11-19, on `target: test` run 44491400412 (commit `6925bbf`) waiting at `mirror`: `HTTP/2.0 403 Forbidden`, `Resource not accessible by personal access token`; the run kept waiting. The request was sent from the agents' token in the coordinator's shell (typed by the owner there, since the coordinator's own call was held back by its permission check). The owner then approved `mirror` from his phone (09:51Z) and the run ended `success` (`build`, `sign-test`, `upload`; `sign` and `verify` skipped, as for every test run). Attempt 1 of that run ended `success`; attempt 2 was a re-run, refused by the build step "Refuse a re-run" (so `gh run list` shows the run as `failure`). Since then the `verify` job runs after every successful `upload`, a test run's included. A run cancelled after its upload skips `verify`: the coordinator then re-checks the live index locally with `node ../eve-cyno-plugins-trusted/tools/publish/verify-live.mjs --target <target> --in <new folder>` (paced to 50 requests per 10 s (the zone blocks above 100); for `--target test` the folder must hold the run's `test.pub`, from its test-key artifact) before the next run.
 
 ## Before every index and mirror approval
 

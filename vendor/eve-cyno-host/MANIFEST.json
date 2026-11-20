@@ -2,7 +2,7 @@
   "schema": 1,
   "generator": "tools/vendor-host.mjs",
   "desktop": {
-    "commit": "ceea208dd7e578f65aa061b4be332a1cab882799"
+    "commit": "a449bffc74344bc36518b1d6d7488dd7cbbd20df"
   },
   "build": "npm --prefix host run build (product: no test key)",
   "hostApi": "1.29.0",
@@ -166,8 +166,8 @@
       "origin": "build"
     },
     "host/dist/trustkeys.js": {
-      "sha256": "27f175518b3ae1e0174955fad0ec9be947cb6246e4362a48c201a72b03387f86",
-      "size": 1867,
+      "sha256": "d0011063b7fa6fa8c73226f9ad6af5daeedd0b32d2d0ffdb71b5dfc632e95d0d",
+      "size": 1917,
       "origin": "build"
     },
     "host/dist/updater/manifest.js": {
@@ -186,12 +186,12 @@
       "origin": "generated"
     },
     "host/src/keys/index-standby.pub": {
-      "sha256": "cf27ff253cb967ff8756a1b7be96d13690fec11f44f78a48549c7db02920a14f",
+      "sha256": "fadc650c37faf50781447b32b94971e81d5a15b1a76ef6f96b89c6399bbcc08b",
       "size": 113,
       "origin": "tree"
     },
     "host/src/keys/index.pub": {
-      "sha256": "b3ab4b3794ee10473524fee4e9eccd54b40ee141ace45773f959beb1b1ae3141",
+      "sha256": "fba773dc3ae6c6674ec305ee95bd4ff6367b747a53cf516ad3be76df42e2d028",
       "size": 113,
       "origin": "tree"
     },
