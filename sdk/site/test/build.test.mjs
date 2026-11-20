@@ -461,3 +461,16 @@ test('content conditionals: live and not-live blocks follow the flag', () => {
   writeFileSync(join(dir, 'index.md'), '<!-- live -->\nunclosed\n');
   assert.throws(() => build({ out: join(tmp, 'cond-bad'), contentDir: dir }), /unclosed|index\.md/);
 });
+
+test('no member table has an all-empty "What it does" column, and a documented one keeps it', () => {
+  const withCol = [];
+  for (const slug of NAMESPACES.map((n) => `api/${n}`)) {
+    for (const [, table] of html(off.out ?? join(tmp, 'off'), slug).matchAll(/<table>([\s\S]*?)<\/table>/g)) {
+      if (!table.includes('<th>What it does</th>')) continue;
+      const cells = [...table.matchAll(/<tr><td>.*?<\/td><td>.*?<\/td><td>(.*?)<\/td><\/tr>/g)].map((m) => m[1].trim());
+      assert.ok(cells.length > 0 && cells.some((c) => c !== ''), `${slug}: every "What it does" cell is empty`);
+      withCol.push(slug);
+    }
+  }
+  assert.ok(withCol.length > 0, 'no namespace page keeps the "What it does" column');
+});

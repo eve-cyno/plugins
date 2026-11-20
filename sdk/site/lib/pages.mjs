@@ -254,12 +254,14 @@ ${pre('main', files.get('src/main.ts'), true)}
     const members = t ? interfaceMembers(t) : [];
     if (members.length) {
       body.h2('Members', `${n.name}-members`);
+      const documented = members.some((m) => firstSentence(m.doc));
       const rows = members.map((m) => {
         const flat = m.signature.replace(/\s+/g, ' ');
         const ret = /\)\s*:\s*(.+)$/.exec(flat)?.[1] ?? /^[\w$]+\??\s*:\s*(.+)$/.exec(flat)?.[1] ?? '';
-        return `<tr><td><span class="p-name">${esc(m.name)}</span></td><td><span class="p-type">${esc(ret)}</span></td><td>${renderInline(firstSentence(m.doc), mdOpts)}</td></tr>`;
+        const what = firstSentence(m.doc);
+        return `<tr><td><span class="p-name">${esc(m.name)}</span></td><td><span class="p-type">${esc(ret)}</span></td>${documented ? `<td>${renderInline(what, mdOpts)}</td>` : ''}</tr>`;
       });
-      body.raw(`<div class="tbl params"><table>\n<thead><tr><th>Member</th><th>Type</th><th>What it does</th></tr></thead>\n<tbody>\n${rows.join('\n')}\n</tbody>\n</table></div>`);
+      body.raw(`<div class="tbl params"><table>\n<thead><tr><th>Member</th><th>Type</th>${documented ? '<th>What it does</th>' : ''}</tr></thead>\n<tbody>\n${rows.join('\n')}\n</tbody>\n</table></div>`);
     }
     readmeBlocks(body, `api/${n.name}`);
     const sentence = short(firstSentence(t?.doc ?? ''));
