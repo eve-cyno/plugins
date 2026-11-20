@@ -1,0 +1,263 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, test } from 'node:test';
+import { build, DESIGN_DIR, DESIGN_SNAPSHOT, readChecks, REPO_ROOT } from '../build.mjs';
+import { namespacesOf, parseDts } from '../lib/dts.mjs';
+import { frozenParts, mapSections, parseReadme, readReadme } from '../lib/readme.mjs';
+import { schemaCounts } from '../lib/schema.mjs';
+
+const API = new URL('../../vendor/plugin-api/', import.meta.url);
+const API_VERSION = JSON.parse(readFileSync(new URL('PIN.json', API), 'utf8')).version;
+const DECLS = parseDts(readFileSync(new URL(`${API_VERSION}.d.ts`, API), 'utf8'));
+const NAMESPACES = namespacesOf(DECLS).filter((n) => !n.reserved).map((n) => n.name);
+
+/** Every page of plan section 3 (P1 to P16), as slugs under /plugins/. */
+const PLAN_PAGES = [
+  'index', 'start', 'tutorial', 'local-testing', 'api', ...NAMESPACES.map((n) => `api/${n}`), 'api/types', 'api/versions',
+  'manifest', 'permissions', 'packaging', 'submitting', 'checks', 'policy', 'signing', 'licence',
+];
+
+const tmp = mkdtempSync(join(tmpdir(), 'plugin-docs-site-'));
+const pageFile = (out, slug) => join(out, 'plugins', slug === 'index' ? '' : slug, 'index.html');
+const html = (out, slug) => readFileSync(pageFile(out, slug), 'utf8');
+let off;
+let live;
+
+before(() => {
+  off = build({ out: join(tmp, 'off'), indexLive: false });
+  live = build({ out: join(tmp, 'live'), indexLive: true });
+});
+after(() => rmSync(tmp, { recursive: true, force: true }));
+
+const sha = (buf) => createHash('sha256').update(buf).digest('hex');
+const classesOf = (text) => new Set([...text.matchAll(/\bclass="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/).filter(Boolean)));
+
+test('every page of plan section 3 is built, once, and the build says so', () => {
+  assert.deepEqual(off.pages.map((p) => p.slug).sort(), [...PLAN_PAGES].sort());
+  assert.equal(new Set(PLAN_PAGES).size, PLAN_PAGES.length);
+  assert.equal(NAMESPACES.length, 27);
+  for (const slug of PLAN_PAGES) assert.ok(html(join(tmp, 'off'), slug).startsWith('<!DOCTYPE html>'), slug);
+});
+
+test('exactly one status banner per page, from the INDEX_LIVE flag (off by default)', () => {
+  const dflt = build({ out: join(tmp, 'default') });
+  assert.equal(dflt.indexLive, false);
+  for (const slug of PLAN_PAGES) {
+    const a = html(join(tmp, 'off'), slug);
+    assert.equal((a.match(/class="status-banner"/g) ?? []).length, 1, slug);
+    assert.match(a, /class="status-banner" data-state="not-live"/);
+    assert.doesNotMatch(a, /data-state="live"/);
+    assert.match(a, /<span data-slot="index-state">not live<\/span>/);
+    const b = html(join(tmp, 'live'), slug);
+    assert.equal((b.match(/class="status-banner"/g) ?? []).length, 1, slug);
+    assert.match(b, /class="status-banner" data-state="live" role="status" aria-label="Marketplace status">/);
+    assert.doesNotMatch(b, /data-state="not-live"/);
+    assert.match(b, /<span data-slot="index-state">live<\/span>/);
+  }
+  assert.match(html(join(tmp, 'off'), 'submitting'), /data-state-tag="not-live">not open</);
+  assert.doesNotMatch(html(join(tmp, 'live'), 'submitting'), /data-state-tag/);
+});
+
+test('with the flag off, no page says the Marketplace or the index is live', () => {
+  const claims = [/marketplace is (?:now )?(?:open|live)/i, /index is (?:now )?(?:open|live|published)/i, /can be installed from there/i, /install(?:ed)? from the marketplace/i];
+  for (const slug of PLAN_PAGES) {
+    const text = html(join(tmp, 'off'), slug);
+    for (const re of claims) assert.doesNotMatch(text, re, `${slug}: ${re}`);
+  }
+  assert.match(html(join(tmp, 'live'), 'index'), /The plugin Marketplace is open/);
+});
+
+test('the footer, the Fenris disclaimer included, is the design footer on every page', () => {
+  const design = readFileSync(DESIGN_SNAPSHOT, 'utf8');
+  const dla = [...design.matchAll(/<p class="dla">([\s\S]*?)<\/p>/g)].map((m) => m[1]);
+  assert.equal(dla.length, 2);
+  for (const slug of PLAN_PAGES) {
+    const page = html(join(tmp, 'off'), slug);
+    assert.deepEqual([...page.matchAll(/<p class="dla">([\s\S]*?)<\/p>/g)].map((m) => m[1]), dla, slug);
+    assert.match(page, /Fenris Creations hf/);
+  }
+});
+
+test('no script on a page except the search index (JSON) and the design script', () => {
+  for (const slug of PLAN_PAGES) {
+    const page = html(join(tmp, 'off'), slug);
+    const scripts = [...page.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1].trim());
+    assert.equal(scripts.length, 2, slug);
+    assert.ok(scripts.includes('type="application/json" data-search-index'), slug);
+    assert.ok(scripts.includes('src="/plugins/assets/data-site.js" defer'), slug);
+    assert.doesNotMatch(page, /\son[a-z]+\s*=|javascript:|data-demo|site-base-standin|#page=/i, slug);
+  }
+});
+
+test('styles: site-base, data-docs, then plugin-docs last; design files copied byte for byte', () => {
+  const page = html(join(tmp, 'off'), 'start');
+  const sheets = [...page.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(sheets, ['/plugins/assets/site-base.css', '/plugins/assets/data-docs.css', '/plugins/assets/plugin-docs.css']);
+  assert.ok(page.indexOf('plugin-docs.css') > page.indexOf('data-docs.css'));
+  for (const name of readdirSync(join(tmp, 'off', 'plugins', 'assets'))) {
+    assert.equal(sha(readFileSync(join(tmp, 'off', 'plugins', 'assets', name))), sha(readFileSync(join(DESIGN_DIR, name))), name);
+  }
+  assert.match(readFileSync(join(tmp, 'off', '_headers'), 'utf8'), /Content-Security-Policy: default-src 'self'; script-src 'self'/);
+});
+
+test('class names and data hooks come from the design: nothing invented', () => {
+  const design = readFileSync(DESIGN_SNAPSHOT, 'utf8');
+  const css = ['site-base.css', 'data-docs.css', 'plugin-docs.css'].map((f) => readFileSync(join(DESIGN_DIR, f), 'utf8')).join('\n');
+  const allowed = new Set([...classesOf(design), ...[...css.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((m) => m[1])]);
+  const hooks = new Set([...design.matchAll(/\b(data-[a-z-]+)/g)].map((m) => m[1]));
+  for (const slug of PLAN_PAGES) {
+    const page = html(join(tmp, 'off'), slug);
+    for (const c of classesOf(page)) assert.ok(allowed.has(c), `${slug}: class ${c} is not in the design`);
+    for (const tag of page.matchAll(/<[a-zA-Z][^>]*>/g)) {
+      for (const m of tag[0].matchAll(/\s(data-[a-z-]+)/g)) assert.ok(hooks.has(m[1]), `${slug}: ${m[1]} is not in the design`);
+    }
+    const ids = [...page.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(new Set(ids).size, ids.length, `${slug}: duplicate id ${ids.find((x, i) => ids.indexOf(x) !== i)}`);
+  }
+});
+
+test('the design pins in PINS.md match the files', () => {
+  const pins = readFileSync(join(DESIGN_DIR, 'PINS.md'), 'utf8');
+  const snapshot = readFileSync(DESIGN_SNAPSHOT, 'utf8');
+  const [first, ...rest] = snapshot.split('\n');
+  assert.match(first, /^<!-- source: claude-design-artifact QdEv9cVyqSfTPnWRQnrwVf version 1795173666-f832 /);
+  assert.equal(sha(rest.join('\n')), 'c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f');
+  for (const name of ['plugin-docs.css', 'site-base.css', 'data-docs.css', 'data-site.js', 'favicon.svg', 'favicon-small.svg']) {
+    const row = new RegExp(`\`${name}\`[^\\n]*\`([0-9a-f]{64})\``).exec(pins);
+    assert.ok(row, `${name} has a pin`);
+    assert.equal(sha(readFileSync(join(DESIGN_DIR, name))), row[1], name);
+  }
+  assert.ok(pins.includes('c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f'));
+  assert.equal(`${/<style id="plugin-docs-css">([\s\S]*?)<\/style>/.exec(snapshot)[1]}`, readFileSync(join(DESIGN_DIR, 'plugin-docs.css'), 'utf8'));
+});
+
+test('the search index lists every page once, with a URL that exists', () => {
+  const page = html(join(tmp, 'off'), 'index');
+  const index = JSON.parse(/<script type="application\/json" data-search-index>([\s\S]*?)<\/script>/.exec(page)[1]);
+  assert.equal(index.length, PLAN_PAGES.length);
+  assert.deepEqual(index.map((i) => i.u).sort(), off.pages.map((p) => p.url).sort());
+  assert.equal(index.filter((i) => i.k === 'tool').length, 27);
+});
+
+test('source of truth: the namespace list, the manifest rows, the check ids', () => {
+  const api = html(join(tmp, 'off'), 'api');
+  const rows = [...api.matchAll(/<a href="\/plugins\/api\/([a-z]+)\/"><span class="p-name">/g)].map((m) => m[1]);
+  assert.deepEqual(rows, NAMESPACES);
+  assert.match(api, /<span class="p-name">account<\/span><\/td><td>reserved</);
+
+  const schema = JSON.parse(readFileSync(join(REPO_ROOT, 'vendor/eve-cyno-host/host/dist/schemas/manifest.v1.json'), 'utf8'));
+  const counts = schemaCounts(schema);
+  assert.deepEqual(counts, { top: 15, required: 5, permissions: 20, contributes: 9 });
+  const manifest = html(join(tmp, 'off'), 'manifest');
+  for (const key of Object.keys(schema.properties)) assert.match(manifest, new RegExp(`<span class="p-name">${key}</span>`), key);
+  for (const key of Object.keys(schema.properties.permissions.properties)) assert.match(manifest, new RegExp(`<span class="p-name">permissions\\.${key}</span>`), key);
+  for (const key of Object.keys(schema.properties.contributes.properties)) assert.match(manifest, new RegExp(`<span class="p-name">contributes\\.${key}</span>`), key);
+
+  const { checkIds, classes } = readChecks(REPO_ROOT);
+  assert.equal(checkIds.length, 17);
+  const checks = html(join(tmp, 'off'), 'checks');
+  for (const id of checkIds) assert.match(checks, new RegExp(`<code>${id}</code>`));
+  for (const c of classes) assert.match(checks, new RegExp(`<code>${c}</code>`));
+});
+
+test('source of truth: the declarations of every API page equal the d.ts text', () => {
+  const seen = [];
+  const un = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  for (const slug of PLAN_PAGES.filter((s) => s.startsWith('api'))) {
+    const page = html(join(tmp, 'off'), slug);
+    for (const m of page.matchAll(/<span class="code-label">(\w+) · api\/[\d.]+\.d\.ts<\/span>[\s\S]*?<pre><code>([\s\S]*?)<\/code><\/pre>/g)) {
+      const d = DECLS.find((x) => x.name === m[1]);
+      assert.ok(d, m[1]);
+      assert.equal(un(m[2]), d.text, `${slug}: ${m[1]}`);
+      seen.push(m[1]);
+    }
+  }
+  assert.deepEqual(seen.sort(), DECLS.map((d) => d.name).sort());
+});
+
+test('source of truth: POLICY.md, CONTRIBUTING.md, the scaffold and the README history', () => {
+  const policy = html(join(tmp, 'off'), 'policy');
+  for (const h of parseReadme(readFileSync(join(REPO_ROOT, 'POLICY.md'), 'utf8')).sections) assert.match(policy, new RegExp(`<h2 id="[^"]+">${h.heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`), h.heading);
+  const submitting = html(join(tmp, 'off'), 'submitting');
+  assert.match(submitting, /entries\/&lt;id&gt;\.json|entries\/<code>/);
+  assert.match(submitting, /<span class="p-name">versions<\/span>/);
+  const tutorial = html(join(tmp, 'off'), 'tutorial');
+  assert.match(tutorial, /<span class="code-label">plugin\.json<\/span>/);
+  assert.match(tutorial, /eve-cyno-api/);
+  const start = html(join(tmp, 'off'), 'start');
+  assert.match(start, /data-panel="manifest" hidden>/);
+  const frozen = frozenParts(readReadme(new URL('README.md', API).pathname).sections.find((s) => s.key === 'Frozen surface').body);
+  const versions = html(join(tmp, 'off'), 'api/versions');
+  const named = new Set([...frozen.snapshots.matchAll(/`api\/(\d+\.\d+\.\d+)\.d\.ts`/g)].map((m) => m[1]));
+  assert.ok(named.size >= 20);
+  for (const v of named) assert.ok(versions.includes(`api/${v}.d.ts`), v);
+  for (const v of ['1.1.0', '1.17.0', '1.29.0']) assert.match(versions, new RegExp(`<h2 id="v${v.replaceAll('.', '-')}">`));
+});
+
+test('the README section map covers every heading and names none that is gone', () => {
+  const readme = readReadme(new URL('README.md', API).pathname);
+  const m = mapSections(readme);
+  assert.ok(m.excluded.length >= 1);
+  assert.throws(() => mapSections(parseReadme(`${readFileSync(new URL('README.md', API), 'utf8')}\n## A new section\n\ntext`)), /"A new section" is neither mapped/);
+  assert.throws(() => mapSections({ ...readme, sections: readme.sections.filter((s) => s.key !== 'Chat') }), /names "Chat"/);
+});
+
+test('hand-written pages read site/content/<slug>.md when it exists', () => {
+  const dir = join(tmp, 'content');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'local-testing.md'), '## Reload\n\nThe folder reloads on every build.\n');
+  writeFileSync(join(dir, 'api-types.md'), 'unused\n');
+  const r = build({ out: join(tmp, 'content-out'), contentDir: dir });
+  const withContent = html(join(tmp, 'content-out'), 'local-testing');
+  assert.match(withContent, /The folder reloads on every build\./);
+  assert.doesNotMatch(withContent, /This page is a stub/);
+  assert.match(html(join(tmp, 'off'), 'local-testing'), /This page is a stub/);
+  assert.equal(r.pages.length, PLAN_PAGES.length);
+});
+
+test('a base other than /plugins/ moves every link', () => {
+  const r = build({ out: join(tmp, 'rebased'), base: '/docs/plugins/' });
+  const page = readFileSync(join(tmp, 'rebased', 'docs', 'plugins', 'start', 'index.html'), 'utf8');
+  assert.match(page, /href="\/docs\/plugins\/assets\/site-base\.css"/);
+  assert.doesNotMatch(page, /href="\/plugins\//);
+  assert.equal(r.pages.length, PLAN_PAGES.length);
+  assert.throws(() => build({ out: join(tmp, 'bad'), base: 'plugins' }), /base must start and end/);
+});
+
+test('the manifest page examples: accept passes the vendored parseManifest, refuse throws the code it names', async () => {
+  const { createRequire } = await import('node:module');
+  const { parseManifest } = createRequire(import.meta.url)(join(REPO_ROOT, 'vendor/eve-cyno-host/host/dist/manifest.js'));
+  const un = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const page = html(join(tmp, 'off'), 'manifest');
+  const blocks = [...page.matchAll(/<span class="code-label">([^<]*)<\/span><span class="badge badge-(ok|bad)">(accept|refuse)<\/span>[\s\S]*?<pre><code>([\s\S]*?)<\/code><\/pre>/g)];
+  assert.ok(blocks.some((b) => b[3] === 'accept') && blocks.some((b) => b[3] === 'refuse'));
+  for (const [, label, , verdict, code] of blocks) {
+    const manifest = JSON.parse(un(code));
+    if (verdict === 'accept') assert.doesNotThrow(() => parseManifest(manifest), label);
+    else assert.throws(() => parseManifest(manifest), (e) => e.code === label.split(' · ')[1], label);
+  }
+});
+
+test('manifest page: one row per schema property, recursively (an independent walk of the schema)', () => {
+  const schema = JSON.parse(readFileSync(join(REPO_ROOT, 'vendor/eve-cyno-host/host/dist/schemas/manifest.v1.json'), 'utf8'));
+  const deref = (n) => (n?.$ref ? schema.$defs[n.$ref.replace('#/$defs/', '')] : n);
+  const paths = [];
+  const walk = (node, prefix) => {
+    const n = deref(node);
+    for (const [k, v] of Object.entries(n.properties ?? {})) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      paths.push(path);
+      const c = deref(v);
+      if (c.properties) walk(c, path);
+      else if (c.type === 'array' && c.items && deref(c.items).properties) walk(c.items, `${path}[]`);
+    }
+  };
+  walk(schema, '');
+  assert.ok(paths.length > 50);
+  const manifest = html(join(tmp, 'off'), 'manifest');
+  const shown = [...manifest.matchAll(/<span class="p-name">([^<]+)<\/span>/g)].map((m) => m[1].replace(/&lt;/g, '<'));
+  assert.deepEqual(shown.sort(), paths.sort());
+});
