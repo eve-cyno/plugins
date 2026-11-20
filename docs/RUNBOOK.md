@@ -684,8 +684,8 @@ its Actions are unusable:
 
 - The published index stays served as it is. Past its `expires`, Install and Update are off.
 - No new head, listing or revocation is published until plugins works again.
-- Where this runbook sends the owner to "the emergency path" (a repair that stops, no verified candidate, a dead end at 90 days), the
-  answer is now: wait for plugins to work again, or fix the stop in this repository. Nothing bypasses it.
+- Where a stop message sends the owner to this section (a repair that stops, no verified candidate, a dead end at 90 days), the
+  answer is: wait for plugins to work again, or fix the stop in this repository. Nothing bypasses it.
 
 ## Rotation (plan 4.4)
 
@@ -712,13 +712,14 @@ Found in review, accepted, and named here so nobody counts on more than the tool
   `tools/approved-base.mjs` and blocks reviews until the owner deletes that run. It fails closed: availability only.
 - `tools/vendor-host.mjs` accepts any ancestor of desktop `main`, so a re-vendor from a commit before 2026-11-20 would restore the
   retired index pins; the owner's `vendor/` reading (step 0.3) is the check.
-- `C-WF5` does not match mixed-case context names (`${{ Secrets.X }}`) or `toJSON(vars)`; tracked as a fix.
 - Any edit of the `sign` job, an action pin bump included, needs its new pin in `SIGN_STEPS` in `tools/lib/wfrules.mjs` in the same
   commit; the error prints the new hash.
 - `tools/lib/repairbase.mjs` filters runs with `notOnMain` only, so an own-repo run of another event (a push, say) with approved
   `index`, `sign` and `upload` can be recovery R2's `<A>`, while `approved-base` never makes it `<A>`. It needs an owner approval
   that step 2's `ERROR` forbids; low impact.
 - C-WF1 and C-WF11 treat ` #` inside a `run:` block as a comment; C-ENV1 backstops C-WF11 only. For C-WF1 the backstop is its parsed `on:` check (`tools/lib/wfrules.mjs`, the triggers rule).
+- Very large inputs (a 1 MB unclosed quote or a 1 MB run of spaces) take minutes in the line-based parsers (`tools/lib/yamlsub.mjs` `/ +$/`,
+  C-WF11 `WHO_RE` `[\w$.?]*\.login`). They fail closed. Do not feed multi-hundred-kilobyte workflow files.
 
 ## Measurements
 

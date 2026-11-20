@@ -394,7 +394,7 @@ async function finish(step) {
     if (isNew && pairOk) end(0, `PUBLISHED ${P} generated ${head.generated} (target test, the run's throwaway key)`);
     red('TEST NOT PUBLISHED: the new test pair is not live; dispatch a new test run', 'the final re-read does not show the new test pair');
   }
-  if (fh.status === 'error' || fsig.status === 'error') red('HALF-PUBLISHED: the final re-read failed; recovery R2 or the owner\'s manual path', `the final re-read failed (${fh.why ?? fsig.why})`);
+  if (fh.status === 'error' || fsig.status === 'error') red('HALF-PUBLISHED: the final re-read failed; recovery R2 or RUNBOOK section "When plugins is unusable"', `the final re-read failed (${fh.why ?? fsig.why})`);
   if (repair) {
     if (isNew && pairOk) end(0, `PUBLISHED ${P} generated ${head.generated}: the new head and signature are live and verify (REPAIR, recovery R2)`);
     if (unchanged(fh, oldHead) && unchanged(fsig, oldSig)) red('UNCHANGED: the live index still does not verify; nothing was published; dispatch a new repair run', 'the broken pair is still live');
@@ -403,7 +403,7 @@ async function finish(step) {
     if (fsig.status === 'missing') red('UNCHANGED: nothing was published (a first publish; both objects are still missing); this run signed, so the next run is no first publish: dispatch a repair run (recovery R2)', 'nothing was published');
     red('FIRST-PUBLISH ORPHAN: a signature with no head; apps read the missing head as unavailable; this run signed, so the next run is no first publish: a repair run (recovery R2) overwrites it', 'a first publish left its signature without a head');
   }
-  if (!pairOk) red('HALF-PUBLISHED: the live head and signature do not verify as a pair; recovery R2 or the owner\'s manual path', `the live pair does not verify with ${keyText}`);
+  if (!pairOk) red('HALF-PUBLISHED: the live head and signature do not verify as a pair; recovery R2 or RUNBOOK section "When plugins is unusable"', `the live pair does not verify with ${keyText}`);
   if (isNew) end(0, `PUBLISHED ${P} generated ${head.generated}: the new head and signature are live and verify`);
   if (!firstPublish && !repair && holds(fh, oldHead.bytes) && holds(fsig, oldSig.bytes)) red('UNCHANGED: the old pair is live; nothing was published; dispatch a new run', 'the old pair is still live');
   red('REPLAYED: a pair that verifies but is neither the new nor the old one is live; a security event (docs/RUNBOOK.md)', 'someone else\'s verified head is live');

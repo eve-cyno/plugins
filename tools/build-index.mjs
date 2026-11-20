@@ -20,7 +20,7 @@
 //     --repair true (recovery R2, target production only): refused with NOT BROKEN when the live index verifies. Otherwise the base is
 //     the newest verified candidate run's head, signature and catalog from GitHub's artifacts (tools/lib/repairbase.mjs; the live
 //     index never is), with the union of the verified candidates' revocations and the floor in BASE.json (kind repair). A missing
-//     artifact of a candidate, or no verified candidate, refuses the run (the owner's manual path).
+//     artifact of a candidate, or no verified candidate, refuses the run (docs/RUNBOOK.md, section 'When plugins is unusable').
 //   --compare-live --base <folder from base> --index <folder from build> --lift <file> --repair true|false [--summary <file>]
 //     The new index against the base: not older (head and catalog), every live revocation kept unless the lift file names it exactly
 //     (`<id> <versions>`, one per line, as index-verify.mjs prints them), and every lift line removes a live revocation. Prints the

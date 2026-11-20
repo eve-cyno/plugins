@@ -36,7 +36,7 @@ export const RETENTION_MS = 90 * 86_400_000;
 export const ARTIFACTS = Object.freeze(['head', 'signature', 'catalog']);
 const FILE = Object.freeze({ head: 'index.json', signature: 'index.json.minisig' });
 const CATALOG_FILE_RE = /^[0-9a-f]{64}\.json$/;
-const MANUAL = "the owner's manual path (docs/RUNBOOK.md; plan 5.4)";
+const MANUAL = "docs/RUNBOOK.md, section 'When plugins is unusable'";
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const cap = (name) => (name === 'head' ? I.MAX_HEAD_BYTES : name === 'signature' ? I.MAX_INDEX_SIG_BYTES : I.MAX_CATALOG_BYTES);
 

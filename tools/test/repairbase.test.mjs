@@ -154,11 +154,11 @@ describe('recovery R2: the candidates and the base', () => {
     assert.match(r.floor.source, /unsigned live head/);
   });
 
-  test('PB-repair-no-verified-base-stops: no candidate verifies, or there is none: the repair stops for the owner\'s manual path', async () => {
+  test('PB-repair-no-verified-base-stops: no candidate verifies, or there is none: the repair stops and names the unusable-plugins runbook section', async () => {
     const none = await collect([H({ ix: index(NOW - DAY, [R2], stranger) }), A({ ix: index(NOW - 5 * DAY, [R1], stranger) })]);
     assert.equal(none.ok, false);
     assert.match(none.why, /^NO VERIFIED BASE: /);
-    assert.match(none.why, /manual path/);
+    assert.match(none.why, /When plugins is unusable/);
     assert.match(none.why, /no candidate's signature verifies/);
     const empty = await collect([runOf(260, 'publish.yml', 2, null, { approvedBy: null })]);
     assert.equal(empty.ok, false);
@@ -226,7 +226,7 @@ describe('recovery R2: a missing artifact stops the repair', () => {
     const r = await collect([H({ drop: ['head'] }), A()]);
     assert.equal(r.ok, false);
     assert.match(r.why, /^ARTIFACT MISSING: run 290 .*head/);
-    assert.match(r.why, /manual path/);
+    assert.match(r.why, /When plugins is unusable/);
     assert.deepEqual(r.zipCalls, []);
   });
 
