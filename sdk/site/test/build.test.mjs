@@ -125,18 +125,24 @@ test('the design pins in PINS.md match the files', () => {
   const [first, ...rest] = snapshot.split('\n');
   // The design file's own sha256 is the provenance record (line 1 and the table); the bytes below line 1 are that file with one
   // internal work-item name and one plan reference cut, and PINS.md pins their sha256 too.
-  assert.ok(first.startsWith('<!-- source: the EVE-Cyno design system, version 1795190238-d942, file project/eve-cyno/project/plugin-docs.html (sha256 1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f);'), first);
+  assert.ok(first.startsWith('<!-- source: the EVE-Cyno design system, version 1795200790-9e70, file project/eve-cyno/project/plugin-docs.html (sha256 ff6791d7bd3b112364308c3478c0ff7fe7fa71ecdc51fdfca36b6df9420b8153);'), first);
   const committed = /the bytes below line 1 here have sha256 `([0-9a-f]{64})`/.exec(pins)?.[1];
   assert.ok(committed, 'PINS.md pins the committed snapshot bytes');
   assert.equal(sha(rest.join('\n')), committed);
-  assert.match(pins, /`plugin-docs-2026-11-20\.html` \| `plugin-docs\.html` \| `1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f` \|/);
+  assert.match(pins, /`plugin-docs-2026-11-20\.html` \| `plugin-docs\.html` \| `ff6791d7bd3b112364308c3478c0ff7fe7fa71ecdc51fdfca36b6df9420b8153` \|/);
   for (const name of ['plugin-docs.css', 'site-base.css', 'data-docs.css', 'data-site.js', 'favicon.svg', 'favicon-small.svg']) {
     const row = new RegExp(`\`${name}\`[^\\n]*\`([0-9a-f]{64})\``).exec(pins);
     assert.ok(row, `${name} has a pin`);
     assert.equal(sha(readFileSync(join(DESIGN_DIR, name))), row[1], name);
   }
-  assert.ok(pins.includes('1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f'));
+  assert.ok(pins.includes('ff6791d7bd3b112364308c3478c0ff7fe7fa71ecdc51fdfca36b6df9420b8153'));
   assert.equal(`${/<style id="plugin-docs-css">([\s\S]*?)<\/style>/.exec(snapshot)[1]}`, readFileSync(join(DESIGN_DIR, 'plugin-docs.css'), 'utf8'));
+});
+
+test('the plugin docs CSS sets the orange product colour, not the data green', () => {
+  const css = readFileSync(join(tmp, 'off', 'plugins', 'assets', 'plugin-docs.css'), 'utf8');
+  assert.ok(css.includes('--mode: var(--c-red)'), 'mode is orange');
+  assert.ok(!css.includes('--cy-accent: var(--c-green)'), 'no green lockup accent');
 });
 
 test('the design files name no private link, design id or work item', () => {

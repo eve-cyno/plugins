@@ -1,7 +1,8 @@
 /* ==========================================================================
    EVE-CYNO PLUGINS · plugin-docs.css  (new, 2026-11-20). Loads after site-base.css and data-docs.css.
    Adds only: (1) the light theme, (2) the status banner, (3) the plugin lockup, (4) two verdict badges,
-   (5) a few dark-only literals of data-docs.css turned into tokens. Everything else is data-docs.css as is.
+   (5) a few dark-only literals of data-docs.css turned into tokens, (6) the plugins product colour.
+   Everything else is data-docs.css as is.
    ========================================================================== */
 :root { --c-code-fg: #d4dcea; --c-hover: rgba(255, 255, 255, .04); }
 
@@ -50,8 +51,8 @@
 .sb-text a { color: var(--c-fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--k) 60%, transparent); }
 .sb-text a:hover { text-decoration-color: var(--k); }
 
-/* (3) lockup: the static CYNO mark plus the product line. Accent is the docs green. */
-.pd-lockup { --cy-accent: var(--c-green); gap: 10px; color: var(--c-fg); }
+/* (3) lockup: the static CYNO mark plus the product line. Accent is the plugins orange, see (6). */
+.pd-lockup { --cy-accent: var(--c-red); gap: 10px; color: var(--c-fg); }
 .pd-mark { width: 26px; height: 26px; color: var(--mode-text); flex-shrink: 0; }
 .pd-wm { display: inline-flex; align-items: baseline; gap: 8px; font-family: var(--f-display); font-weight: 600; font-size: 1rem; letter-spacing: .06em; white-space: nowrap; }
 .pd-wm small { font-family: var(--f-mono); font-weight: 400; font-size: var(--t-micro); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--mode-text); }
@@ -63,3 +64,7 @@
 .code-head .badge + .code-copy { margin-left: 0; }
 .since { font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--c-fg-dim); white-space: nowrap; }
 @media (max-width: 560px) { .sb-in { padding-inline: 16px; } .pd-wm small { display: none; } }
+
+/* (6) product colour (owner 2026-11-20): the plugin docs are orange, the data docs stay green, the hub and desktop ice,
+   the AI chat blue. Overrides the green --mode of data-docs.css; --mode-glow is recomputed so glows follow the mode. */
+body.docs-page { --mode: var(--c-red); --mode-text: var(--c-red); --mode-glow: color-mix(in srgb, var(--mode) 40%, transparent); }
