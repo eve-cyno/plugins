@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -101,6 +101,16 @@ test('styles: fonts, site-base, data-docs, then plugin-docs last; design files c
     assert.equal(sha(readFileSync(join(tmp, 'off', 'plugins', 'assets', name))), sha(readFileSync(join(DESIGN_DIR, name))), name);
   }
   assert.match(readFileSync(join(tmp, 'off', '_headers'), 'utf8'), /Content-Security-Policy: default-src 'self'; script-src 'self'/);
+});
+
+test('_redirects: one rule sends / to /plugins/ with 302, only for the /plugins/ base', () => {
+  const rules = readFileSync(join(tmp, 'off', '_redirects'), 'utf8').split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  assert.deepEqual(rules, ['/ /plugins/ 302']);
+  const other = mkdtempSync(join(tmpdir(), 'docs-base-'));
+  try {
+    build({ out: other, base: '/docs/', indexLive: false });
+    assert.equal(existsSync(join(other, '_redirects')), false);
+  } finally { rmSync(other, { recursive: true, force: true }); }
 });
 
 test('class names and data hooks come from the design: nothing invented', () => {
@@ -377,9 +387,12 @@ test('overview: says what a plugin is, names the sandbox, and with the flag off 
   assert.doesNotMatch(live, /not open yet|not live/i);
 });
 
-test('start: not-on-npm note, the npm install step, and the not-open callout follows the flag', () => {
+test('start: on-npm note with the clone alternative, the npm install step, and the not-open callout follows the flag', () => {
   const text = textOf(main(join(tmp, 'off'), 'start'));
-  assert.match(text, /not on npm/i);
+  assert.match(text, /scaffold is on npm/i);
+  assert.match(text, /npm create @eve-cyno\/plugin@latest/);
+  assert.match(text, /node sdk\/create-plugin\/bin\/create-plugin\.mjs/);
+  assert.doesNotMatch(text, /not on npm|is not published|once the package/i);
   assert.match(text, /npm install/);
   assert.match(text, /Nobody can install your plugin yet/);
   // The Node minimum is the template zip script's (zlib.crc32), in the text and the badge.

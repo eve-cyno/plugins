@@ -108,6 +108,8 @@ export function build({ out, base = '/plugins/', indexLive = flagOn(process.env.
   writeFileSync(join(root, 'assets', 'fonts.css'), fontsCss());
   copyFonts(FONTS_DIR, join(root, 'assets'));
   writeFileSync(join(out, '_headers'), HEADERS);
+  // Cloudflare Pages: the host root has no page of its own, so send it to the docs (only when they live at /plugins/).
+  if (base === '/plugins/') writeFileSync(join(out, '_redirects'), '/ /plugins/ 302\n');
   return { out, base, indexLive, apiVersion: ctx.apiVersion, pages: written };
 }
 

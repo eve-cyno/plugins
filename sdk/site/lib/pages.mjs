@@ -152,7 +152,7 @@ export function buildPages(ctx) {
     body.h2('Create, build, load');
     const cmd = (c) => `<div class="cmd" data-copy-scope><pre><code>${escText(c)}</code></pre><button class="code-copy" type="button" data-copy aria-label="Copy command">${ico('i-copy')}<span data-copy-label>Copy</span></button></div>`;
     body.raw(`<ol class="steps">
-<li><span class="step-t">Create the project</span>${cmd('npm create @eve-cyno/plugin my-plugin')}</li>
+<li><span class="step-t">Create the project</span>${cmd('npm create @eve-cyno/plugin@latest my-plugin')}</li>
 <li><span class="step-t">Build it</span>${cmd('cd my-plugin && npm run build')}</li>
 <li><span class="step-t">Load the folder</span><p>In the app open <b>Settings &gt; Plugins</b>. Below the plugin list, switch on <b>Load a plugin from a folder</b>, press <b>Choose folder…</b> and pick <code>dist/&lt;your-id&gt;</code>. After each build press <b>Reload</b>.</p></li>
 </ol>`);

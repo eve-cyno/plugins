@@ -1,9 +1,9 @@
-> [!NOTE] The scaffold is not on npm yet
-> `@eve-cyno/create-plugin` is not published, so `npm create @eve-cyno/plugin` does not work today. Run the scaffold from the root of a clone of the plugin repository instead:
+> [!NOTE] The scaffold is on npm
+> `@eve-cyno/create-plugin` is published. Step 1 runs it with `npm create @eve-cyno/plugin@latest my-plugin`. To run the scaffold from a clone of the plugin repository instead, use this from the root of the clone:
 >
 > `node sdk/create-plugin/bin/create-plugin.mjs my-plugin`
 >
-> It asks for an id, a name, an author and a one-line description (add `--yes --id <id> --author <author>` to skip the questions). Everything below is the same either way: the command in step 1 is the one to use once the package is published.
+> It asks for an id, a name, an author and a one-line description (add `--yes --id <id> --author <author>` to skip the questions). Everything below is the same either way.
 
 After step 1, run `npm install` once inside the new folder. It installs TypeScript, the only dev dependency, and `npm run build` needs it.
 
