@@ -24,7 +24,7 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 | C4 | refuse | The download from your URL: https on the default port, no user name or password, no query or fragment in your URL, at most 5 redirects (each https on the default port), public addresses only, at most 32 MiB, no content coding, ended after 60 s without progress or 600 s in all. |
 | C5 | refuse | The download's size and SHA-256 equal the ones the entry pins. |
 | C6 | refuse | The app's zip reader accepts the archive: see [Archive rules](@@packaging). |
-| C7 | refuse | The app's install checks on the unpacked archive: `plugin.json` at the root, the manifest parser, the listing equal to `plugin.json`, the loader's folder checks. |
+| C7 | refuse | The app's install checks on the unpacked archive: `plugin.json` at the root, the manifest parser, the listing equal to `plugin.json`, the loader's folder checks (a theme package: `theme.json`). |
 | C8 | refuse | Version rules: valid versions, newest first; a merged version never changes and is never removed (it can be marked `"unlisted": true`, and stays unlisted once it is); an added version is listed and higher than every merged one; a merged entry is never removed. |
 | C9 | refuse | Every archive URL of the catalog built from the entries is its mirror name, `archives/<sha256>.zip`. |
 | C10 | review | Sets `escalation` and `identity`. |
