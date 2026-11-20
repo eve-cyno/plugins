@@ -32,8 +32,11 @@ function walk(dir, base = dir, out = new Map()) {
 
 test('render: the file map for fixed answers', () => {
   const files = render(ANSWERS);
+  assert.match(files.get('LICENSE'), /^MIT No Attribution\n/);
+  assert.doesNotMatch(files.get('LICENSE'), /\bprovided that\b|notice shall be included/i);
   assert.deepEqual([...files.keys()], [
     '.gitignore',
+    'LICENSE',
     'README.md',
     'entry/com.example.hello-ledger.json',
     'package.json',

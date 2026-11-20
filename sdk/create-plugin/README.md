@@ -40,8 +40,8 @@ the package is published, replace the `paths` entry with a dev dependency and de
 
 ## Licences
 
-The package is MIT (`LICENSE`). The files it writes into a new project are meant to be used without a notice (MIT-0 is the intent): the
-generated `package.json` has no `license` field and its README asks the author to pick one. The bundled declarations keep their MIT
+The package is MIT (`LICENSE`). The files it writes into a new project are MIT-0 ("MIT No Attribution"; `template/LICENSE` is written into every project): they need
+no notice. The generated `package.json` has no `license` field and its README asks the author to replace `LICENSE` with the licence picked. The bundled declarations keep their MIT
 licence. Nothing from `vendor/eve-cyno-host` (PolyForm Strict) is in the package; the tests read it from the repository.
 
 ## Tests
