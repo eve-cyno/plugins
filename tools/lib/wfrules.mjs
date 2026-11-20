@@ -138,7 +138,9 @@ export function expr(v) {
 }
 /**
  * The expressions of a text: each runs from a `${{` to the first `}}` outside single quotes, where GitHub ends it (see expr), so a
- * `}}` in a string literal never hides the rest of the expression. An expression whose quote is never closed runs to the end.
+ * `}}` in a string literal never hides the rest of the expression. An expression whose quote is never closed runs to the end. The
+ * text is a parsed key or value (see texts), never a raw line: a quote in a YAML comment, or the '' a YAML single-quoted value
+ * writes for one quote, would move the end of an expression and hide the rest of it.
  */
 function exprs(text) {
   const out = [];
@@ -154,6 +156,19 @@ function exprs(text) {
   }
   return out;
 }
+/**
+ * Every text of a parsed node, as GitHub reads it: the mapping keys and the scalar values at every level, comments gone and quotes
+ * read, but nothing inside a node of `skip`.
+ */
+function* texts(v, skip = new Set()) {
+  if (skip.has(v)) return;
+  if (typeof v === 'string') yield v;
+  else if (Array.isArray(v)) for (const x of v) yield* texts(x, skip);
+  else if (isMap(v)) for (const [k, x] of Object.entries(v)) { yield k; yield* texts(x, skip); }
+}
+/** The most of an expression a problem line shows: one line per problem stays short, whatever the length of the expression. */
+const SHOWN = 200;
+const shown = (e) => (e.length > SHOWN ? `${e.slice(0, SHOWN)}...` : e);
 /** `v` as canonical JSON: the mapping keys sorted at every level. */
 const canon = (v) => (isMap(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`
   : Array.isArray(v) ? `[${v.map(canon).join(',')}]` : JSON.stringify(v ?? null));
@@ -314,8 +329,9 @@ function cwf4(ws) {
 /**
  * C-WF5: MINISIGN_ secrets only in jobs with environment index, R2_ secrets and variables only with environment mirror, no other
  * secret or variable, no read of a whole context (toJSON(secrets), vars.*, an index), no secrets: inherit, nothing outside the jobs,
- * each read found in any case, in every ${{ }} and in every if written without one (VALUE_CONTEXTS); index only on sign, mirror
- * only on upload; permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes.
+ * each read found in any case, in every ${{ }} of every parsed key and value (texts, never the raw lines) and in every if written
+ * without one (VALUE_CONTEXTS), a read of a whole context named once per expression, cut to SHOWN characters; index only on sign,
+ * mirror only on upload; permissions contents: read everywhere, actions: read only on publish.yml's build and upload, nothing writes.
  * Every job runs on runs-on: ubuntu-24.04 itself: no container, no services, no self-hosted runner or label list; no env at
  * workflow level (it would reach every job, the sign jobs included).
  */
@@ -330,9 +346,10 @@ function cwf5(ws) {
     const perms = w.doc.permissions;
     if (!isMap(perms) || !same(keys(perms), ['contents']) || perms.contents !== 'read') p.push(`${f}: workflow permissions must be exactly contents: read`);
     const jobs = jobsOf(w);
-    const inJobs = Object.values(jobs).map((j) => (isMap(j) ? w.spans.get(j) : null)).filter(Boolean);
-    const outside = w.lines.filter((_, k) => !inJobs.some((s) => k >= s.start && k <= s.end)).join('\n');
-    for (const e of exprs(outside)) if (/\b(secrets|vars)\b/i.test(e)) p.push(`${f}: a secret or variable outside the jobs: \${{${e}}}`);
+    const inJobs = new Set(Object.values(jobs).filter(isMap));
+    for (const t of texts(w.doc, inJobs)) {
+      for (const e of exprs(t)) if (/\b(secrets|vars)\b/i.test(e)) p.push(`${f}: a secret or variable outside the jobs: \${{${shown(e)}}}`);
+    }
     for (const [id, job] of Object.entries(jobs)) {
       if (!isMap(job)) { p.push(`${where(f, id)}: not a mapping`); continue; }
       for (const k of ['container', 'services']) if (k in job) p.push(`${where(f, id)}: ${k} (a job runs on GitHub's hosted runner itself, with no image in or beside it)`);
@@ -342,14 +359,17 @@ function cwf5(ws) {
       if (env !== undefined && typeof env !== 'string') p.push(`${where(f, id)}: environment must be a plain name`);
       else if (env !== want) p.push(`${where(f, id)}: environment ${env ?? 'none'}, expected ${want ?? 'none'}`);
       if ('secrets' in job) p.push(`${where(f, id)}: passes secrets to a reusable workflow`);
-      for (const e of [...exprs(spanText(w, job)), ...bareIfs(job)]) {
+      for (const e of [...[...texts(job)].flatMap(exprs), ...bareIfs(job)]) {
         for (const { ctx, table, kind, re } of VALUE_CONTEXTS) {
+          let whole = false;
           for (const m of e.matchAll(re)) {
             const n = m[1];
-            if (n === undefined) p.push(`${where(f, id)}: the whole ${ctx} context in \${{${e}}} (only ${ctx}.<NAME> is read; not ${ctx}.*, an index or a spaced dot)`);
+            if (n === undefined) whole = true;
             else if (!Object.hasOwn(table, n)) p.push(`${where(f, id)}: ${kind} ${n} is not one this repository names`);
             else if (table[n] !== env) p.push(`${where(f, id)}: ${kind} ${n} belongs only in a job with environment ${table[n]}`);
           }
+          // One problem per expression and context, not per read: each would hold the expression.
+          if (whole) p.push(`${where(f, id)}: the whole ${ctx} context in \${{${shown(e)}}} (only ${ctx}.<NAME> is read; not ${ctx}.*, an index or a spaced dot)`);
         }
       }
       const jp = job.permissions;
@@ -556,15 +576,23 @@ const ARG_OR_ENV_RES = [/--reviewer/i, /REVIEWER/, /(?:process\.env|\benv)\s*(?:
 const WHO_RE = String.raw`(?:[\w$.?]*\.login\b|\b(?:github\.)?(?:actor|triggering_actor)\b)`;
 /** A quoted literal that is not one of typeof's answers. */
 const QUOTED_RE = String.raw`["'](?!(?:string|number|object|undefined|boolean|function|bigint|symbol)["'])[^"'\n]+["']`;
+/** Any quoted literal. */
+const ANY_QUOTED_RE = String.raw`["'][^"'\n]+["']`;
+const whoLiteral = (quoted) => new RegExp(String.raw`${WHO_RE}\s*[!=]==?\s*${quoted}|${quoted}\s*[!=]==?\s*${WHO_RE}`);
+const ID_LITERAL_RES = [
+  /\b(?:user|actor|owner|approver|reviewer|login)[_-]?id["']?\s*(?:[:=]|[!=]==?)\s*["']?[0-9]+/i,
+  /\.id\s*[!=]==?\s*["']?[0-9]+|["']?[0-9]+["']?\s*[!=]==?\s*[A-Za-z_$][\w$.?]*\.id\b/,
+];
 /**
  * A user id or login written as a literal: a name for a user's, actor's, owner's, approver's or reviewer's id or login given or
  * compared with a literal, a `.id` or a `.login` (or an Actions actor) compared with one, either way round.
  */
-const LITERAL_USER_RES = [
-  /\b(?:user|actor|owner|approver|reviewer|login)[_-]?id["']?\s*(?:[:=]|[!=]==?)\s*["']?[0-9]+/i,
-  /\.id\s*[!=]==?\s*["']?[0-9]+|["']?[0-9]+["']?\s*[!=]==?\s*[A-Za-z_$][\w$.?]*\.id\b/,
-  new RegExp(String.raw`${WHO_RE}\s*[!=]==?\s*${QUOTED_RE}|${QUOTED_RE}\s*[!=]==?\s*${WHO_RE}`),
-];
+const LITERAL_USER_RES = [...ID_LITERAL_RES, whoLiteral(QUOTED_RE)];
+/**
+ * LITERAL_USER_RES for a workflow line, which is matched in lower case (GitHub reads context and property names in any case). A
+ * workflow expression has no typeof, so no literal is let through as one of its answers: in lower case 'String' would be one.
+ */
+const WF_LITERAL_USER_RES = [...ID_LITERAL_RES, whoLiteral(ANY_QUOTED_RE)];
 /**
  * A YAML line without its comment: a `#` at the start or after a space (U+0020; tabs are refused). A `#` after U+00A0 or another
  * Unicode space is text to YAML, never a comment.
@@ -588,7 +616,7 @@ function cwf11(ws) {
       const code = uncommented(l);
       if (/reviewer/i.test(code)) p.push(`${f}: names a reviewer outside a comment (line ${i + 1})`);
       // GitHub reads context and property names in any case (GitHub.Actor, sender.ID), so a workflow line is matched in lower case.
-      if (LITERAL_USER_RES.some((re) => re.test(code.toLowerCase()))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
+      if (WF_LITERAL_USER_RES.some((re) => re.test(code.toLowerCase()))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
     });
     if (REVIEWER_KEY_RE.test(w.text)) p.push(`${f}: names a reviewer file or a reviewer id or login key`);
   }

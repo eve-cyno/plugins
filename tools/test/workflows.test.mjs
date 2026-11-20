@@ -3,11 +3,12 @@
 // (a mutant), so each failing case proves that its rule sees exactly that change. Nothing here runs a workflow, a network request or
 // a tool of task 1.7; the rules read the files only.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { YamlSubsetError, parseYaml } from '../lib/yamlsub.mjs';
 import { GUARD_STEP, MAIN_HEAD_STEP, RULES, UPLOAD_IF, VERIFY_IF, expr, jobLines, loadWorkflows } from '../lib/wfrules.mjs';
 
@@ -30,9 +31,12 @@ function stepText(step) {
 /**
  * A copy of the workflows and the tool sources (tools/*.mjs, tools/lib/*.mjs) with `edits` applied, loaded like the real ones. An edit is { file, from, to } on a workflow (the text must occur exactly once, or at least once with `all`),
  * { file, job, from, to } (the same, inside one job's lines only), { path, from, to } on a repository path, or { file | path, text }
- * (writes the whole file; null deletes it).
+ * (writes the whole file; null deletes it). mutantDir returns the copy's folder, mutant the copy loaded.
  */
 function mutant(edits) {
+  return loadWorkflows(mutantDir(edits));
+}
+function mutantDir(edits) {
   const t = tempDir();
   const dir = path.join(t, '.github', 'workflows');
   fs.mkdirSync(dir, { recursive: true });
@@ -67,7 +71,7 @@ function mutant(edits) {
     const next = e.all ? part.split(e.from).join(e.to) : part.replace(e.from, () => e.to);
     fs.writeFileSync(p, src.slice(0, lo) + next + src.slice(hi));
   }
-  return loadWorkflows(t);
+  return t;
 }
 
 /** The rule passes on the real workflows and reports a problem matching `re` on the mutant (each of them, for a list). */
@@ -351,6 +355,44 @@ describe('C-WF5 reads secrets and vars in every spelling GitHub reads', () => {
   test('C-WF5 reads a step if without ${{ as an expression', () => refuses('C-WF5', [{ file: 'check.yml', job: 'review', from: '      - name: Set up Node\n', to: "      - name: Set up Node\n        if: vars.R2_BUCKET != ''\n" }], /^check\.yml job review: variable R2_BUCKET belongs only in a job with environment mirror$/));
 });
 
+// GitHub evaluates the values it parsed: a YAML comment is never read, and a YAML single-quoted value holds one quote where its line
+// holds two (''). Read over the raw lines, such a quote changes which }} ends an expression and hides the read after it, so the rule
+// reads the parsed text of every key and value. A word of a run text is never a read: only an expression reads a context.
+describe('C-WF5 reads the values GitHub parsed, never the raw lines', () => {
+  const build = (line) => ({ file: 'publish.yml', job: 'build', from: '      TARGET: ${{ inputs.target }}\n', to: `      TARGET: \${{ inputs.target }}\n      ${line}\n` });
+  const RUN_NAME = "run-name: publish ${{ inputs.target }}${{ inputs.repair && ' REPAIR' || '' }}";
+  test('C-WF5 reads past a comment that opens a quote in a job', () => refuses('C-WF5', [build("# ${{ '\n      K: ${{ '}}' && secrets.MINISIGN_INDEX_KEY }}")], /^publish\.yml job build: secret MINISIGN_INDEX_KEY belongs only in a job with environment index$/));
+  test("C-WF5 reads a single-quoted value of a job as one '", () => refuses('C-WF5', [build("K: '${{ ''}}'' && secrets.MINISIGN_INDEX_KEY }}'")], /^publish\.yml job build: secret MINISIGN_INDEX_KEY belongs only in a job with environment index$/));
+  test('C-WF5 reads past a comment that opens a quote outside the jobs', () => refuses('C-WF5', [{ file: 'publish.yml', from: `${RUN_NAME}\n`, to: `# \${{ '\nrun-name: publish \${{ '}}' && vars.OTHER }}\n` }], /^publish\.yml: a secret or variable outside the jobs: \$\{\{ '\}\}' && vars\.OTHER \}\}$/));
+  test("C-WF5 reads a single-quoted value outside the jobs as one '", () => refuses('C-WF5', [{ file: 'publish.yml', from: `${RUN_NAME}\n`, to: "run-name: 'publish ${{ ''}}'' && vars.OTHER }}'\n" }], /^publish\.yml: a secret or variable outside the jobs: \$\{\{ '\}\}' && vars\.OTHER \}\}$/));
+  test('C-WF5 cuts the expression a problem outside the jobs shows', () => {
+    const problems = RULES['C-WF5'](mutant([{ file: 'publish.yml', from: `${RUN_NAME}\n`, to: `run-name: publish \${{ vars.OTHER || '${'x'.repeat(1000)}' }}\n` }]));
+    assert.ok(problems.some((p) => /^publish\.yml: a secret or variable outside the jobs: \$\{\{ vars\.OTHER \|\| 'x+\.\.\.\}\}$/.test(p)), JSON.stringify(problems).slice(0, 300));
+    assert.ok(problems.every((p) => p.length <= 400), 'every problem at most 400 characters');
+  });
+  test('C-WF5 reads no word of a run text as a read', () => {
+    const named = mutant([{ file: 'check.yml', job: 'review', from: '      - name: Set up Node\n', to: '      - name: Name the contexts\n        run: echo "Secrets, VARS, secrets.OTHER and vars are named here, never read"\n      - name: Set up Node\n' }]);
+    assert.deepEqual(RULES['C-WF5'](named), []);
+  });
+  // One message per read of the whole context once held the whole expression: a 1 MB `${{ secrets secrets ... }}` ran the reader
+  // out of memory instead of failing. A child with a small heap shows the rule fails closed within it.
+  test('C-WF5 names a whole context once per expression, cut short, within 128 MB and 30 s for a 1 MB expression', () => {
+    const dir = mutantDir([build(`K: \${{ ${'secrets '.repeat(1 << 17)}}}`)]);
+    const lib = pathToFileURL(path.join(ROOT, 'tools', 'lib', 'wfrules.mjs')).href;
+    const script = [
+      `import { RULES, loadWorkflows } from ${JSON.stringify(lib)};`,
+      `const p = RULES['C-WF5'](loadWorkflows(${JSON.stringify(dir)}));`,
+      'process.stdout.write(JSON.stringify({ n: p.length, longest: Math.max(0, ...p.map((s) => s.length)), first: String(p[0]).slice(0, 120) }));',
+    ].join('\n');
+    const r = spawnSync(process.execPath, ['--max-old-space-size=128', '--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(r.status, 0, `the rule did not finish within 128 MB and 30 s: status ${r.status}, signal ${r.signal}, ${String(r.stderr).slice(0, 300)}`);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.n, 1, `one problem, got ${r.stdout}`);
+    assert.ok(out.longest <= 400, `every problem at most 400 characters, got ${out.longest}`);
+    assert.match(out.first, /^publish\.yml job build: the whole secrets context in \$\{\{ secrets secrets /);
+  });
+});
+
 describe('C-WF6 workflow-level concurrency', () => {
   test('C-WF6 the real workflows pass', () => assert.deepEqual(RULES['C-WF6'](real), []));
   test('C-WF6 refuses cancel-in-progress true', () => refuses('C-WF6', [{ file: 'publish.yml', from: '  cancel-in-progress: false\n', to: '  cancel-in-progress: true\n' }], /publish\.yml: concurrency/));
@@ -420,6 +462,9 @@ describe('C-WF11 no reviewer is written in the repository; it is read from the e
   test('C-WF11 refuses an actor compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: "    timeout-minutes: 30\n    if: ${{ github.actor_id == '98765432' }}\n" }], /resign\.yml: a user id or login written as a literal/));
   test('C-WF11 refuses a login compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.triggering_actor == 'someone' }}\n" }], /publish\.yml: a user id or login written as a literal/));
   test('C-WF11 refuses a mixed-case actor compared with a literal in a workflow (GitHub reads names in any case)', () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ GitHub.Triggering_Actor == 'someone' }}\n" }], /^publish\.yml: a user id or login written as a literal \(line \d+\)$/));
+  // A workflow expression has no typeof: a literal in a workflow is never let through as one of its answers, in any case.
+  test("C-WF11 refuses an actor compared with 'String' in a workflow", () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ github.actor == 'String' }}\n" }], /^publish\.yml: a user id or login written as a literal \(line \d+\)$/));
+  test("C-WF11 refuses a mixed-case actor compared with 'NUMBER' in a workflow", () => refuses('C-WF11', [{ file: 'publish.yml', job: 'build', from: '    timeout-minutes: 120\n', to: "    timeout-minutes: 120\n    if: ${{ 'NUMBER' != GitHub.Actor }}\n" }], /^publish\.yml: a user id or login written as a literal \(line \d+\)$/));
   test('C-WF11 refuses an upper-case id compared with a literal in a workflow', () => refuses('C-WF11', [{ file: 'resign.yml', job: 'check', from: '    timeout-minutes: 30\n', to: '    timeout-minutes: 30\n    if: ${{ github.event.sender.ID == 98765432 }}\n' }], /^resign\.yml: a user id or login written as a literal \(line \d+\)$/));
   test('C-WF11 refuses a user id compared with a literal in a tool', () => refuses('C-WF11', [ab('const mine = (a) => a.user.id === 98765432;')], /tools\/approved-base\.mjs: a user id or login written as a literal/));
   test('C-WF11 refuses a literal compared with a user id in a tool', () => refuses('C-WF11', [ab("const mine = (a) => '98765432' == a.user?.id;")], /tools\/approved-base\.mjs: a user id or login written as a literal/));
