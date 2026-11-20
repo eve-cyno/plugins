@@ -53,6 +53,7 @@ const servebudget_1 = require("./servebudget");
 const grants_1 = require("./grants");
 const manifest_1 = require("./manifest");
 const zipread_1 = require("./market/zipread");
+const firstpartyallow_1 = require("./firstpartyallow");
 const refuse = (dir, code = 'bad_manifest') => ({ refused: { dir, code } });
 /** The log line of a failed start: a code-less error (not a manifest problem) names its class and a short message with no path in it. */
 const startFailure = (e) => {
@@ -393,7 +394,8 @@ class PluginRegistry {
         }
         this.deps.contributions.add(f.manifest);
         // The new entry starts in the state the old one was left in, so listeners hear exactly the change (disabled -> stopped, or none).
-        const e = { id: f.manifest.id, dir: f.dir, manifest: f.manifest, found: f, state: old?.state ?? 'stopped', disabledBy: old?.disabledBy, token: ++this.seq, tail: old?.tail ?? Promise.resolve() };
+        const e = { id: f.manifest.id, dir: f.dir, manifest: f.manifest, found: f, state: old?.state ?? 'stopped', disabledBy: old?.disabledBy, token: ++this.seq, tail: old?.tail ?? Promise.resolve(),
+            firstPartyExempt: this.firstPartyOf(f) };
         if (old?.fresh === true && old.dir === f.dir)
             e.fresh = true; // D20: a reload of a folder plugin not allowed yet is still asked afresh
         this.entries.set(e.id, e);
@@ -437,8 +439,14 @@ class PluginRegistry {
             return null;
         return typeof r === 'string' && SOURCE_HOLDS.has(r) ? r : 'source_busy';
     }
-    // What holds the plugin off now: a revocation first, then a source that is not live; null, nothing.
-    holdOf(e) { return this.isRevoked(e) ? 'revoked' : this.sourceHoldOf(e); }
+    // What holds the plugin off now: a revocation first, then a source that is not live; null, nothing. The source's hold is READ first (C2-1
+    // review I1): both hooks read the install binding, and records held by another process can be let go between the two reads. Read the other
+    // way, a busy binding gave "not revoked" (S2: a source's revocation waits for the binding) and the next read "source live": a plugin its
+    // source revokes started. Read this way, a busy binding gives `source_busy`, and once the binding reads it stays known (records.ts).
+    holdOf(e) {
+        const source = this.sourceHoldOf(e);
+        return this.isRevoked(e) ? 'revoked' : source;
+    }
     held(e) { return e.state === 'disabled' && isHold(e.disabledBy); }
     // ---- lifecycle ---------------------------------------------------------------------------------------------------
     /**
@@ -482,8 +490,9 @@ class PluginRegistry {
         for (const e of [...this.entries.values()]) {
             if (this.entries.get(e.id) !== e)
                 continue; // replaced meanwhile (a listener reacted to a change)
+            const source = this.sourceHoldOf(e); // read before the revocation (holdOf, C2-1 review I1)
             const revoked = this.isRevoked(e);
-            const hold = revoked ? 'revoked' : this.sourceHoldOf(e);
+            const hold = revoked ? 'revoked' : source;
             const was = this.held(e) ? e.disabledBy : null;
             if (hold && !was)
                 this.holdNow(e, hold);
@@ -862,7 +871,7 @@ class PluginRegistry {
             throw (0, errors_1.coded)('bad_params', 'kind');
         const wipe = this.wipeHooks(e, 'revoke');
         try {
-            await (0, grants_1.revokeGrant)(this.deps.grants, e.manifest, kind, wipe.hooks, { ...opts, builtIn: this.isBuiltIn(id) });
+            await (0, grants_1.revokeGrant)(this.deps.grants, e.manifest, kind, wipe.hooks, { ...opts, builtIn: this.isBuiltIn(id), firstPartyExempt: this.firstPartyExempt(id) });
         }
         catch (err) {
             if ((0, grants_1.isNotSaved)(err)) {
@@ -934,6 +943,27 @@ class PluginRegistry {
         return false;
     } }
     /**
+     * Owner rulings Q1 = A1, Q2 = P1 (2026-11-20): whether the registered plugin is the official first-party install of an id on FIRST_PARTY_ALLOWLIST
+     * (firstpartyallow.ts). It counts for `chatlogs` and `chat` (HT-M1) and the `data` condition, never as built-in. The entry's verdict (firstPartyOf),
+     * so every read of one entry answers alike: the start's grant, Revoke and Allow, the dispatcher, the chat rule of every batch and the page's namespaces.
+     */
+    firstPartyExempt(id) { return this.entries.get(id)?.firstPartyExempt === true; }
+    /**
+     * The verdict of a plugin about to be registered, decided once (Phase 2A review finding 3): its install record (`originOf`) against the identity the scan
+     * took of the folder (`f.dev`, `f.ino`: the folder the entry serves, checked again at a start, sameDirAsScanned), never an lstat of the folder at a later read,
+     * so a transient failure there cannot make one read of the entry disagree with another. Every record write comes before the registration it is for (the
+     * installer's moveIn, the update swap, applyAtStart and the swap repair, the refused-update restore), so a changed record means a new entry and a new verdict.
+     * Only an entry of the installed root qualifies: not a bundled or fixture root (`strict` false) and not a D20 folder, which is strict too but lives elsewhere
+     * (its identity is never the one the record of <installed>/<id> names). Fails closed: no hook, a throw, no record or a busy one, another identity or version.
+     * The record check is the folder's device, inode and version, not a check of the folder's files.
+     */
+    firstPartyOf(f) {
+        const of = this.deps.originOf;
+        if (!of || f.strict !== true || f.folder === true)
+            return false;
+        return (0, firstpartyallow_1.isFirstPartyExempt)(f.manifest.id, () => of(f.manifest.id, f.manifest, { strict: f.strict, dev: f.dev, ino: f.ino }));
+    }
+    /**
      * R18: asks again for the revoked `kinds` through the permission prompt. 'granted': the parts are back (a running plugin loads again);
      * 'kept': the user said no, so they stay revoked and the plugin keeps running as before (never the turn-off path of a denied escalation).
      * A plugin the marketplace revoked (R28): `not_permitted`, nothing asked, nothing changed.
@@ -948,7 +978,7 @@ class PluginRegistry {
             throw (0, errors_1.coded)('not_permitted', 'plugin is revoked'); // R28 (and DP3, a source not live): nothing is asked while it holds
         const wipe = this.wipeHooks(e, 'reset');
         const was = this.deps.grants.get(id)?.revoked ?? [];
-        const r = await (0, grants_1.allowGrant)(this.deps.grants, this.deps.prompter, e.manifest, this.deps.services.providersFor(e.manifest), kinds, wipe.hooks, this.isBuiltIn(id));
+        const r = await (0, grants_1.allowGrant)(this.deps.grants, this.deps.prompter, e.manifest, this.deps.services.providersFor(e.manifest), kinds, wipe.hooks, this.isBuiltIn(id), this.firstPartyExempt(id));
         if (r === 'kept' && wipe.torn())
             await this.restart(id, true); // only a reset that failed after the stop gets here with the page torn down (N1)
         if (r === 'granted' && (wipe.torn() || kinds.some(k => k !== 'background' && was.includes(k))))
@@ -1161,9 +1191,10 @@ class PluginRegistry {
             builtIn = this.deps.builtIn?.(e.id) === true;
         }
         catch { /* not built-in */ }
+        const fp = this.firstPartyExempt(e.id) ? { firstPartyExempt: true } : {}; // rulings Q1 = A1, Q2 = P1: the install record's verdict, its own input
         const source = this.kindOf(e);
         if (source === undefined)
-            return builtIn ? { builtIn } : {};
+            return { ...(builtIn ? { builtIn } : {}), ...fp };
         let sourceIndex;
         if (source === 'market' && this.deps.sourceIndexOf) {
             try {
@@ -1173,7 +1204,7 @@ class PluginRegistry {
                 sourceIndex = undefined;
             }
         } // review finding 1: the host names the index
-        return { source, ...(builtIn ? { builtIn } : {}), ...(sourceIndex ? { sourceIndex } : {}) };
+        return { source, ...(builtIn ? { builtIn } : {}), ...fp, ...(sourceIndex ? { sourceIndex } : {}) };
     }
     // A plugin whose consent is denied is listed as disabled and never gets a view.
     async settleGrant(e) {

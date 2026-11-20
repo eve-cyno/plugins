@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.READ_TRIES = void 0;
 exports.renameWithRetry = renameWithRetry;
 exports.writeFileAtomic = writeFileAtomic;
 exports.renameWithRetryAsync = renameWithRetryAsync;
@@ -47,6 +48,8 @@ const codeOf = (e) => e?.code ?? 'error';
 // Only the error code is ever logged: never file content, never an fs message (those carry paths).
 const warn = (what, e) => console.warn(`atomicfile: ${what} failed (${codeOf(e)})`);
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+/** readJsonDetailed tries a held file this many times before it answers `busy`. */
+exports.READ_TRIES = 10;
 const WIN_BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
 // Windows refuses a rename over a file that an antivirus scanner or indexer has open for a moment: retry briefly.
 function renameWithRetry(from, to) {
@@ -183,7 +186,7 @@ function readJsonDetailed(file, accept, io) {
             if (c === 'ENOENT')
                 return { status: 'missing' };
             if (win && WIN_BUSY.has(c)) {
-                if (i < 10) {
+                if (i < exports.READ_TRIES) {
                     sleep(25);
                     continue;
                 }
