@@ -38,15 +38,16 @@ older signed state is served), and the defense is the signed head with REPLAYED 
 review prints whatever that change wants (a `tools/check.mjs` that never names `maintenance`, say). The coordinator therefore runs
 every `node` command of this runbook that a merge or an approval rests on from `../eve-cyno-plugins-trusted`, a worktree beside
 its checkout at a commit whose code the owner has read: `<A>` (step 2 of "Before every index and mirror approval"), or, until the
-first production run whose `sign` and `upload` succeeded, `<X>`, the commit of the newest `read in full <X> <date>` line of his
-list ("Owner steps before the first production publish", step 0, which comes before the first merge and the first tool run). The
+first production run whose `sign` and `upload` succeeded, `<X>`, the commit the owner last said "read in full" for (the newest
+`read in full <X>` record, "Before every index and mirror approval", step 3; "Owner steps before the first production publish", step 0,
+which comes before the first merge and the first tool run). The
 commands are written for a shell in `<checkout>`: `node ../eve-cyno-plugins-trusted/tools/...` runs the trusted copy, and the
 checkout under review is only ever named as `--repo-dir`, `--dir` or `--repo`, never run. The worktree has its own
 `npm ci --ignore-scripts` and is never edited. It moves only to a commit the owner has read: never to the commit under review while
 he reads it (the vendor check of "Owner steps before the first production publish", step 0.2, reads that commit's tree from the
-unmoved worktree). To set it up at `<X>`, to move it to a later commit read in full once its `read in full` line is written (step 4
+unmoved worktree). To set it up at `<X>`, to move it to a later commit read in full once the coordinator has recorded the owner's `read in full` message (step 4
 of "Before every index and mirror approval"), and to move it after each production run whose `sign` and `upload` succeeded and
-which the owner entered in his list (that run's commit is the next `<A>`):
+whose head the Discord head log shows (that run's commit is the next `<A>`):
 
 ```
 git -C <checkout> worktree add --detach ../eve-cyno-plugins-trusted <X>   # once
@@ -133,7 +134,7 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
 - **Why "Prevent self-review" stays off, and what guards instead.** With one account as dispatcher and approver it would block every
   run. The safeguards are: (1) the agents' token cannot approve or change the protection rules (the probes of
   `tools/check-envs.mjs`, plus the empirical check after the token switch, below); (2) the reading before every approval, with
-  `tools/approved-base.mjs` and the owner's own list; (3) recovery R2's stop rule for missing artifacts.
+  `tools/approved-base.mjs` and the Discord head log; (3) recovery R2's stop rule for missing artifacts.
 - **The agents can write secrets, named honestly.** The agents' token holds Secrets and Environments, read and write, for good
   (owner decision 2026-11-18), so the coordinator sets secrets with the scripted commands and the owner never pastes one. So an
   agent can replace a secret's value (the index key and passphrase, the R2 keys) or an environment variable (`R2_ACCOUNT_ID`,
@@ -173,7 +174,7 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   `permissions: actions: write` for its own `GITHUB_TOKEN` and delete runs or artifacts, or it can prepare a run that the owner then
   dispatches and approves under his own identity: GitHub cannot tell the owner's action from an agent's suggestion, and self-review
   prevention is off. **Only the reading before every approval catches this**: `<A>` from `tools/approved-base.mjs`, the compare view
-  from `<A>` with every change other than the `entries/<id>.json` files and `revoked.json` read, and the owner's own list. Without
+  from `<A>` with every change other than the `entries/<id>.json` files and `revoked.json` read, and the Discord head log. Without
   the owner's approval on his phone such a run still reaches no secret.
 - **Not testable**, so the owner's rules: that no agent shell ever gets a GitHub token with more rights than the agents' token (the
   owner's everyday token, which has `admin:org`, can approve deployments and rewrite environments) or a signed-in GitHub session; and
@@ -320,36 +321,41 @@ approval only). The owner (the environments' only reviewer) does the reading in 
    ("When a run is red", the `Refuse a re-run` row). The tool is a convenience: confirm on `<A>`'s run page that the `index`
    approval shown is your own.
    The `<A>` it prints must be the trusted worktree's commit (`git -C ../eve-cyno-plugins-trusted rev-parse HEAD`; with `FIRST
-   PUBLISH`, that commit must be `<X>`, the newest `read in full` line of the list). When it is not, stop: either the worktree was
-   not moved after the last approved run (move it once step 3 has confirmed `<A>` against the list, then start again at step 1), or
-   the list does not hold that run (no approval).
+   PUBLISH`, that commit must be `<X>`, the newest `read in full` record). When it is not, stop: either the worktree was
+   not moved after the last approved run (move it once step 3 has confirmed `<A>` against the head log, then start again at step 1), or
+   the head log does not show that run (no approval).
    The agents' token cannot write an approval record or change who may approve, so an approval by the owner's account means the
    owner approved, on his phone.
-3. **Check against your own list.** GitHub's run history can be deleted by a workflow with `actions: write`, and an agent can push
-   such a workflow over SSH ("One account", the residual). So the owner keeps a list outside GitHub and outside the workstation (for
-   example a note on the phone), one entry per **production `index` approval**:
-
-   | run id | workflow | commit | head `generated` | `sign` | `upload` |
-   |---|---|---|---|---|---|
-
-   Write the first four at the `index` approval (the `generated` from the run summary, after step 5), and the outcome of `sign` and
-   `upload` after the run. Test runs are not entries; refused approvals and failed runs are entries only as far as they got. The
-   list also holds the lines `read in full <commit> <date>` ("Owner steps before the first production publish", step 0, and step 4
-   below); they are not run entries.
-   **No approval** when: `<A>` is not the newest entry of the list whose `sign` and `upload` both succeeded (the run under review
-   aside); a run of the list no longer shows on GitHub; or the live base (the verified live head, or R2's base) has a `generated` older
-   than that newest entry's (an older verified head was replayed).
-4. **First publish only** (the tool says `FIRST PUBLISH`, there is no `<A>`): allowed only while no entry of your list has a
-   successful `sign` (a signed head may have gone live, as recovery R2 counts it). After such an entry, a run that calls itself a
+3. **Check against the Discord head log.** GitHub's run history can be deleted by a workflow with `actions: write`, and an agent can
+   push such a workflow over SSH ("One account", the residual). So the check also rests on a record outside GitHub and outside the
+   workstation: the uptime Worker of `eve-cyno/infra` (`infra/monitor/uptime-worker.js`, cron every 5 minutes) reads the live head and
+   posts to the project's Discord alert channel, once per change, `Plugin index head changed: generated <iso>, sha256 <64 hex>,
+   expires <iso> (previous: generated <iso>, sha256 <64 hex>)`. The post is prefixed `OLDER ` when the new head's `generated` is older
+   than the last logged one. The channel's history is outside GitHub and outside the workstation, and a webhook can post to it but
+   nobody reads its token from the repository. The owner reads the channel; he keeps no list of his own (owner decision 2026-11-20).
+   The coordinator compares the run summary of `<A>`'s run (its head's `generated` and SHA-256) with the channel.
+   **No approval** when: `<A>` is not the newest head in the channel whose run's `sign` and `upload` both succeeded (the run under
+   review aside; compare `generated` and SHA-256 of the post with the run summary of `<A>`'s run); a run with a successful `upload` is
+   missing from GitHub while its head is in the channel; the channel shows an `OLDER` post that no recovery explains (a repair run, say,
+   "Recovery R2", is the only explanation); or the live head's `generated` (the verified live head, or R2's base) is older than the
+   newest posted one (an older verified head was replayed).
+   What the channel does **not** give: it records live heads, not approvals. A run whose `sign` succeeded but whose `upload` failed never
+   reaches the channel, so for those runs the GitHub run page is the only record ("Known residuals"). Test runs and refused approvals
+   leave no post either.
+   The owner's `read in full` message is not in the channel: for each commit he has read (step 4 below; "Owner steps before the first
+   production publish", step 0) he says "read in full <40 hex>" in his chat with the coordinator, which records it (`work_state` and the
+   handoff of the next run). The 40 hex digits are required: a prefix is not enough, and the coordinator records nothing else.
+4. **First publish only** (the tool says `FIRST PUBLISH`, there is no `<A>`): allowed only while no run of the
+   GitHub history or the head log has a successful `sign` (a signed head may have gone live, as recovery R2 counts it). After such a run, a run that calls itself a
    first publish means **no approval**. When GitHub shows such a run but none with a successful `upload`, the tool says `NOT A FIRST
    PUBLISH`: then only a repair run (`repair: true`, step 6) may be approved, read as this step says, since there is no `<A>`
    (once that run is 90 days old, not even that: "Recovery R2", a dead end at 90 days). In place of `<A>`, the base is `<X>`, the
-   newest `read in full <X> <date>` line of your list, at which the trusted worktree stands (step 2 checked it). Unless `<B>` is
+   newest `read in full <X>` record, at which the trusted worktree stands (step 2 checked it). Unless `<B>` is
    `<X>`, read `<B>` in full in the order of "Owner steps before the first production publish", step 0, with `<B>` as `<Y>`: the
    compare status of `<X>` to `<B>` `ahead` or `identical`, and every change of
    `https://github.com/eve-cyno/plugins/compare/<X>...<B>` other than the `entries/<id>.json` files, `revoked.json` and `vendor/`,
    `package-lock.json` included; then the coordinator runs the vendor check of step 0.2 there for `<B>` from the unmoved worktree
-   (still at `<X>`) and hands over its output; then you read `vendor/` against that output and add `read in full <B> <date>`.
+   (still at `<X>`) and hands over its output; then you read `vendor/` against that output and say "read in full <B>" (all 40 hex) to the coordinator.
    Only then does the coordinator move the worktree to `<B>` ("Roles"), and steps 1 and 2 run again from it. For a first publish
    this reading is step 5.
 5. **Check the direction, then read the change** (after `FIRST PUBLISH`, step 4 is this step). The compare status of `<A>` to
@@ -371,15 +377,16 @@ approval only). The owner (the environments' only reviewer) does the reading in 
 6. **Repair runs only** (`repair: true`): the coordinator hands over the output of a local
    `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` (not paced: it reads every archive without a pause) that shows the live index
    failing to verify. Read in the run
-   summary which candidate runs gave the base and where the floor came from; check each named run on its own page and against your
-   list: every entry younger than 90 days with a successful `sign` must be among the candidates, and one missing means no approval.
+   summary which candidate runs gave the base and where the floor came from; check each named run on its own page and against the head log
+   (a run that signed but did not upload is on its run page only): every run younger than 90 days with a successful `sign` must be
+   among the candidates, and one missing means no approval.
    The word REPAIR in the run name and summary is printed by workflow code, so trust it only after steps 2 and 5 showed that code
    unchanged or read.
 7. Only then approve. The run summary is a convenience; it never replaces steps 1 to 5 (and 6 for a repair).
 
 **At the `mirror` approval of the same run**, repeat steps 1, 2, 3, 5 and (for a repair) 6 with the same `<B>`. `<A>` excludes the run
 under review, so it is the same `<A>`; read the change again with the `upload` job's code in mind (it runs with the `mirror` secrets).
-After `FIRST PUBLISH`, `<B>` is by then the newest `read in full` line, so step 4 has nothing left to read; read `<B>` again with the
+After `FIRST PUBLISH`, `<B>` is by then the newest `read in full` record, so step 4 has nothing left to read; read `<B>` again with the
 `upload` job in mind. For a `target: test` run, this is the first and only reading (with `FIRST PUBLISH`, step 4 included).
 
 ## Owner steps before the first production publish
@@ -405,7 +412,7 @@ below. O1 is the owner's alone.
    and adds the trusted worktree at it without installing anything (`git -C <checkout> worktree add --detach
    ../eve-cyno-plugins-trusted <X>`). Before he reads, the owner compares the 40-hex `<X>` the coordinator printed with the head of `main` on github.com
    (`https://github.com/eve-cyno/plugins/commits/main`); for a later commit `<Y>` (read as `<B>` at an approval), with the commit its run
-   page shows, not `main`'s head, which may have moved on; any difference: no line. Then the owner reads `<X>` in full, in this order. The same order reads a later commit `<Y>`
+   page shows, not `main`'s head, which may have moved on; any difference: no "read in full". Then the owner reads `<X>` in full, in this order. The same order reads a later commit `<Y>`
    in full ("Before every index and mirror approval", step 4), with `<Y>` in place of `<X>` and the compare view from the newest
    `read in full` commit in place of every file:
    1. The owner reads every file at `<X>` (`https://github.com/eve-cyno/plugins/tree/<X>`) other than the `entries/<id>.json`
@@ -431,13 +438,13 @@ below. O1 is the owner's alone.
       `base-tree.mjs` and this check load no vendored module; no other tool runs from the worktree until the owner has read
       `vendor/`. For `<Y>`, a change to `tools/vendor-host.mjs`, `tools/base-tree.mjs`, `tools/lib/basetree.mjs` or `tools/lib/gitsafe.mjs`
       lands in a commit range with no `vendor/` change: the owner reads it in full and the worktree moves to it; only then does a
-      `vendor/` change follow, checked by the moved worktree's tools. A range that holds both means no `read in full` line.
+      `vendor/` change follow, checked by the moved worktree's tools. A range that holds both means no `read in full` record.
    3. The owner reads `vendor/` against that output: the check passes (`<D>` is on desktop `main`, and no difference from a fresh
-      make), and `<D>` is a desktop commit he accepts. Any doubt, or a failed check: no line (for `<X>`, the coordinator removes
+      make), and `<D>` is a desktop commit he accepts. Any doubt, or a failed check: no "read in full" (for `<X>`, the coordinator removes
       the worktree).
-   4. He adds `read in full <X> <date>` to his list (outside GitHub and the workstation, "Before every index and mirror approval"
-      step 3). Until the first production run whose `sign` and `upload` succeeded, the newest such line names the trusted
-      worktree's commit. For `<Y>`, the coordinator moves the worktree to `<Y>` only after that line is written ("Roles").
+   4. He says "read in full <X>" (all 40 hex) in his chat with the coordinator, which records it ("Before every index and mirror
+      approval", step 3). Until the first production run whose `sign` and `upload` succeeded, the newest such record names the
+      trusted worktree's commit. For `<Y>`, the coordinator moves the worktree to `<Y>` only after that record is made ("Roles").
 1. The environments exist with the settings above; the written confirmation in "One account" is filled in.
 2. The token is switched (O2, done): `node ../eve-cyno-plugins-trusted/tools/check-envs.mjs --rev <main's head> --repo-dir
    <checkout>` passes, the probe table is filled in, and the empirical approve check is recorded with a refusal.
@@ -563,7 +570,8 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
    `gh run list --repo eve-cyno/plugins --workflow publish.yml --limit 1 --json headSha` must name that commit.
 3. `build` checks against the live base and prints the head's bytes and SHA-256 in the summary. Approve `index` only after the steps
    above; then `mirror`, after them again.
-4. After the run, add the outcome of `sign` and `upload` to your list.
+4. After the run, the coordinator reads the outcome of `sign` and `upload` on the run page and finds the new head in the Discord
+   head log (it appears within about 5 minutes of a successful `upload`; none after a failed `upload`).
 
 Every run has one commit (`github.sha`); `build` fails if that commit is no longer the head of `main`. **No run is ever re-run**, not
 even its failed jobs: the first step of every job fails on any attempt but the first. Dispatch a new run.
@@ -622,7 +630,7 @@ success is a 404 whatever `cf-cache-status` says) are in the infrastructure runb
 
 | Where | What it means | What to do |
 |---|---|---|
-| `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run. The re-run itself needs no recovery: `approved-base.mjs` and the repair base read the jobs of every attempt and judge attempt 1, and skip the run when it has no `index` approval and its attempt 1 did not sign. Only when they stop with an ERROR at that run (attempt 1 not readable from its jobs list, a later attempt's `sign` or `upload` shown as succeeded, or attempt 1 signed with no `index` approval listed) does the owner read each of its attempts on the run page against his list, and find `<A>` (or, for a repair, the candidates) by hand while that run is newer than `<A>` |
+| `Refuse a re-run` step | someone re-ran the run | nothing was built, signed or uploaded by this attempt; dispatch a new run. The re-run itself needs no recovery: `approved-base.mjs` and the repair base read the jobs of every attempt and judge attempt 1, and skip the run when it has no `index` approval and its attempt 1 did not sign. Only when they stop with an ERROR at that run (attempt 1 not readable from its jobs list, a later attempt's `sign` or `upload` shown as succeeded, or attempt 1 signed with no `index` approval listed) does the owner read each of its attempts on the run page against the Discord head log, and find `<A>` (or, for a repair, the candidates) by hand while that run is newer than `<A>` |
 | `build` or `head` | a check failed, or the commit is no longer `main`'s head | read the summary; fix through a pull request; dispatch a new run |
 | `sign` | the key, passphrase, head checks or signature verification failed | nothing left the job but the error; set the `index` secrets again with the command of "Secrets and variables" and check the head; dispatch a new run |
 | `build` or `upload`, `LIVE UNVERIFIED: catalog/<sha256>.json: HTTP 404` | the head and signature verify, but the catalog they name is gone | recovery R2: the coordinator confirms with `node ../eve-cyno-plugins-trusted/vendor/eve-cyno-host/scripts/index-verify.mjs --live --archives` (not paced: it reads every archive without a pause), then the owner dispatches `publish.yml` with `repair: true` |
@@ -700,6 +708,11 @@ at the next approval, step 5 of "Before every index and mirror approval", step 4
 the vendor check of "Owner steps before the first production publish", step 0.2, from the unmoved trusted worktree). Both index
 keys lost is not fatal (checklist, "Keys lost, not leaked").
 
+## Change notes
+
+- 2026-11-20, owner decision: the hand-kept list is replaced by the uptime Worker's Discord head log (infra `d4589af`). The owner says
+  "read in full <40 hex>" in the coordinator's chat in place of writing `read in full` lines.
+
 ## Known residuals
 
 Found in review, accepted, and named here so nobody counts on more than the tools give:
@@ -714,6 +727,10 @@ Found in review, accepted, and named here so nobody counts on more than the tool
   `tools/approved-base.mjs` and blocks reviews until the owner deletes that run. It fails closed: availability only.
 - `tools/vendor-host.mjs` accepts any ancestor of desktop `main`, so a re-vendor from a commit before 2026-11-20 would restore the
   retired index pins; the owner's `vendor/` reading (step 0.3) is the check.
+- The Discord head log records live heads only (owner decision 2026-11-20, replacing the owner's hand-kept list; infra `d4589af`).
+  A run whose `sign` succeeded but whose `upload` failed never reaches it, so for those runs the GitHub run page is the only record,
+  and a workflow that deletes runs can erase it. The `read in full` records are the coordinator's, from the owner's chat message, not
+  the channel's. The channel does not record approvals either: who approved is read on GitHub.
 - Any edit of the `sign` job, an action pin bump included, needs its new pin in `SIGN_STEPS` in `tools/lib/wfrules.mjs` in the same
   commit; the error prints the new hash.
 - `tools/lib/repairbase.mjs` filters runs with `notOnMain` only, so an own-repo run of another event (a push, say) with approved
