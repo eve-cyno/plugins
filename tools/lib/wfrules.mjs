@@ -622,7 +622,7 @@ const REVIEWER_IN_RE = /[^\n]{0,80}reviewer[^\n]{0,80}/i;
  * protection rules (tools/lib/reviewer.mjs). No workflow names a reviewer outside a comment (no input, variable or secret); no
  * workflow or tool writes a user id or login as a literal. A workflow is read line by line without its YAML comments and also as
  * GitHub reads it (entryTexts: a quoted ` #` is text, a block value runs over lines, which `\s*` spans, and a shell comment in a
- * run block is text too), a literal matched in lower case both ways, so neither spelling hides a reviewer or a literal. No tool
+ * run block is text too), a literal matched in lower case both ways, so the direct forms (see the RUNBOOK residual on C-WF11) are read whatever the YAML quoting, comments or block layout. No tool
  * takes a reviewer argument or environment variable; there is no
  * reviewer file, and no tool, workflow or document names one or a reviewer id or login key; tools/lib/reviewer.mjs exists, imports
  * only ./github.mjs and reads neither process nor a module loaded at run time. A static rule cannot know the real login and id:
