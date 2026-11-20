@@ -40,3 +40,8 @@ test('the SDK pins the template\'s TypeScript as a dev dependency, with a lockfi
   assert.match(ts.integrity, /^sha512-/);
   assert.ok(!pkg.dependencies, 'the SDK has no runtime dependency');
 });
+
+test('the SDK needs the Node of the scaffold package (zlib.crc32 of the template zip script)', () => {
+  const scaffold = JSON.parse(readFileSync(join(SDK, 'create-plugin', 'package.json'), 'utf8'));
+  assert.equal(pkg.engines?.node, scaffold.engines.node);
+});

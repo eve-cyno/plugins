@@ -169,6 +169,14 @@ test('package.json eveCynoApi, the template engines range and the vendored pin a
   assert.deepEqual(pkg.files.sort(), ['LICENSE', 'README.md', 'bin/', 'lib/', 'template/']);
 });
 
+test('the Node minimum is the one zlib.crc32 needs: the package engines and the zip script agree', () => {
+  const zipScript = readFileSync(join(HERE, 'template', 'scripts', 'zip.mjs'), 'utf8');
+  const need = /use Node (\d+\.\d+) or newer/.exec(zipScript)?.[1];
+  assert.equal(need, '22.2', 'zlib.crc32 is in Node 22.2 and newer');
+  assert.ok(zipScript.includes(`zlib.crc32 is Node ${need} and newer`));
+  assert.equal(JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).engines.node, `>=${need}`);
+});
+
 test('the template holds no host (PolyForm) file and no token is left unfilled', () => {
   for (const [path, content] of render(ANSWERS)) {
     assert.ok(!path.includes('vendor'), path);

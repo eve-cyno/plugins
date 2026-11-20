@@ -8,7 +8,7 @@
   "eveCynoApi": "1.29.0",
   "bin": { "create-plugin": "bin/create-plugin.mjs" },
   "files": ["bin/", "lib/", "template/", "LICENSE", "README.md"],
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.2" },
   "scripts": {
     "test": "node --test \"test/**/*.test.mjs\""
   }

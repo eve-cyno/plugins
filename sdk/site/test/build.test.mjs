@@ -346,6 +346,11 @@ test('start: not-on-npm note, the npm install step, and the not-open callout fol
   assert.match(text, /not on npm/i);
   assert.match(text, /npm install/);
   assert.match(text, /Nobody can install your plugin yet/);
+  // The Node minimum is the template zip script's (zlib.crc32), in the text and the badge.
+  const need = /use Node (\d+\.\d+) or newer/.exec(readFileSync(join(REPO_ROOT, 'sdk', 'create-plugin', 'template', 'scripts', 'zip.mjs'), 'utf8'))[1];
+  assert.ok(text.includes(`You need Node ${need} or newer`), `start text: Node ${need}`);
+  assert.ok(html(join(tmp, 'off'), 'start').includes(`>Node ${need} or newer</span>`), `start badge: Node ${need}`);
+  assert.ok(html(join(tmp, 'off'), 'start').includes(`"s":"Node ${need}+, one command, a running plugin"`), `search index summary: Node ${need}`);
   const live = textOf(main(join(tmp, 'live'), 'start'));
   assert.doesNotMatch(live, /Nobody can install your plugin yet|not open yet|not live/i);
 });

@@ -143,7 +143,7 @@ export function buildPages(ctx) {
     const body = newBody();
     const files = ctx.scaffold;
     const tree = [...files.keys()].map((k) => `  ${k}`).join('\n');
-    body.h2('Before you start').p('You need Node 22 or newer, npm, and the EVE-Cyno desktop app with the developer folder section of Settings > Plugins. A plugin is a folder with a `plugin.json`, one HTML page and a script. It runs in a sandbox and reaches the app only through the [plugin API](@@api).');
+    body.h2('Before you start').p('You need Node 22.2 or newer, npm, and the EVE-Cyno desktop app with the developer folder section of Settings > Plugins. A plugin is a folder with a `plugin.json`, one HTML page and a script. It runs in a sandbox and reaches the app only through the [plugin API](@@api).');
     if (!ctx.indexLive) {
       body.raw(`<aside class="callout" data-kind="warning">${ico('i-warn')}<div><p class="callout-title">Nobody can install your plugin yet</p><p>The Marketplace is not live. A plugin you build here runs on your machine, from a folder you chose. You cannot publish it, and no one else can find it. Build it anyway: the same folder is what you will submit.</p></div></aside>`);
     }
@@ -191,8 +191,8 @@ ${pre('main', files.get('src/main.ts'), true)}
     add({
       slug: 'start', section: 'docs', nav: 'Get started', navLabel: 'Getting started', title: 'Getting started',
       lede: 'Create a plugin from the template, build it and load it in the desktop app. About five minutes, no account and no permission request.',
-      badges: [{ text: 'Node 22 or newer' }, { text: `Plugin API ${ctx.apiVersion}` }, { text: 'Local only for now' }],
-      body: body.html(), toc: body.toc, source: 'Built from the template and the API declarations', summary: 'Node 22+, one command, a running plugin',
+      badges: [{ text: 'Node 22.2 or newer' }, { text: `Plugin API ${ctx.apiVersion}` }, { text: 'Local only for now' }],
+      body: body.html(), toc: body.toc, source: 'Built from the template and the API declarations', summary: 'Node 22.2+, one command, a running plugin',
     });
   }
   {
