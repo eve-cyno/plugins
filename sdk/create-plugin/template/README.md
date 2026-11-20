@@ -9,7 +9,8 @@ The plugin asks for no permission, so the app shows no consent question for it a
 
 ## Licence
 
-This project has no licence yet. Pick one before you publish it and add a `LICENSE` file and a `license` field to `package.json`. The
+The files this project started from are MIT-0 (`LICENSE`, "MIT No Attribution"): you owe no notice. Your plugin may use any licence. Before
+you publish it, replace `LICENSE` with the licence you pick and add a `license` field to `package.json`. The
 files in `types/eve-cyno-plugin-api/` are the API's own declarations, under the MIT licence in that folder.
 
 ## What is here
@@ -36,8 +37,8 @@ Run `npm install` once (it installs TypeScript only). Then:
 
 ## Try it in the app
 
-Open Settings > Plugins > Developer, turn the developer folder on and pick `dist/{{id}}/`. The app reloads the plugin each time the
-folder changes, so `npm run build` is the whole loop.
+Open Settings > Plugins. Below the plugin list, switch on "Load a plugin from a folder", press "Choose folder…" and pick `dist/{{id}}/`.
+After each `npm run build`, press "Reload": the build deletes and re-creates the folder, and on Windows the app may not notice that.
 
 ## Submit it
 

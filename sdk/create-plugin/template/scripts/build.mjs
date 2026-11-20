@@ -1,5 +1,5 @@
 // Builds the plugin: tsc compiles src/ into build/, then the plugin folder dist/<id>/ is made of plugin.json, static/** and the
-// compiled build/**. That folder is what Settings > Plugins > Developer loads and what scripts/archive.mjs packs.
+// compiled build/**. That folder is what "Load a plugin from a folder" in Settings > Plugins loads and what scripts/archive.mjs packs.
 //   node scripts/build.mjs   (npm run build)
 // Exits 1 with the reason when TypeScript is not installed, tsc fails, plugin.json has no plain id, `main` is not in the folder, or a
 // file cannot go into the folder: a link, anything but files and folders, an empty folder, a name that is not plain (zip.mjs), or a

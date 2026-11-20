@@ -2,7 +2,7 @@ This page walks through the plugin that `create-plugin` writes, with the answers
 
 ## How the files fit together
 
-You write TypeScript in `src/`, a page in `static/` and a manifest. `npm run build` compiles `src/` with `tsc` into `build/`, then copies the manifest, everything in `static/` and everything in `build/` into one folder, `dist/<your-id>/`. That folder is the plugin: it is what you load in Settings > Plugins > Developer, and what `npm run pack` zips. The build stops with a message when `plugin.json` has no valid id, when `main` is not a file of the folder, or when a file name comes from both `static/` and `build/`.
+You write TypeScript in `src/`, a page in `static/` and a manifest. `npm run build` compiles `src/` with `tsc` into `build/`, then copies the manifest, everything in `static/` and everything in `build/` into one folder, `dist/<your-id>/`. That folder is the plugin: it is what you load from a folder in Settings > Plugins, and what `npm run pack` zips. The build stops with a message when `plugin.json` has no valid id, when `main` is not a file of the folder, or when a file name comes from both `static/` and `build/`.
 
 ## plugin.json
 
@@ -32,7 +32,7 @@ The [page](#file-static-main-html) holds a heading, the description, a button an
 
 ## package.json and tsconfig.json
 
-The [package file](#file-package-json) is private, has no `license` field and one dev dependency, TypeScript. Its scripts are the ones in [Getting started](@@start): `build`, `test`, `pack`, `entry` and `check`. Pick a licence for your plugin before you share it. The [TypeScript config](#file-tsconfig-json) compiles `src/` into `build/` for the browser, in strict mode, with no ambient types.
+The [package file](#file-package-json) is private, has no `license` field (the project's `LICENSE` file holds the MIT-0 text) and one dev dependency, TypeScript. Its scripts are the ones in [Getting started](@@start): `build`, `test`, `pack`, `entry` and `check`. Replace `LICENSE` with the licence you pick before you share the plugin. The [TypeScript config](#file-tsconfig-json) compiles `src/` into `build/` for the browser, in strict mode, with no ambient types.
 
 ## test/manifest.test.mjs
 

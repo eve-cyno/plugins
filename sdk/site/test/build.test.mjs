@@ -275,8 +275,8 @@ const unescapeCode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replac
 const main = (out, slug) => /<main[\s\S]*<\/main>/.exec(html(out, slug))?.[0] ?? html(out, slug);
 
 test('API pages built from the README name no desktop-internal path, command or test build', () => {
-  const internal = [/src\/index\.ts/, /host\/src/, /packages\/[a-z-]+/, /npm --prefix/, /selftest/, /store-core/, /dev\.evecyno\.\*/, /test build/i, /In this repository/];
-  const slugs = PLAN_PAGES.filter((s) => s.startsWith('api') || ['manifest', 'packaging'].includes(s));
+  const internal = [/src\/index\.ts/, /host\/src/, /packages\/[a-z-]+/, /npm --prefix/, /selftest/, /store-core/, /dev\.evecyno\.\*/, /test build/i, /In this repository/, /cynod/i, /owner check/i, /not verified yet/i, /dataallow/i, /devfolder/i, /Plugins > Developer/, /resolves to built/];
+  const slugs = PLAN_PAGES.filter((s) => s.startsWith('api') || ['manifest', 'packaging', 'permissions', 'local-testing', 'start', 'tutorial'].includes(s));
   assert.ok(slugs.length > 30);
   for (const slug of slugs) {
     const text = textOf(main(join(tmp, 'off'), slug));

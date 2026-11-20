@@ -143,7 +143,7 @@ export function buildPages(ctx) {
     const body = newBody();
     const files = ctx.scaffold;
     const tree = [...files.keys()].map((k) => `  ${k}`).join('\n');
-    body.h2('Before you start').p('You need Node 22 or newer, npm, and the EVE-Cyno desktop app with Settings > Plugins > Developer available. A plugin is a folder with a `plugin.json`, one HTML page and a script. It runs in a sandbox and reaches the app only through the [plugin API](@@api).');
+    body.h2('Before you start').p('You need Node 22 or newer, npm, and the EVE-Cyno desktop app with the developer folder section of Settings > Plugins. A plugin is a folder with a `plugin.json`, one HTML page and a script. It runs in a sandbox and reaches the app only through the [plugin API](@@api).');
     if (!ctx.indexLive) {
       body.raw(`<aside class="callout" data-kind="warning">${ico('i-warn')}<div><p class="callout-title">Nobody can install your plugin yet</p><p>The Marketplace is not live. A plugin you build here runs on your machine, from a folder you chose. You cannot publish it, and no one else can find it. Build it anyway: the same folder is what you will submit.</p></div></aside>`);
     }
@@ -154,7 +154,7 @@ export function buildPages(ctx) {
     body.raw(`<ol class="steps">
 <li><span class="step-t">Create the project</span>${cmd('npm create @eve-cyno/plugin my-plugin')}</li>
 <li><span class="step-t">Build it</span>${cmd('cd my-plugin && npm run build')}</li>
-<li><span class="step-t">Load the folder</span><p>In the app open <b>Settings &gt; Plugins &gt; Developer</b>, switch the developer folder on and pick <code>dist/&lt;your-id&gt;</code>. The app reloads the plugin each time the build changes it.</p></li>
+<li><span class="step-t">Load the folder</span><p>In the app open <b>Settings &gt; Plugins</b>. Below the plugin list, switch on <b>Load a plugin from a folder</b>, press <b>Choose folder…</b> and pick <code>dist/&lt;your-id&gt;</code>. After each build press <b>Reload</b>.</p></li>
 </ol>`);
     body.h2('What you get').p('The template asks for no permission, which is the smallest thing a reviewer can read. One command and one tile action show where `contributes` goes.');
     const tab = (name, label, sel) => `<button class="code-tab" type="button" role="tab" aria-selected="${sel}"${sel ? '' : ' tabindex="-1"'} data-tab="${name}">${esc(label)}</button>`;
@@ -212,13 +212,13 @@ ${pre('main', files.get('src/main.ts'), true)}
   }
   {
     const body = prose(newBody(), 'local-testing', [
-      ['Developer folder', 'Settings > Plugins > Developer: one folder, off by default, watched for reload while it is on (`host/src/devfolder.ts`)'],
+      ['Developer folder', 'Settings > Plugins, section below the plugin list: one folder, off by default, with Choose folder… and Reload'],
       ['Plan', 'plan section 3, page P4; reviewed before it is written (it states a trust boundary)'],
     ]);
     add({
       slug: 'local-testing', section: 'docs', nav: 'Get started', navLabel: 'Local testing', title: 'Local testing',
-      lede: 'Load a plugin folder in the app, see it reload on every build, and know what a folder plugin may and may not do.',
-      body: body.html(), toc: body.toc, source: 'Hand-written from the developer folder code', summary: 'Load a folder in Settings > Plugins > Developer',
+      lede: 'Load a plugin folder in the app, reload it after every build, and know what a folder plugin may and may not do.',
+      body: body.html(), toc: body.toc, source: 'Hand-written from the developer folder code', summary: 'Load a folder from Settings > Plugins',
     });
   }
 
@@ -226,7 +226,7 @@ ${pre('main', files.get('src/main.ts'), true)}
   {
     const body = newBody();
     body.h2('Declaration');
-    body.p('`getEveCyno()` returns the namespaces of the plugin API. The `EveCyno` interface is the list below.');
+    body.p('The `eveCyno` global of a plugin page has the shape of the `EveCyno` interface, the list below.');
     declBlocks(body, declPages.get('api') ?? []);
     body.h2('Namespaces');
     const rows = namespaces.map((n) => {
@@ -249,7 +249,7 @@ ${pre('main', files.get('src/main.ts'), true)}
     const t = nsType.get(n.name);
     const body = newBody();
     body.h2('Declaration', `${n.name}-decl`);
-    body.p('Get the namespace from `getEveCyno()`.');
+    body.p('Read the namespace from the `eveCyno` global.');
     declBlocks(body, declPages.get(`api/${n.name}`) ?? []);
     const members = t ? interfaceMembers(t) : [];
     if (members.length) {
@@ -328,7 +328,7 @@ ${pre('main', files.get('src/main.ts'), true)}
     body.h2('Built-in plugins only', 'built-in-only');
     const allow = [...ctx.dataAllow].map(([id, packs]) => `\`${id}\` (${packs.map((p) => `\`${p}\``).join(', ')})`).join(', ');
     body.p(`\`permissions.data\` is refused for every plugin id except these built-in plugins: ${allow}.`);
-    body.facts([['Source', '`dataallow.ts` `DATA_ALLOWLIST` (vendored host) and the schema `permissions` object']]);
+    body.facts([['Source', 'The built-in plugin list of the app and the schema `permissions` object']]);
     add({
       slug: 'permissions', section: 'docs', nav: 'Reference', navLabel: 'Permissions and grants', title: 'Permissions and grants',
       lede: 'What each permission unlocks, how consent works, and what a built-in plugin gets that a third-party plugin does not.',

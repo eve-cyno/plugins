@@ -70,6 +70,43 @@ export const DROPPED_TEXT = [
   },
 ];
 
+/**
+ * Text replaced in a section before it is rendered: `{ section, pattern, replacement, reason }`. Each pattern must match once. A
+ * `Frozen surface` rewrite applies before the section is split, so the history and the rules read the corrected text.
+ */
+export const REWRITES = [
+  {
+    section: 'Entry point',
+    pattern: /`import \{ getEveCyno \} from '@eve-cyno\/plugin-api'` resolves to built JavaScript and declarations \(`exports\["\."\]` ->\s+`dist\/index\.js`, `dist\/index\.d\.ts`\), so it needs no TypeScript loader\./,
+    replacement: "The API package is not on npm. A project made from the template carries its declarations in `types/` and imports types only (`import type { EveCyno } from '@eve-cyno/plugin-api'`); the app puts the namespaces on the `eveCyno` global of every plugin page, so nothing from the package is bundled and the page has no runtime dependency.",
+    reason: 'the README describes the built package; the package is not published and a plugin reads the eveCyno global',
+  },
+  {
+    section: 'Clipboard',
+    pattern: /Detection is checked on Linux for a hint written by Electron;\s+real password managers are an owner check, and Windows is not verified yet\. /,
+    replacement: '',
+    reason: 'an owner check status of the desktop project, not a behaviour an author can use',
+  },
+  {
+    section: 'Chat',
+    pattern: /What cynod's own queue dropped is logged there, so `dropped` is a lower bound\./,
+    replacement: 'What the app dropped before the batch was cut is not counted, so `dropped` is a lower bound.',
+    reason: 'cynod is an internal process name',
+  },
+  {
+    section: 'Chat',
+    pattern: /arrives once cynod has the new picks/,
+    replacement: 'arrives once the app has the new picks',
+    reason: 'cynod is an internal process name',
+  },
+  {
+    section: 'Frozen surface',
+    pattern: /outer rectangle cynod sees\)/,
+    replacement: 'outer rectangle the app sees)',
+    reason: 'cynod is an internal process name',
+  },
+];
+
 /** A trailing project tag in a README heading (`(DP1-B5b)`): an internal work-item name an author cannot use. */
 const HEADING_TAG = /\s*\(DP\d+-[A-Za-z0-9]+\)\s*$/;
 
@@ -103,6 +140,8 @@ export function parseReadme(text) {
 
 export const readReadme = (path) => parseReadme(readFileSync(path, 'utf8'));
 
+const applyRewrites = (text, section) => REWRITES.reduce((t, w) => (w.section === section ? t.replace(w.pattern, w.replacement) : t), text);
+
 /**
  * `{ byPage: Map(slug -> sections in README order), split: Map(kind -> section), excluded: [{ heading, reason }] }`.
  * Throws on a section that is neither mapped nor excluded and on a map entry with no section.
@@ -119,17 +158,21 @@ export function mapSections(readme) {
     let slug = null;
     for (const k of [own, top]) {
       if (k in SECTION_PAGES) { slug = SECTION_PAGES[k]; seen.add(k); break; }
-      if (k in SPLIT_SECTIONS) { split.set(SPLIT_SECTIONS[k], s); seen.add(k); slug = false; break; }
+      if (k in SPLIT_SECTIONS) { split.set(SPLIT_SECTIONS[k], { ...s, body: applyRewrites(s.body, k) }); seen.add(k); slug = false; break; }
       if (k in EXCLUDED_SECTIONS) { excluded.push({ heading: s.heading, reason: EXCLUDED_SECTIONS[k] }); seen.add(k); slug = false; break; }
     }
     if (slug === null) { problems.push(`README section "${s.heading}" is neither mapped to a page nor excluded (site/lib/readme.mjs)`); continue; }
     if (slug === false) continue;
-    const body = DROPPED_TEXT.reduce((t, d) => (d.section === top ? t.replace(d.pattern, '') : t), s.body);
+    const body = applyRewrites(DROPPED_TEXT.reduce((t, d) => (d.section === top ? t.replace(d.pattern, '') : t), s.body), top);
     if (!byPage.has(slug)) byPage.set(slug, []);
     byPage.get(slug).push({ ...s, body, heading: s.heading.replace(HEADING_TAG, '') });
   }
   for (const k of [...Object.keys(SECTION_PAGES), ...Object.keys(SPLIT_SECTIONS), ...Object.keys(EXCLUDED_SECTIONS)]) {
     if (!seen.has(k)) problems.push(`the section map names "${k}", which the README no longer has (site/lib/readme.mjs)`);
+  }
+  for (const w of REWRITES) {
+    const sec = readme.sections.find((s) => s.key === w.section);
+    if (!sec || !w.pattern.test(sec.body)) problems.push(`rewrite for "${w.section}" no longer matches (${w.reason})`);
   }
   for (const d of DROPPED_TEXT) {
     const sec = readme.sections.find((s) => s.key === d.section);
