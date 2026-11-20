@@ -34,7 +34,7 @@ is open" banner on every page; it is off by default, because the public index is
     node sdk/create-plugin/bin/create-plugin.mjs [dir] [--id <id>] [--name <name>] [--author <author>] [--description <text>] [--yes]
 
 It writes a working plugin project: the manifest, a typed entry, a build, a test, the pack, entry and check scripts, and the index
-entry stub. The package is private and not on npm yet, so `npm create @eve-cyno/plugin` does not work today. `create-plugin/README.md`
+entry stub. Run it from npm with `npm create @eve-cyno/plugin@latest`. `create-plugin/README.md`
 lists what it refuses and what it writes.
 
 ## Vendored plugin API

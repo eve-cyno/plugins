@@ -1,7 +1,13 @@
 # @eve-cyno/create-plugin
 
 Generates a working EVE-Cyno desktop plugin project: the manifest, a typed entry, a build, a test and the index entry stub. The
-package is MIT. It is `private` and not on npm yet, so `npm create @eve-cyno/plugin` does not work today; run it from this repository.
+package is MIT.
+
+```
+npm create @eve-cyno/plugin@latest [dir] -- [--id <id>] [--name <name>] [--author <author>] [--yes]
+```
+
+Or from a checkout of this repository:
 
 ```
 node sdk/create-plugin/bin/create-plugin.mjs [dir] [--id <id>] [--name <name>] [--author <author>] [--description <text>] [--yes]
@@ -56,6 +62,6 @@ node --test "create-plugin/test/**/*.test.mjs"
 
 ## Versions
 
-The scaffold has its own semver, `0.x` until the first publish. A new plugin API minor means re-vendoring `sdk/vendor/plugin-api`,
+The scaffold has its own semver, `1.0.0` at the first publish. A new plugin API minor means re-vendoring `sdk/vendor/plugin-api`,
 copying the declarations into `template/types/`, raising `eveCynoApi` here and `engines` in `template/plugin.json`, and a minor bump of
 this package.
