@@ -41,8 +41,7 @@ The same answers give the same bytes: nothing in the output depends on the clock
 `static/style.css`, `test/manifest.test.mjs`, `entry/<id>.json`, a README for the new project, `.gitignore`, and
 `types/eve-cyno-plugin-api/` (the API's declarations and licence, copied from `sdk/vendor/plugin-api`).
 
-The API package is not on npm, so the project carries its declarations and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`. When
-the package is published, replace the `paths` entry with a dev dependency and delete `types/`.
+The project carries the API's declarations in `types/` and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`, so it builds without the npm package. The same declarations are published as `@eve-cyno/plugin-api@1.29.0`; to use that package instead, add it as a dev dependency, remove the `paths` entry and delete `types/`.
 
 ## Licences
 
@@ -65,3 +64,5 @@ node --test "create-plugin/test/**/*.test.mjs"
 The scaffold has its own semver, `1.0.0` at the first publish. A new plugin API minor means re-vendoring `sdk/vendor/plugin-api`,
 copying the declarations into `template/types/`, raising `eveCynoApi` here and `engines` in `template/plugin.json`, and a minor bump of
 this package.
+
+EVE Online and all related materials are the property of Fenris Creations. EVE-Cyno is not affiliated with Fenris Creations.

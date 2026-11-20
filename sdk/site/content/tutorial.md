@@ -19,7 +19,7 @@ The [manifest](#file-plugin-json) names the plugin and says what it needs.
 
 The [entry](#file-src-main-ts) is the plugin's script, loaded by the page.
 
-- It takes the `eveCyno` global the app injects into every plugin page. The line `import type { EveCyno, ThemeInfo } from '@eve-cyno/plugin-api'` brings in types only, so nothing from the API package is bundled and the page needs no runtime dependency. `tsconfig.json` maps `@eve-cyno/plugin-api` to the declarations in `types/eve-cyno-plugin-api/`, because the API package is not on npm.
+- It takes the `eveCyno` global the app injects into every plugin page. The line `import type { EveCyno, ThemeInfo } from '@eve-cyno/plugin-api'` brings in types only, so nothing from the API package is bundled and the page needs no runtime dependency. `tsconfig.json` maps `@eve-cyno/plugin-api` to the declarations in `types/eve-cyno-plugin-api/`, so the project builds without the npm package `@eve-cyno/plugin-api`.
 - `eveCyno.theme.get()` returns the app's colours and corner radius, and `theme.onChanged` runs again when the user changes the theme. The plugin page gets no CSS from the app, so `applyTheme` copies the colours into CSS variables that `static/style.css` uses.
 - `eveCyno.commands.onCommand` runs when the user starts a command the manifest declares, from the tile button or the command palette. The handler checks `command.id` against `say-hello`.
 - `eveCyno.tile.setSummary({ title, lines })` sets the text on the plugin's tile in the app.

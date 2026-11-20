@@ -78,8 +78,8 @@ export const REWRITES = [
   {
     section: 'Entry point',
     pattern: /`import \{ getEveCyno \} from '@eve-cyno\/plugin-api'` resolves to built JavaScript and declarations \(`exports\["\."\]` ->\s+`dist\/index\.js`, `dist\/index\.d\.ts`\), so it needs no TypeScript loader\./,
-    replacement: "The API package is not on npm. A project made from the template carries its declarations in `types/` and imports types only (`import type { EveCyno } from '@eve-cyno/plugin-api'`); the app puts the namespaces on the `eveCyno` global of every plugin page, so nothing from the package is bundled and the page has no runtime dependency.",
-    reason: 'the README describes the built package; the package is not published and a plugin reads the eveCyno global',
+    replacement: "A project made from the template carries its declarations in `types/` and imports types only (`import type { EveCyno } from '@eve-cyno/plugin-api'`); the app puts the namespaces on the `eveCyno` global of every plugin page, so nothing from the package is bundled and the page has no runtime dependency.",
+    reason: 'the README describes the built package; a plugin reads the eveCyno global',
   },
   {
     section: 'Clipboard',
