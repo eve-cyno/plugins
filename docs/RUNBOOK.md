@@ -180,14 +180,14 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
   that the settings were not changed and changed back between two runs of the check.
 - **Owner's written confirmation** (once): "I approve `index` and `mirror` only from GitHub Mobile; Claude in Chrome is blocked on
   github.com; no agent shell holds a GitHub token other than the agents' fine-grained token, and none will."
-  Confirmed on: _(date, owner)_.
+  Confirmed on: 2026-11-20, owner (in the coordinator's session, to these three statements).
 
 ## The agents' token (owner decision 2026-11-18, Q16: T1, done)
 
 **Switched on 2026-11-18.** The agents' `gh` login is the owner's fine-grained personal access token:
 
 - **Resource owner:** the organization `eve-cyno` only. **Organization permissions:** none.
-- **Repository permissions:** reads (Metadata, Contents, Actions, Issues, Pull requests), plus **Secrets and Environments, read and
+- **Repository permissions:** reads (Metadata, Contents, Actions, Issues), **Pull requests read and write** (owner 2026-11-20: agents open pull requests; every merge stays local as Bythlak on the owner's "merge"), plus **Secrets and Environments, read and
   write, for good** (owner decision 2026-11-18): the coordinator sets secrets and environment variables with the commands of
   "Secrets and variables", and the permissions are never added for a task and taken away after it.
 - **Variables, read** is needed since 2026-11-19: C-ENV1 lists the repository's and the organization's variables to check that no
@@ -218,12 +218,14 @@ every dispatch, test runs included, is the owner's own. It can replace secret va
 
 | Permission | Request | Agents' token: expected | Agents' token: measured | Everyday token (measured once) |
 |---|---|---|---|---|
-| Administration | `GET repos/eve-cyno/plugins/keys` | 403 | not measured yet | not measured yet |
-| Environments | `GET repos/eve-cyno/plugins/environments/index/secrets` | 200, a list | not measured yet | not measured yet |
-| Secrets | `GET repos/eve-cyno/plugins/actions/secrets` | 200, a list | not measured yet | not measured yet |
-| Deployments (approve) | `POST repos/eve-cyno/plugins/actions/runs/1/pending_deployments` (`state=rejected`, run 1 does not exist here) | 403 | not measured yet | not measured yet |
-| Actions write | `DELETE repos/eve-cyno/plugins/actions/artifacts/1` (no such artifact) | 403 | not measured yet | not measured yet |
-| Administration (create environment) | `PUT repos/eve-cyno/plugins/environments/c-env1-probe-denied` (after a GET that answers 404) | 403 | not measured yet | never sent: it would create the environment |
+| Administration | `GET repos/eve-cyno/plugins/keys` | 403 | 403 (2026-11-20, `check-envs.mjs` at `ecb833a`) | 403, the same token: see below |
+| Environments | `GET repos/eve-cyno/plugins/environments/index/secrets` | 200, a list | 200, a list (2026-11-20, `check-envs.mjs` at `ecb833a`) | 200, the same token: see below |
+| Secrets | `GET repos/eve-cyno/plugins/actions/secrets` | 200, a list | 200, a list (2026-11-20, `check-envs.mjs` at `ecb833a`) | 200, the same token: see below |
+| Deployments (approve) | `POST repos/eve-cyno/plugins/actions/runs/1/pending_deployments` (`state=rejected`, run 1 does not exist here) | 403 | 403 (2026-11-20, `check-envs.mjs` at `ecb833a`) | 403, the same token: see below |
+| Actions write | `DELETE repos/eve-cyno/plugins/actions/artifacts/1` (no such artifact) | 403 | 403 (2026-11-20, `check-envs.mjs` at `ecb833a`) | 403, the same token: see below |
+| Administration (create environment) | `PUT repos/eve-cyno/plugins/environments/c-env1-probe-denied` (after a GET that answers 404) | 403 | 403 (2026-11-20, `check-envs.mjs` at `ecb833a`) | never sent: it would create the environment |
+
+**Measured 2026-11-20.** The owner's own terminal answered exactly as the agents' token (403, 200, 200, 403, 403, each 403 with "Resource not accessible by personal access token"): the workstation's `gh` login is the fine-grained token, and the classic everyday token is not logged in to `gh` on the workstation at all. So the everyday column records that, not the classic token's answers.
 
 The coordinator records the agents' column after the token change, and the owner the everyday column once, with `gh api -i` and
 the same request (never the `PUT`). Whether GitHub checks the permission before it looks up a run or artifact that does not exist
