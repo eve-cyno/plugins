@@ -595,6 +595,13 @@ even its failed jobs: the first step of every job fails on any attempt but the f
 **Lifting.** A revocation leaves only through a pull request that deletes it (C15 flags `lift`) and a `publish.yml` run whose `lift`
 input names it exactly, one `<id> <versions>` per line; `build` fails otherwise.
 
+## Takedown
+
+Removing an archive from the mirror (a legal notice, a leaked secret) is the owner's decision and is separate from a revocation. The steps
+(delete the object, record it, wait out the 4-hour edge cap or use the dashboard's Custom Purge by URL, re-read from two data centres) are in
+the infrastructure runbook for plugin hosting. A revocation alone does not remove the archive; a takedown alone does not disable installed
+copies, so file both.
+
 ## When a run is red
 
 | Where | What it means | What to do |
