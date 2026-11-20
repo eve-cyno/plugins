@@ -595,14 +595,35 @@ const LITERAL_USER_RES = [...ID_LITERAL_RES, whoLiteral(QUOTED_RE)];
 const WF_LITERAL_USER_RES = [...ID_LITERAL_RES, whoLiteral(ANY_QUOTED_RE)];
 /**
  * A YAML line without its comment: a `#` at the start or after a space (U+0020; tabs are refused). A `#` after U+00A0 or another
- * Unicode space is text to YAML, never a comment.
+ * Unicode space is text to YAML, never a comment. A ` #` inside a quoted value is text too, which only the parsed reading sees
+ * (entryTexts).
  */
 const uncommented = (line) => line.replace(/(^| )#.*$/, '');
+/**
+ * The texts of a parsed workflow for C-WF11, as GitHub reads them (see texts): every mapping key and scalar value at every level,
+ * a key with a scalar value as one text `key: value`, so a literal given to a user id key is found however the value is written
+ * (plain, quoted or a block). A key is a plain word (yamlsub.mjs), so the line reading sees each one whole as well.
+ */
+function* entryTexts(v) {
+  if (typeof v === 'string') yield v;
+  else if (Array.isArray(v)) for (const x of v) yield* entryTexts(x);
+  else if (isMap(v)) {
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === 'string') yield `${k}: ${x}`;
+      else { yield k; yield* entryTexts(x); }
+    }
+  }
+}
+/** A reviewer in a parsed text, with at most 80 characters of its line either side, so a problem line stays short. */
+const REVIEWER_IN_RE = /[^\n]{0,80}reviewer[^\n]{0,80}/i;
 
 /**
  * C-WF11 (plan 4.1, 4.2): no reviewer is written in the repository; the tools read it at run time from the environments'
  * protection rules (tools/lib/reviewer.mjs). No workflow names a reviewer outside a comment (no input, variable or secret); no
- * workflow or tool writes a user id or login as a literal; no tool takes a reviewer argument or environment variable; there is no
+ * workflow or tool writes a user id or login as a literal. A workflow is read line by line without its YAML comments and also as
+ * GitHub reads it (entryTexts: a quoted ` #` is text, a block value runs over lines, which `\s*` spans, and a shell comment in a
+ * run block is text too), a literal matched in lower case both ways, so neither spelling hides a reviewer or a literal. No tool
+ * takes a reviewer argument or environment variable; there is no
  * reviewer file, and no tool, workflow or document names one or a reviewer id or login key; tools/lib/reviewer.mjs exists, imports
  * only ./github.mjs and reads neither process nor a module loaded at run time. A static rule cannot know the real login and id:
  * tools/check-envs.mjs looks for them in every path, file and commit at the run's commit (C-ENV1).
@@ -618,6 +639,16 @@ function cwf11(ws) {
       // GitHub reads context and property names in any case (GitHub.Actor, sender.ID), so a workflow line is matched in lower case.
       if (WF_LITERAL_USER_RES.some((re) => re.test(code.toLowerCase()))) p.push(`${f}: a user id or login written as a literal (line ${i + 1})`);
     });
+    // The parsed texts too: a ` #` inside a quoted value cuts the line above but is text to YAML and GitHub, and a block value splits a
+    // comparison over lines. A parsed text has no line number, so the match is shown: a reviewer with at most 80 characters either
+    // side (REVIEWER_IN_RE), a literal cut to SHOWN characters.
+    for (const t of entryTexts(w.doc)) {
+      const name = REVIEWER_IN_RE.exec(t);
+      if (name) p.push(`${f}: names a reviewer outside a comment: ${JSON.stringify(name[0])}`);
+      const lower = t.toLowerCase();
+      const lit = WF_LITERAL_USER_RES.map((re) => re.exec(lower)).find(Boolean);
+      if (lit) p.push(`${f}: a user id or login written as a literal: ${JSON.stringify(shown(lit[0]))}`);
+    }
     if (REVIEWER_KEY_RE.test(w.text)) p.push(`${f}: names a reviewer file or a reviewer id or login key`);
   }
   const tools = filesUnder(ws.root, 'tools', /\.(?:mjs|cjs|js|json|sh)$/);
