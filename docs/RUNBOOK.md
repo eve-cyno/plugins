@@ -125,7 +125,7 @@ The owner decided on 2026-11-18 that his own account is the only reviewer; there
 - **The owner's login and user id are never written in this repository.** `tools/check-envs.mjs`, `tools/approved-base.mjs` and the
   workflow jobs read the reviewer at run time from `GET /repos/eve-cyno/plugins/environments/<name>` (its one `required_reviewers`
   rule, `tools/lib/reviewer.mjs`); more or fewer than one reviewer fails. The static rule C-WF11 refuses a reviewer file, a reviewer
-  input or variable, and a user id or login written as a literal in a workflow or tool; `tools/check-envs.mjs` looks for the real
+  input or variable, and a user id or login written as a literal in the direct forms (see Known residuals) in a workflow or tool; `tools/check-envs.mjs` looks for the real
   login and id in every path, file and commit at the run's commit and fails on any hit. Neither tool prints them.
 - **Approvals come only from GitHub Mobile** on the owner's phone: never in a browser on the agents' workstation, never with `gh` or
   the API.
@@ -717,7 +717,8 @@ Found in review, accepted, and named here so nobody counts on more than the tool
 - `tools/lib/repairbase.mjs` filters runs with `notOnMain` only, so an own-repo run of another event (a push, say) with approved
   `index`, `sign` and `upload` can be recovery R2's `<A>`, while `approved-base` never makes it `<A>`. It needs an owner approval
   that step 2's `ERROR` forbids; low impact.
-- C-WF1 and C-WF11 treat ` #` inside a `run:` block as a comment; C-ENV1 backstops C-WF11 only. For C-WF1 the backstop is its parsed `on:` check (`tools/lib/wfrules.mjs`, the triggers rule).
+- C-WF1 treats ` #` inside a `run:` block as a comment; its backstop is its parsed `on:` check (`tools/lib/wfrules.mjs`, the triggers rule). C-WF11 reads the parsed run text, so a shell comment in a workflow run block that names a reviewer is refused by C-WF11.
+- C-WF11 finds a user id or login literal only in the direct forms: a `.login`, a `.id`, an actor or a user id key compared by `==` or `!=` with a quoted or numeric literal, or given one. A literal reached through a function (contains, startsWith, format, fromJSON), parentheses, a bracket or a spaced dot, `<` or `>`, an env or output value, or a shell variable such as `$GITHUB_ACTOR` is not matched. C-ENV1 backstops the reviewer's own login and id written whole in any of these spellings. A split, partial or re-encoded literal (a range, hex) and other users' logins are left to the diff review.
 - Very large inputs (a 1 MB unclosed quote or a 1 MB run of spaces) take minutes in the line-based parsers (`tools/lib/yamlsub.mjs` `/ +$/`,
   C-WF11 `WHO_RE` `[\w$.?]*\.login`). They fail closed. Do not feed multi-hundred-kilobyte workflow files.
 
