@@ -158,10 +158,11 @@ test('package.json eveCynoApi, the template engines range and the vendored pin a
   const pin = JSON.parse(readFileSync(join(REPO, 'sdk', 'vendor', 'plugin-api', 'PIN.json'), 'utf8'));
   assert.equal(pkg.eveCynoApi, pin.version);
   assert.equal(pkg.name, '@eve-cyno/create-plugin');
-  assert.equal(pkg.private, true);
+  assert.notEqual(pkg.private, true);
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
   assert.equal(pkg.license, 'MIT');
   assert.deepEqual(Object.keys(pkg.bin), ['create-plugin']);
-  assert.ok(!('publishConfig' in pkg));
+  assert.deepEqual(pkg.publishConfig, { access: 'public' });
   assert.ok(!('dependencies' in pkg));
   const [major, minor] = pin.version.split('.');
   assert.equal(JSON.parse(render(ANSWERS).get('plugin.json')).engines['eve-cyno-api'], `^${major}.${minor}`);
@@ -269,7 +270,8 @@ test('rules agree with the vendored host: display text', () => {
 
 test('CLI: --version prints the scaffold and the API version', () => {
   const out = execFileSync(process.execPath, [BIN, '--version'], { encoding: 'utf8' });
-  assert.match(out, /^@eve-cyno\/create-plugin 0\.\d+\.\d+ \(plugin API 1\.29\.0\)\n$/);
+  const { version } = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8'));
+  assert.equal(out, `@eve-cyno/create-plugin ${version} (plugin API 1.29.0)\n`);
 });
 
 test('CLI: --yes with every answer writes the project', () => {
