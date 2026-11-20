@@ -1,0 +1,16 @@
+{
+  "name": {{id|json}},
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "pack": "node scripts/archive.mjs",
+    "entry": "node scripts/entry.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

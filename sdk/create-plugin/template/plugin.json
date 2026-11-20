@@ -1,0 +1,16 @@
+{
+  "id": {{id|json}},
+  "name": {{name|json}},
+  "author": {{author|json}},
+  "version": "0.1.0",
+  "engines": { "eve-cyno-api": "^1.29" },
+  "main": "main.html",
+  "activationEvents": ["onStartup"],
+  "icon": "plugin",
+  "description": {{description|json}},
+  "permissions": {},
+  "contributes": {
+    "commands": [{ "id": "say-hello", "title": "Say hello" }],
+    "tile": { "action": { "command": "say-hello", "label": "Say hello" } }
+  }
+}

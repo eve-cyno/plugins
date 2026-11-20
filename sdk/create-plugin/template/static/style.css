@@ -1,0 +1,20 @@
+:root {
+  --bg: #0b1016;
+  --surface: #131b24;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --line: #243040;
+  --own: #5bb8ff;
+  --radius: 8px;
+  color-scheme: dark light;
+}
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+main { max-width: 36rem; margin: 0 auto; padding: 1.5rem 1rem; }
+h1 { margin: 0 0 .5rem; font-size: 1.25rem; }
+p { color: var(--muted); }
+button {
+  padding: .5rem 1rem; border: 1px solid var(--own); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
+}
+button:focus-visible { outline: 2px solid var(--own); outline-offset: 2px; }
+#status { margin-top: 1rem; color: var(--text); }
