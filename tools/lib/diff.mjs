@@ -107,7 +107,9 @@ export function checkEntry(head, base, { others = [], prAuthor = null, revoked =
   const refusals = checkNames(head, base, others);
   const flags = new Set();
   if (base === null) flags.add('new');
-  if ((head.firstParty === true) !== (base?.firstParty === true)) flags.add('first-party');
+  // C3: an entry that is first-party on the base or the head and that the pull request changes at all (firstParty set or dropped
+  // included) is read by the owner, whoever opens the pull request; one it leaves as it was is not.
+  if ((head.firstParty === true || base?.firstParty === true) && !sameEntry(head, base)) flags.add('first-party');
   if (base !== null) {
     if (identityChanged(head, base)) flags.add('identity');
     // C14 holds a pull request to the maintainers of each entry it changes; an entry it leaves as it was needs none of them.

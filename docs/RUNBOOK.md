@@ -505,6 +505,10 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
       - `SCOPE ENTRIES-ONLY` (exit 0): the pull request changes only regular files `entries/<id>.json` and `revoked.json`, so the
         jobs ran `<B>`'s own tools and workflow and their results stand. The owner reads the entries and revocations at the link
         and the jobs' summaries (review classes included).
+      - The review class `first-party` on a pull request the project did not open: no merge. The checks cannot know the project's
+        login, and the app shows a `firstParty` entry as signed by EVE-Cyno whatever its author reads; only this reading stops a
+        third party's `firstParty` entry (`NEEDS REVIEW new first-party` is the verdict line) or a third party's change to one (the
+        class is set on any change to an entry that is `firstParty` on either side: `NEEDS REVIEW identity first-party`).
       - `SCOPE OWNER <names>` (exit 3): the jobs' green proves nothing. The owner reads every change at the link: the entries and
         revocations as above, and every other change (the lines marked `owner`: a tool, a workflow, `package.json` or
         `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change), each ticked off as below.

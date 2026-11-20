@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 import { ISSUER, PREDICATE } from '../lib/provenance.mjs';
+import { toListing } from '../lib/entries.mjs';
 import { zerosAtExactRatio, zerosAtMostRatio, zip } from './zipwrite.mjs';
 
 const MIB = 1024 * 1024;
@@ -24,6 +25,13 @@ after(cleanup);
 
 const tree = (spec) => writeTree(path.join(T, `t${n++}`), spec);
 const baseTree = (extra = {}) => tree({ entries: [pluginEntry([version('1.0.0', A100)])], ...extra });
+/** A live base as build-index.mjs base writes it: catalog.json with the listings of `entries` (no author URL, no maintainers). */
+function catalogBase(entries, revoked = []) {
+  const dir = path.join(T, `t${n++}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'catalog.json'), `${JSON.stringify({ plugins: entries.map(toListing), revoked })}\n`);
+  return dir;
+}
 /** A head that adds 1.1.0 (the archive `bytes`, cached) to the base entry; `pin` overrides what the entry pins. */
 function head(bytes, { pin = {}, entry = {}, ...rest } = {}) {
   cacheArchive(cache, bytes);
@@ -467,5 +475,157 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     assert.equal(last(own.stdout), 'NO REVIEW NEEDED');
     const noAuthor = await check('review', base, h);
     assert.doesNotMatch(noAuthor.stdout, /C14 dev\.example\.dusk/);
+  });
+
+  // POLICY.md: the EVE-Cyno name or author is reserved for entries marked firstParty, which only the project merges.
+  test('PR-first-party-author: a new first-party entry authored EVE-Cyno passes refuse and needs review new first-party', async () => {
+    // The head adds one entry beside the base's; `firstParty: undefined` leaves the key out of the file (JSON.stringify).
+    const project = (id, extra = {}) => {
+      const author = extra.author ?? 'EVE-Cyno';
+      const bytes = pluginZip(manifest({ id, name: 'Mining Ledger', author, version: '0.2.0' }));
+      cacheArchive(cache, bytes);
+      const e = pluginEntry([version('0.2.0', bytes)], { id, name: 'Mining Ledger', author, firstParty: true, source: null, ...extra });
+      if (!('maintainers' in extra)) delete e.maintainers;
+      return tree({ entries: [pluginEntry([version('1.0.0', A100)]), e] });
+    };
+    const ok = project('dev.evecyno.miningledger');
+    const r = await check('refuse', baseTree(), ok);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /^FAIL /m);
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+    const v = await check('review', baseTree(), ok, ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: the entry is first-party on the base or the head and the pull request changes it \(firstParty set or dropped included\)$/m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW new first-party');
+
+    // Without firstParty the id prefix is refused first (C2 leaves the entry out of C3); under another id the author is refused (C3).
+    const unset = await check('refuse', baseTree(), project('dev.evecyno.miningledger', { firstParty: undefined }));
+    assert.equal(unset.code, 1, unset.stdout + unset.stderr);
+    assert.match(unset.stdout, /^FAIL C2 entries\/dev\.evecyno\.miningledger\.json: the id prefix dev\.evecyno\. is reserved for first-party entries$/m);
+    const elsewhere = await check('refuse', baseTree(), project('dev.example.ledger', { firstParty: undefined }));
+    assert.equal(elsewhere.code, 1, elsewhere.stdout + elsewhere.stderr);
+    assert.match(elsewhere.stdout, /^FAIL C3 name or author of dev\.example\.ledger is reserved or not allowed$/m);
+    const prefix = await check('refuse', baseTree(), project('dev.evecyno.tools', { firstParty: undefined, author: 'Example Author', maintainers: ['example-login'] }));
+    assert.equal(prefix.code, 1, prefix.stdout + prefix.stderr);
+    assert.match(prefix.stdout, /^FAIL C2 entries\/dev\.evecyno\.tools\.json: the id prefix dev\.evecyno\. is reserved for first-party entries$/m, 'a third party under the project\'s prefix');
+    assert.doesNotMatch(prefix.stdout, /^FAIL C3 /m);
+    const third = await check('refuse', baseTree(), project('dev.example.tools', { firstParty: undefined, author: 'EVE-Cyno Tools', maintainers: ['example-login'] }));
+    assert.equal(third.code, 1, third.stdout + third.stderr);
+    assert.match(third.stdout, /^FAIL C3 name or author of dev\.example\.tools is reserved or not allowed$/m, 'a third party');
+    const listed = await check('refuse', baseTree(), project('dev.evecyno.miningledger', { maintainers: ['example-login'] }));
+    assert.equal(listed.code, 1, listed.stdout + listed.stderr);
+    assert.match(listed.stdout, /^FAIL C3 first-party entry dev\.evecyno\.miningledger lists maintainers$/m);
+    const host = await check('refuse', baseTree(), project('eve-cyno.host.miningledger'));
+    assert.equal(host.code, 1, host.stdout + host.stderr);
+    assert.match(host.stdout, /^FAIL C2 .*the id prefix eve-cyno\.host\. is reserved for the host/m);
+  });
+
+  test('PR-first-party-change: any change to a first-party entry needs review first-party, whoever opens it; an untouched one needs none', async () => {
+    const bytes = pluginZip(manifest({ id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', version: '0.2.0' }));
+    cacheArchive(cache, bytes);
+    const ledger = (extra = {}) => {
+      const e = pluginEntry([version('0.2.0', bytes)], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, source: null, ...extra });
+      delete e.maintainers;
+      return e;
+    };
+    const withLedger = (l) => tree({ entries: [pluginEntry([version('1.0.0', A100)]), l] });
+    const base = withLedger(ledger());
+    const edited = withLedger(ledger({ description: 'Edited by a third party.' }));
+    const r = await check('refuse', base, edited);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const v = await check('review', base, edited, ['--author', 'example-login']);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW identity first-party');
+    const same = await check('review', base, withLedger(ledger()), ['--author', 'example-login']);
+    assert.equal(same.code, 0, same.stdout + same.stderr);
+    assert.equal(last(same.stdout), 'NO REVIEW NEEDED');
+  });
+
+  test('PR-first-party-catalog: publish against a catalog base flags no untouched first-party entry; a firstParty flip still flags', async () => {
+    const bytes = pluginZip(manifest({ id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', version: '0.2.0' }));
+    cacheArchive(cache, bytes);
+    const ledger = pluginEntry([version('0.2.0', bytes)], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, source: null });
+    delete ledger.maintainers;
+    const intel = pluginEntry([version('1.0.0', A100)]);
+    const r = await check('publish', catalogBase([intel, ledger]), tree({ entries: [intel, ledger] }), ['--target', 'test']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^NOTE base: the live catalog \(2 listings\)$/m, 'the base is read as a catalog');
+    assert.doesNotMatch(r.stdout, /^FLAG first-party /m, 'a catalog holds less than an entry: an untouched first-party entry is no change');
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+
+    // A flip is a change a catalog does show: set (the base listing is not first-party) and dropped (the head entry is not).
+    const own = { ...intel, firstParty: true };
+    delete own.maintainers;
+    const set = await check('publish', catalogBase([intel]), tree({ entries: [own] }), ['--target', 'test']);
+    assert.equal(set.code, 0, set.stdout + set.stderr);
+    assert.match(set.stdout, /^FLAG first-party C3 dev\.example\.intel: /m, 'firstParty set against a catalog base');
+    const dropped = await check('publish', catalogBase([own]), tree({ entries: [intel] }), ['--target', 'test']);
+    assert.equal(dropped.code, 0, dropped.stdout + dropped.stderr);
+    assert.match(dropped.stdout, /^FLAG first-party C3 dev\.example\.intel: /m, 'firstParty dropped against a catalog base');
+    const added = await check('publish', catalogBase([intel]), tree({ entries: [intel, ledger] }), ['--target', 'test']);
+    assert.equal(added.code, 0, added.stdout + added.stderr);
+    assert.match(added.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'a first-party entry the catalog does not hold');
+  });
+
+  test('PR-first-party-catalog-unlisted: publish flags first-party and new on a first-party entry the catalog leaves out that adds a listed version', async () => {
+    const id = 'dev.evecyno.miningledger';
+    const at = (v) => pluginZip(manifest({ id, name: 'Mining Ledger', author: 'EVE-Cyno', version: v }));
+    const A010 = at('0.1.0'), A020 = at('0.2.0');
+    cacheArchive(cache, A010);
+    cacheArchive(cache, A020);
+    const ledger = (versions) => {
+      const e = pluginEntry(versions, { id, name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, source: null });
+      delete e.maintainers;
+      return e;
+    };
+    const intel = pluginEntry([version('1.0.0', A100)]);
+    // A catalog leaves out an entry with no listed, unrevoked version left (entries.mjs), so check.mjs stands the head's own merged
+    // 0.1.0 in for the base entry (liveBase): both sides then hold the same firstParty, yet the catalog holds no listing of the id.
+    const unlisted = await check('publish', catalogBase([intel]), tree({ entries: [intel, ledger([version('0.2.0', A020), version('0.1.0', A010, { unlisted: true })])] }), ['--target', 'test']);
+    assert.equal(unlisted.code, 0, unlisted.stdout + unlisted.stderr);
+    assert.match(unlisted.stdout, /^NOTE base: the live catalog \(1 listings\)$/m, 'the base is read as a catalog');
+    assert.match(unlisted.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'its only version unlisted: new to the catalog');
+    assert.match(unlisted.stdout, /^FLAG new C11 dev\.evecyno\.miningledger: /m, 'its only version unlisted: new to the catalog');
+    assert.equal(last(unlisted.stdout), 'CHECKS PASSED');
+
+    const rev = [{ id, versions: ['0.1.0'], reason: 'Sends data to a third party.', date: today }];
+    const revoked = await check('publish', catalogBase([intel], rev), tree({ entries: [intel, ledger([version('0.2.0', A020), version('0.1.0', A010)])], revoked: rev }), ['--target', 'test']);
+    assert.equal(revoked.code, 0, revoked.stdout + revoked.stderr);
+    assert.match(revoked.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'its only version revoked: new to the catalog');
+    assert.match(revoked.stdout, /^FLAG new C11 dev\.evecyno\.miningledger: /m, 'its only version revoked: new to the catalog');
+    assert.equal(last(revoked.stdout), 'CHECKS PASSED');
+
+    // The same entries as merged (no version added): the next catalog leaves them out too, so nothing is new and nothing changed.
+    for (const [why, base, h] of [
+      ['unlisted', catalogBase([intel]), tree({ entries: [intel, ledger([version('0.1.0', A010, { unlisted: true })])] })],
+      ['revoked', catalogBase([intel], rev), tree({ entries: [intel, ledger([version('0.1.0', A010)])], revoked: rev })],
+    ]) {
+      const r = await check('publish', base, h, ['--target', 'test']);
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.doesNotMatch(r.stdout, /^FLAG /m, `its only version ${why}, none added: no review class`);
+      assert.equal(last(r.stdout), 'CHECKS PASSED');
+    }
+  });
+
+  test('PR-first-party-catalog-review: review against a catalog base, and publish against a tree base, flag a first-party entry changed without a flip', async () => {
+    const bytes = pluginZip(manifest({ id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', version: '0.2.0' }));
+    cacheArchive(cache, bytes);
+    const ledger = pluginEntry([version('0.2.0', bytes)], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, source: null });
+    delete ledger.maintainers;
+    const intel = pluginEntry([version('1.0.0', A100)]);
+    const edited = tree({ entries: [intel, { ...ledger, summary: 'Ledger of mined ore' }] });
+    // A hand-run review: no review read this change before, so the filter that publish applies against a catalog does not apply.
+    const v = await check('review', catalogBase([intel, ledger]), edited);
+    assert.equal(v.code, 3, v.stdout + v.stderr);
+    assert.match(v.stdout, /^NOTE C13: the base is a catalog, not a tree: no scope check$/m, 'review reads the catalog base');
+    assert.match(v.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'a non-flip change to a first-party entry is read');
+    assert.match(last(v.stdout), /^NEEDS REVIEW .*first-party/);
+
+    // A tree base holds the whole entry, so publish against one shows the change as it is: the filter is for a catalog base only.
+    const p = await check('publish', tree({ entries: [intel, ledger] }), edited, ['--target', 'test']);
+    assert.equal(p.code, 0, p.stdout + p.stderr);
+    assert.match(p.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'publish against a tree base');
+    assert.equal(last(p.stdout), 'CHECKS PASSED');
   });
 });

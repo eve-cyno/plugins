@@ -152,6 +152,45 @@ describe('entry flags (C10, C11, C14, C17)', () => {
     const r = checkEntry(entry([ver('1.0.0')], { maintainers: [], firstParty: true }), base, { prAuthor: null });
     assert.ok(r.flags.includes('first-party'));
   });
+  test('DF-first-party-new: a new first-party entry authored EVE-Cyno passes C3 and is flagged new and first-party', () => {
+    const project = (extra = {}) => {
+      const x = entry([ver('0.2.0')], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, ...extra });
+      if (!('maintainers' in extra)) delete x.maintainers;
+      return x;
+    };
+    const r = checkEntry(project(), null, { prAuthor: 'example-login' });
+    assert.deepEqual(r.refusals, []);
+    assert.deepEqual(r.flags, ['new', 'first-party']);
+    const third = project();
+    delete third.firstParty;
+    const t = checkEntry(third, null, { prAuthor: 'example-login' });
+    assert.deepEqual(t.refusals, ['C3 name or author of dev.evecyno.miningledger is reserved or not allowed'], 'without firstParty');
+    assert.deepEqual(t.flags, ['new']);
+    const m = checkEntry(project({ maintainers: ['alice'] }), null, { prAuthor: 'alice' });
+    assert.deepEqual(m.refusals, ['C3 first-party entry dev.evecyno.miningledger lists maintainers'], 'with maintainers');
+    // A first-party entry names no maintainers, so C14 sends every later change of it to review, whoever opens the pull request; C3
+    // flags it first-party too (DF-first-party-change).
+    const update = project({ versions: [ver('0.3.0'), ver('0.2.0')] });
+    const u = checkEntry(update, project(), { prAuthor: 'example-login' });
+    assert.deepEqual(u.refusals, []);
+    assert.deepEqual(u.flags, ['first-party', 'identity'], 'an update of a first-party entry');
+  });
+  test('DF-first-party-change: any change to an entry that is first-party on the base or the head is flagged first-party; an untouched one is not', () => {
+    const project = (extra = {}) => {
+      const x = entry([ver('0.2.0')], { id: 'dev.evecyno.miningledger', name: 'Mining Ledger', author: 'EVE-Cyno', firstParty: true, description: 'Mining totals.', ...extra });
+      delete x.maintainers;
+      return x;
+    };
+    const flags = (head, base, prAuthor = 'example-login') => checkEntry(head, base, { prAuthor }).flags;
+    assert.deepEqual(flags(project({ description: 'Edited by someone else.' }), project()), ['first-party', 'identity'], 'the description edited by a third-party login');
+    assert.deepEqual(flags(project({ description: 'Edited by someone else.' }), project(), null), ['first-party'], 'without a login: first-party all the same');
+    const dropped = project();
+    delete dropped.firstParty;
+    assert.deepEqual(flags(dropped, project(), null), ['first-party'], 'firstParty dropped');
+    assert.deepEqual(flags(project(), project()), [], 'an entry the pull request leaves as it was');
+    assert.deepEqual(flags(Object.fromEntries(Object.entries(project()).reverse()), project()), [], 'key order is not a change');
+    assert.deepEqual(flags(entry([ver('1.0.0')], { description: 'Edited.' }), entry([ver('1.0.0')]), 'alice'), [], 'a change to an entry that is not first-party');
+  });
 });
 
 describe('engines reach (C17)', () => {

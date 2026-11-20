@@ -199,6 +199,22 @@ describe('EN C2 id', () => {
   test('EN-c2-host-prefix: eve-cyno.host. is reserved', () => {
     assert.ok(has(checkIds([f('eve-cyno.host.x.json', entry({ id: 'eve-cyno.host.x' }))]), 'C2', /reserved/));
   });
+  test('EN-c2-host-prefix-first-party: firstParty does not open the host prefix', () => {
+    const e = entry({ id: 'eve-cyno.host.miningledger', author: 'EVE-Cyno', firstParty: true }); delete e.maintainers;
+    assert.ok(has(checkIds([f('eve-cyno.host.miningledger.json', e)]), 'C2', /reserved/));
+  });
+  test('EN-c2-first-party-prefix: dev.evecyno. is reserved for firstParty entries (the host gives some of those ids data packs)', () => {
+    const ids = (id, extra = {}) => checkIds([f(`${id}.json`, entry({ id, ...extra }))]);
+    const reserved = (id) => [{ check: 'C2', file: `${id}.json`, message: 'the id prefix dev.evecyno. is reserved for first-party entries' }];
+    assert.deepEqual(ids('dev.evecyno.x'), reserved('dev.evecyno.x'), 'a new entry that is not first-party');
+    for (const firstParty of [false, 'true', 1]) assert.deepEqual(ids('dev.evecyno.x', { firstParty }), reserved('dev.evecyno.x'), `firstParty ${JSON.stringify(firstParty)}`);
+    const project = entry({ id: 'dev.evecyno.x', author: 'EVE-Cyno', firstParty: true });
+    delete project.maintainers;
+    assert.deepEqual(checkIds([f('dev.evecyno.x.json', project)]), [], 'firstParty true and no maintainers');
+    assert.deepEqual(ids('dev.evecynofans.x'), [], 'the prefix ends at its dot');
+    assert.deepEqual(ids('dev.example.evecyno'), [], 'the prefix only');
+    assert.deepEqual(ids('eve-cyno.host.x', { firstParty: true }).map(p => p.message), ['the id prefix eve-cyno.host. is reserved for the host'], 'firstParty never opens the host prefix');
+  });
   test('EN-c2-device-name: a Windows device name as first segment', () => {
     for (const id of ['nul.example.intel', 'com1.example.intel', 'con.example.intel']) {
       assert.ok(has(checkIds([f(`${id}.json`, entry({ id }))]), 'C2', /device/), id);

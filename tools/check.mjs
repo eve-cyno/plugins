@@ -281,21 +281,36 @@ async function entryFlags(head, base) {
       be = b ? { ...b, versions: b.versions.map(deco) } : null;
     }
     // A catalog names no maintainers (nor provenance): against one they are not compared (the pull request's review compared them).
-    if (be && base.kind === 'catalog') be = { ...be, maintainers: e.maintainers };
+    // The head's key is copied as it is, absent included: a first-party entry lists none, and `maintainers: undefined` on one side only
+    // would make an untouched entry a changed one (sameEntry).
+    if (be && base.kind === 'catalog') {
+      be = { ...be };
+      if ('maintainers' in e) be.maintainers = e.maintainers; else delete be.maintainers;
+    }
     let r;
     try { r = diffEntry(he, be, { others: head.entries, prAuthor: a.author ?? null, revoked: [...base.revoked, ...head.revoked] }); } catch (err) {
       R.flag('escalation', 'C10', `${e.id}: the permissions could not be compared (${err?.message ?? 'error'})`);
       continue;
     }
+    // The base read from a catalog keeps less than an entry (readBase drops summary, description, categories and source), so at publish
+    // only a firstParty flip against the id's catalog listing counts as a change to a first-party entry (the pull request's review read
+    // any other change). A hand-run review against a catalog keeps the flag. An id the catalog does not list loses no flag, even when
+    // liveBase stands the head's own unlisted or revoked versions in for its base entry; when the head lists a version of it that no
+    // revocation names, the next catalog shows it for the first time, so `new` is set as well.
+    const listed = base.kind === 'catalog' ? base.entries.get(e.id) : undefined;
+    let flags = r.flags;
+    const shown = e.versions.some(v => isListed(v) && !revokedOn(head, e.id, v.version));
+    if (base.kind === 'catalog' && !listed && shown && !flags.includes('new')) flags = ['new', ...flags];
+    else if (mode === 'publish' && listed && (he.firstParty === true) === (listed.firstParty === true)) flags = flags.filter(f => f !== 'first-party');
     const why = {
       new: 'a new entry (no entry of this id on the base)',
       escalation: 'a new version asks for more than the version before it, turns background on, or has no lower version to compare with',
       identity: 'the name, author or type changed, the provenance repository changed or was dropped, the maintainers changed, or the pull request changes the entry and its author is not a maintainer of the base entry',
-      'first-party': 'firstParty set or changed',
+      'first-party': 'the entry is first-party on the base or the head and the pull request changes it (firstParty set or dropped included)',
       engines: 'a new version\'s engines admit no host API major that a released host supports',
       revoked: 'a new version of an id that revoked.json names (on the base or the head)',
     };
-    for (const f of r.flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
+    for (const f of flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
   }
   for (const [id, b] of base.entries) {
     if (head.entries.some(e => e.id === id)) continue;
