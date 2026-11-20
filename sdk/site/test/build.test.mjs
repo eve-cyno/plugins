@@ -261,3 +261,119 @@ test('manifest page: one row per schema property, recursively (an independent wa
   const shown = [...manifest.matchAll(/<span class="p-name">([^<]+)<\/span>/g)].map((m) => m[1].replace(/&lt;/g, '<'));
   assert.deepEqual(shown.sort(), paths.sort());
 });
+
+// ---- Task 1.4: guide pages (index, start, tutorial, submitting, policy, licence) and the README-derived pages
+
+import { render as renderScaffold } from '../../create-plugin/lib/generate.mjs';
+import { ANSWERS } from '../lib/pages.mjs';
+
+const textOf = (page) => page.replace(/<pre[\s\S]*?<\/pre>/g, ' ').replace(/<(script|style|svg)[\s\S]*?<\/\1>/g, ' ').replace(/<\/?(?:code|a|b|em|span)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+const unescapeCode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const main = (out, slug) => /<main[\s\S]*<\/main>/.exec(html(out, slug))?.[0] ?? html(out, slug);
+
+test('API pages built from the README name no desktop-internal path, command or test build', () => {
+  const internal = [/src\/index\.ts/, /host\/src/, /packages\/[a-z-]+/, /npm --prefix/, /selftest/, /store-core/, /dev\.evecyno\.\*/, /test build/i, /In this repository/];
+  const slugs = PLAN_PAGES.filter((s) => s.startsWith('api') || ['manifest', 'packaging'].includes(s));
+  assert.ok(slugs.length > 30);
+  for (const slug of slugs) {
+    const text = textOf(main(join(tmp, 'off'), slug));
+    for (const re of internal) assert.doesNotMatch(text, re, `${slug}: ${re}`);
+  }
+});
+
+test('overview: says what a plugin is, names the sandbox, and with the flag off says the Marketplace is not open', () => {
+  const text = textOf(main(join(tmp, 'off'), 'index'));
+  assert.match(text, /plugin\.json/);
+  assert.match(text, /sandbox/i);
+  assert.match(text, /Marketplace is not open|not open yet|not live/i);
+  assert.doesNotMatch(text, /Marketplace is (?:now )?(?:open|live)|(?<!nobody )can install|install it from/i);
+  const live = textOf(main(join(tmp, 'live'), 'index'));
+  assert.doesNotMatch(live, /not open yet|not live/i);
+});
+
+test('start: not-on-npm note, the npm install step, and the not-open callout follows the flag', () => {
+  const text = textOf(main(join(tmp, 'off'), 'start'));
+  assert.match(text, /not on npm/i);
+  assert.match(text, /npm install/);
+  assert.match(text, /Nobody can install your plugin yet/);
+  const live = textOf(main(join(tmp, 'live'), 'start'));
+  assert.doesNotMatch(live, /Nobody can install your plugin yet|not open yet|not live/i);
+});
+
+test('start and tutorial are the template output: tree, plugin.json, main.ts and every shown file equal generate.mjs', () => {
+  const files = renderScaffold(ANSWERS);
+  const start = html(join(tmp, 'off'), 'start');
+  const panel = (name) => unescapeCode(new RegExp(`<pre data-panel="${name}"[^>]*><code>([\\s\\S]*?)</code></pre>`).exec(start)[1]);
+  assert.equal(panel('manifest'), files.get('plugin.json'));
+  assert.equal(panel('main'), files.get('src/main.ts'));
+  assert.equal(panel('tree'), `my-plugin/\n${[...files.keys()].map((k) => `  ${k}`).join('\n')}`);
+  const tutorial = html(join(tmp, 'off'), 'tutorial');
+  const shown = [...files.keys()].filter((p) => /^(plugin\.json|package\.json|tsconfig\.json|src\/|static\/|test\/|entry\/)/.test(p));
+  assert.ok(shown.length >= 8);
+  for (const path of shown) {
+    const re = new RegExp(`<span class="code-label">${path.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}</span>[\\s\\S]*?<pre><code>([\\s\\S]*?)</code></pre>`);
+    const m = re.exec(tutorial);
+    assert.ok(m, `tutorial shows ${path}`);
+    assert.equal(unescapeCode(m[1]), files.get(path), path);
+  }
+  const prose = textOf(main(join(tmp, 'off'), 'tutorial'));
+  for (const word of ['getEveCyno|eveCyno', 'theme', 'onCommand', 'setSummary', 'contributes', 'engines']) assert.match(prose, new RegExp(word), word);
+  assert.doesNotMatch(prose, /This page shows every file|written in a later step/);
+});
+
+test('submitting: the CONTRIBUTING.md text is embedded, the repository-side "Run the checks locally" is not, author text points to npm run check', () => {
+  const contributing = readFileSync(join(REPO_ROOT, 'CONTRIBUTING.md'), 'utf8');
+  const text = textOf(main(join(tmp, 'off'), 'submitting'));
+  const items = [];
+  let skip = false;
+  let fence = false;
+  for (const line of contributing.split('\n')) {
+    if (/^```/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    const h = /^##\s+(.*)$/.exec(line);
+    if (h) { skip = h[1] === 'Run the checks locally'; if (!skip) items.push({ heading: h[1] }); continue; }
+    if (skip || /^#\s/.test(line) || !line.trim()) continue;
+    if (/^\s*(\d+\.|-)\s+/.test(line) || !items.length || items[items.length - 1].heading) items.push({ text: line.replace(/^\s*(\d+\.|-)\s+/, '') });
+    else items[items.length - 1].text += ` ${line.trim()}`;
+  }
+  const norm = (s) => s.replace(/[`<>]/g, '').replace(/\s+/g, ' ').trim();
+  assert.ok(items.length >= 12);
+  for (const it of items) assert.ok(text.replace(/[<>]/g, '').includes(norm(it.heading ?? it.text)), `embedded: ${(it.heading ?? it.text).slice(0, 50)}`);
+  assert.doesNotMatch(html(join(tmp, 'off'), 'submitting'), /<h2 id="run-the-checks-locally"|<pre><code>npm ci\nnpm test/);
+  assert.match(html(join(tmp, 'off'), 'submitting'), /npm run check -- --plugins/);
+  assert.match(text, /SHA-256/);
+});
+
+test('policy: POLICY.md is embedded in full (every paragraph and list item)', () => {
+  const policy = readFileSync(join(REPO_ROOT, 'POLICY.md'), 'utf8').replace(/^# .*\n+/, '');
+  const text = textOf(main(join(tmp, 'off'), 'policy')).replace(/[<>]/g, '');
+  const blocks = policy.split(/\n\n+/).map((b) => b.replace(/^##\s+.*\n?/gm, '').replace(/[`<>]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  assert.ok(blocks.length >= 10);
+  for (const b of blocks) assert.ok(text.includes(b), b.slice(0, 60));
+});
+
+test('licence: the four pieces of plan section 5, each with its licence, and the Fenris disclaimer in the body', () => {
+  const text = textOf(main(join(tmp, 'off'), 'licence'));
+  const table = html(join(tmp, 'off'), 'licence');
+  assert.match(table, /create-plugin<\/code>[\s\S]*?<td>MIT<\/td>/);
+  assert.match(text, /MIT-0/);
+  assert.match(text, /plugin API[^.]*MIT|MIT[^.]*plugin API/i);
+  assert.match(text, /documentation[^.]*MIT|MIT[^.]*documentation/i);
+  assert.match(text, /PolyForm Strict/);
+  assert.match(text, /EVE Online and all related materials are the property of Fenris Creations/);
+  assert.match(text, /not affiliated with Fenris Creations/);
+  assert.doesNotMatch(text, /Draft|written in a later step/);
+});
+
+test('content conditionals: live and not-live blocks follow the flag', () => {
+  const dir = join(tmp, 'cond');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'index.md'), '## A\n\n<!-- not-live -->\nNOT-LIVE-TEXT\n<!-- /not-live -->\n\n<!-- live -->\nLIVE-TEXT\n<!-- /live -->\n');
+  const a = html(build({ out: join(tmp, 'cond-off'), contentDir: dir, indexLive: false }).out, 'index');
+  const b = html(build({ out: join(tmp, 'cond-on'), contentDir: dir, indexLive: true }).out, 'index');
+  assert.match(a, /NOT-LIVE-TEXT/); assert.doesNotMatch(a, /(?<!NOT-)LIVE-TEXT/);
+  assert.match(b, /LIVE-TEXT/); assert.doesNotMatch(b, /NOT-LIVE-TEXT/);
+  writeFileSync(join(dir, 'index.md'), '<!-- live -->\nunclosed\n');
+  assert.throws(() => build({ out: join(tmp, 'cond-bad'), contentDir: dir }), /unclosed|index\.md/);
+});

@@ -81,7 +81,7 @@ export function build({ out, base = '/plugins/', indexLive = flagOn(process.env.
   if (!out) throw new Error('build: out is required');
   if (!/^\/(?:[\w.-]+\/)*$/.test(base)) throw new Error(`build: base must start and end with "/" (got ${base})`);
   const ctx = gather(sources);
-  const { pages } = buildPages(ctx);
+  const { pages } = buildPages({ ...ctx, indexLive });
   const design = loadDesign(DESIGN_SNAPSHOT);
   const slugs = new Set(pages.map((p) => p.slug));
   const order = pages.map((p) => p.slug);

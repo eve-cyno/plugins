@@ -57,8 +57,29 @@ class Body {
   html() { return this.parts.join('\n'); }
 }
 
+/**
+ * CONTRIBUTING.md as the submitting page embeds it: without its title and without "Run the checks locally", whose `npm ci` and
+ * `npm test` run the index repository's own tests, not an author's project (the page's own text explains `npm run check`).
+ */
+export function authorFacing(contributing) {
+  const cut = contributing.replace(/^# .*\n+/, '').replace(/^## Run the checks locally\n[\s\S]*?(?=^## |(?![\s\S]))/m, '');
+  if (cut.includes('## Run the checks locally') || cut === contributing) throw new Error('CONTRIBUTING.md: the "Run the checks locally" section moved (site/lib/pages.mjs authorFacing)');
+  return cut;
+}
+
 /** The slug of a page as a content file name: `api/types` is `api-types.md`. */
 const contentName = (slug) => `${slug.replaceAll('/', '-')}.md`;
+
+/**
+ * Status-dependent text in a content file: `<!-- not-live -->...<!-- /not-live -->` is kept only while the INDEX_LIVE flag is off
+ * and `<!-- live -->...<!-- /live -->` only while it is on. A marker without its partner fails the build.
+ */
+export function applyIndexState(text, live, name) {
+  const out = text.replace(/<!-- (not-live|live) -->\n?([\s\S]*?)<!-- \/\1 -->\n?/g, (_, kind, inner) => ((kind === 'live') === Boolean(live) ? inner : ''));
+  const stray = /<!-- \/?(?:not-)?live -->/.exec(out);
+  if (stray) throw new Error(`content ${name}: unpaired marker ${stray[0]}`);
+  return out;
+}
 
 export const STUB_NOTE = 'This page is a stub. Its text is written in a later step of the plugin docs work. The sources it follows are listed here.';
 
@@ -86,7 +107,7 @@ export function buildPages(ctx) {
   const newBody = () => new Body(mdOpts);
   const contentOf = (slug) => {
     const f = join(ctx.contentDir, contentName(slug));
-    return existsSync(f) ? readFileSync(f, 'utf8') : null;
+    return existsSync(f) ? applyIndexState(readFileSync(f, 'utf8'), ctx.indexLive, contentName(slug)) : null;
   };
   /** Hand-written prose: the content file when present, else the stub note and the sources. */
   const prose = (body, slug, sources) => {
@@ -123,7 +144,11 @@ export function buildPages(ctx) {
     const files = ctx.scaffold;
     const tree = [...files.keys()].map((k) => `  ${k}`).join('\n');
     body.h2('Before you start').p('You need Node 22 or newer, npm, and the EVE-Cyno desktop app with Settings > Plugins > Developer available. A plugin is a folder with a `plugin.json`, one HTML page and a script. It runs in a sandbox and reaches the app only through the [plugin API](@@api).');
-    body.raw(`<aside class="callout" data-kind="warning">${ico('i-warn')}<div><p class="callout-title">Nobody can install your plugin yet</p><p>The Marketplace is not live. A plugin you build here runs on your machine, from a folder you chose. You cannot publish it, and no one else can find it. Build it anyway: the same folder is what you will submit.</p></div></aside>`);
+    if (!ctx.indexLive) {
+      body.raw(`<aside class="callout" data-kind="warning">${ico('i-warn')}<div><p class="callout-title">Nobody can install your plugin yet</p><p>The Marketplace is not live. A plugin you build here runs on your machine, from a folder you chose. You cannot publish it, and no one else can find it. Build it anyway: the same folder is what you will submit.</p></div></aside>`);
+    }
+    const startText = contentOf('start');
+    if (startText) body.md(startText);
     body.h2('Create, build, load');
     const cmd = (c) => `<div class="cmd" data-copy-scope><pre><code>${escText(c)}</code></pre><button class="code-copy" type="button" data-copy aria-label="Copy command">${ico('i-copy')}<span data-copy-label>Copy</span></button></div>`;
     body.raw(`<ol class="steps">
@@ -328,8 +353,7 @@ ${pre('main', files.get('src/main.ts'), true)}
     const body = newBody();
     const text = contentOf('submitting');
     if (text) body.md(text);
-    const contrib = ctx.contributing.replace(/^# .*\n+/, '');
-    body.md(contrib);
+    body.md(authorFacing(ctx.contributing));
     body.h2('Entry file fields', 'entry-fields').p('The schema below covers the repository\'s own fields. The listing fields are checked by the app\'s catalog rules.');
     body.raw(rowsToHtml(schemaRows(ctx.entrySchema, { notes: {} }), { head: 'Field' }));
     add({

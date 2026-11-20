@@ -48,7 +48,30 @@ export const DROPPED_TEXT = [
     pattern: /\s*In this repository `npm --prefix host run build:plugin-api`\s+builds them\./,
     reason: 'a build step of the desktop repository',
   },
+  {
+    section: 'Chat',
+    pattern: /\s*`ChatNamespace` in `src\/index\.ts` is the reference\./,
+    reason: 'names a source file of the desktop repository; the declaration on the chat page is the reference',
+  },
+  {
+    section: 'Data packs',
+    pattern: / \(`host\/src\/grants\.ts`, `basisOf`\)/,
+    reason: 'names a source file of the desktop repository',
+  },
+  {
+    section: 'Database',
+    pattern: /\s*Test builds treat the `dev\.evecyno\.\*` fixtures as built in\./,
+    reason: 'a desktop test-build detail an author cannot use',
+  },
+  {
+    section: 'Database',
+    pattern: /\n*\*\*Testing a plugin that uses `db`\.\*\*[^\n]*/,
+    reason: 'names a private package of the desktop repository (store-core) an author cannot install',
+  },
 ];
+
+/** A trailing project tag in a README heading (`(DP1-B5b)`): an internal work-item name an author cannot use. */
+const HEADING_TAG = /\s*\(DP\d+-[A-Za-z0-9]+\)\s*$/;
 
 /** The text above the first `##`: the licence note of the package inside the desktop repository, not for authors. */
 export const EXCLUDED_PREAMBLE = 'the package licence note names the desktop repository licence; the site has its own Licences page';
@@ -103,7 +126,7 @@ export function mapSections(readme) {
     if (slug === false) continue;
     const body = DROPPED_TEXT.reduce((t, d) => (d.section === top ? t.replace(d.pattern, '') : t), s.body);
     if (!byPage.has(slug)) byPage.set(slug, []);
-    byPage.get(slug).push({ ...s, body });
+    byPage.get(slug).push({ ...s, body, heading: s.heading.replace(HEADING_TAG, '') });
   }
   for (const k of [...Object.keys(SECTION_PAGES), ...Object.keys(SPLIT_SECTIONS), ...Object.keys(EXCLUDED_SECTIONS)]) {
     if (!seen.has(k)) problems.push(`the section map names "${k}", which the README no longer has (site/lib/readme.mjs)`);
