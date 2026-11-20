@@ -99,7 +99,7 @@ repository (`eve-cyno-infra`); the owner only types into the password dialogs of
    --repo eve-cyno/plugins`.
 
 The two `MINISIGN_INDEX_*` secrets of `eve-cyno/desktop` (the retired primary) were deleted on 2026-11-20 with `gh secret
-delete`; its `sign.yml` purpose `index` now fails with "a secret of this key is not set" and stays as the emergency path.
+delete`; its `sign.yml` has no `index` purpose any more and `release-sign.sh` refuses it. There is no fallback signer for the index.
 
 ## The environments
 
@@ -628,7 +628,7 @@ success is a 404 whatever `cf-cache-status` says) are in the infrastructure runb
 | `build` or `upload`, `LIVE UNVERIFIED: catalog/<sha256>.json: more than <N> bytes` | the head and signature verify, but the catalog they name is served over its size cap | recovery R2, as for the 404 row above |
 | `build` or `upload`, `LIVE UNVERIFIED: ... its size or SHA-256 is not the one the live head names` | the catalog the verified head names is served as another file (swapped at the edge or in R2) | a security event first (REPLAYED below: the owner finds the writer), then recovery R2 |
 | `build` or `upload`, `NOT BROKEN` | head, signature and catalog verify, so there is nothing to repair | dispatch without `repair` |
-| `build`, `upload` or the `check` and `head` jobs of `resign.yml`, "cannot be read" | a read of the live index or the mirror failed for another reason than a 404 or a size cap (a 429, a 503, a time-out): transient, waiting helps | nothing was written; dispatch again later |
+| `build`, `upload` or the `check` and `head` jobs of `resign.yml`, "cannot be read" | a read of the live index or the mirror failed for another reason than a 404 or a size cap (a 429, a 503, a time-out): usually transient, waiting helps. A lasting 403 or a token that lost a permission does not clear by waiting: read the message, fix the permission or the edge rule, then dispatch again | nothing was written; dispatch again later |
 | `build`, "cannot be read" of a lift file, the base, the new index or `entries/` (check C1) | a local file or tree read failed: not transient | waiting does not fix it; read the message, fix through a pull request or the worktree, then dispatch a new run |
 | `upload`, "the index served over the prefix is not the head and signature in R2" | the edge serves another index than the bucket holds | edge lag lasts seconds: dispatch again. When it persists past about 10 minutes it is a security event: see REPLAYED below |
 | `upload` (resign), "the live catalog" `<name>` "is not in R2, only in the edge cache" | a re-sign writes the head and signature only, and the catalog it names is not in the bucket | look into the deletion first; then dispatch `publish.yml` |
@@ -651,7 +651,7 @@ and a verification of the pair. Its outcomes:
 - **REPLAYED** (red): a pair that verifies but is neither new nor old is live: someone else's verified head, possibly an older one.
   Treat it as a security event: no approval of anything until the owner has found out who wrote it; then recovery R2. A swapped catalog
   (in R2, or served by the edge) is a security event in the same way, before any repair.
-- **HALF-PUBLISHED** (red), or a failed restore: the live pair does not verify. Recovery R2, or the owner's manual path (5.4).
+- **HALF-PUBLISHED** (red), or a failed restore: the live pair does not verify. Recovery R2, or wait, as "When plugins is unusable" says.
 
 ## Recovery R2: repair
 
@@ -662,27 +662,30 @@ When the live index does not verify (its head, signature or the catalog the head
 Any such run younger than 90 days that lacks one of
 those artifacts (or has it expired) **stops the repair**, so a deleted artifact never drops a revocation silently. The unsigned live
 head only raises the floor of `generated`. The approvals follow the steps above, step 6 included. If the repair stops, or no candidate
-verifies, the owner follows the emergency path.
+verifies, the index stays as published until plugins works again ("When plugins is unusable").
 
 **A dead end at 90 days.** `tools/approved-base.mjs` has no age limit, but the repair takes only runs younger than 90 days as
 candidates (their artifacts' retention). So when the only runs with an approved `index` and a successful `sign` never had a
 successful `upload` (a first publish that signed but did not go live: `unchanged` or `FIRST-PUBLISH ORPHAN` in recovery R1), and the
 newest of them is 90 days old or more, the tool says `NOT A FIRST PUBLISH` (only a repair may follow) while a repair run stops with
-`NO VERIFIED BASE` (no candidate). Neither a first publish nor a repair can then be approved: the owner follows the emergency path.
+`NO VERIFIED BASE` (no candidate). Neither a first publish nor a repair can then be approved: the index stays as published until plugins works again ("When plugins is unusable").
 To stay out of it, dispatch the repair run while that run is younger than 90 days.
 
-## Emergency path (plan 5.4)
+**Ruling on the edge read.** The decision to repair rests on the live index as the edge serves it, not on R2 alone. This is accepted: an
+edge that serves a failing catalog with HTTP 200 breaks every app whatever R2 holds, and a repair writes a new content-addressed catalog
+and a new pair. The floor of `generated` is R2's own head. The edge caches a catalog as immutable for one year and an archive for at
+most 4 hours, so a swapped or deleted catalog stays visible until it is purged or replaced.
 
-If `eve-cyno/plugins` or its Actions are unusable, the coordinator sets the two index secrets of `eve-cyno/desktop` again from the
-backup, and nothing else: `scripts/desktop-signing-rotate.sh secrets index index --repo eve-cyno/desktop` in the infra repository.
-It proves the index primary against its `.pub` and the key the app pins, decrypts into tmpfs and pipes `MINISIGN_INDEX_KEY` and
-`MINISIGN_INDEX_PASSWORD` to `gh secret set` on stdin; the owner runs no decrypt command. (`scripts/desktop-signing-secrets.sh` is not
-used here: it sets the two release secrets too.) Then the desktop repository's `docs/release-checklist.md`, "The plugin index", is
-followed by hand: the coordinator builds with the vendored tools; the owner runs `scripts/release-sign.sh` with purpose `index`,
-which only dispatches the desktop `sign.yml` (it decrypts nothing and reads no secret) and verifies the signature it downloads; the
-owner uploads with his own Cloudflare login. `sign.yml` has no `environment:` and asks for no approval: its first step lets only a
-login listed in the desktop repository's Actions variable `RELEASE_SIGNERS` sign, and only on `main`. So on this path that list,
-not a phone approval, decides who can sign an index head.
+## When plugins is unusable
+
+There is no fallback signer. The desktop repository's `sign.yml` has no `index` purpose (removed 2026-11-20) and `release-sign.sh`
+refuses `index`, so the index key exists in CI only as the two `MINISIGN_INDEX_*` secrets of `eve-cyno/plugins`. If `eve-cyno/plugins` or
+its Actions are unusable:
+
+- The published index stays served as it is. Past its `expires`, Install and Update are off.
+- No new head, listing or revocation is published until plugins works again.
+- Where this runbook sends the owner to "the emergency path" (a repair that stops, no verified candidate, a dead end at 90 days), the
+  answer is now: wait for plugins to work again, or fix the stop in this repository. Nothing bypasses it.
 
 ## Rotation (plan 4.4)
 
@@ -703,6 +706,13 @@ Found in review, accepted, and named here so nobody counts on more than the tool
   request review flagged it when the version was added.
 - SemVer case: `1.0.0-RC.1` and `1.0.0-rc.1` are two versions of one id and may collide on a case-insensitive filesystem (the
   installer's folder keys). Carried to the desktop.
+- The parent check does not bind who authored `<H>`; step 1.5 (`git merge --no-ff <H>`) covers it.
+- A file without a final newline gets `\n` added by `yamlsub`: a false refusal only.
+- A write-access re-run of a run of this repository started by another event, with a successful `sign` in attempt 2, is an `ERROR` in
+  `tools/approved-base.mjs` and blocks reviews until the owner deletes that run. It fails closed: availability only.
+- `tools/vendor-host.mjs` accepts any ancestor of desktop `main`, so a re-vendor from a commit before 2026-11-20 would restore the
+  retired index pins; the owner's `vendor/` reading (step 0.3) is the check.
+- `C-WF5` does not match mixed-case context names (`${{ Secrets.X }}`) or `toJSON(vars)`; tracked as a fix.
 - Any edit of the `sign` job, an action pin bump included, needs its new pin in `SIGN_STEPS` in `tools/lib/wfrules.mjs` in the same
   commit; the error prints the new hash.
 - `tools/lib/repairbase.mjs` filters runs with `notOnMain` only, so an own-repo run of another event (a push, say) with approved
