@@ -7,7 +7,10 @@
   "type": "module",
   "scripts": {
     "vendor:verify": "node tools/vendor-api.mjs --verify",
-    "test": "node --test \"site/test/**/*.test.mjs\" \"test/**/*.test.mjs\"",
+    "test": "node --test \"site/test/**/*.test.mjs\" \"create-plugin/test/**/*.test.mjs\" \"test/**/*.test.mjs\"",
     "build:site": "node site/build.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
   }
 }

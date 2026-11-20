@@ -1,7 +1,8 @@
 // End to end: generate a plugin with the CLI, install TypeScript (offline first), then run the generated build, test, pack,
 // entry and check scripts. The built manifest goes through the vendored host's parseManifest, the archive through its reader,
 // and tools/check.mjs of this repository must say `refuse` passes and `review` lists only `new`.
-// Skipped, with a message, only when typescript 7.0.2 is not in the npm cache (no network is used).
+// Skipped, with a message, only when typescript 7.0.2 is not in the npm cache (no network is used) and the SDK's own dev dependencies
+// are not installed: `npm ci` in sdk/ installs the same TypeScript and so puts it in the cache.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -35,8 +36,9 @@ test('scaffold: generate, install, build, test, pack, entry, check', { timeout: 
 
   const npm = spawnSync('npm', ['install', '--offline', '--no-audit', '--no-fund'], { cwd: proj, encoding: 'utf8', timeout: 240_000 });
   if (npm.status !== 0) {
-    if (/ENOTCACHED|ENOENT.*cache|offline/i.test(`${npm.stderr}${npm.stdout}`)) {
-      t.skip('typescript 7.0.2 is not in the npm cache; run `npm install` once with network, then run this test again');
+    const sdkTypescript = existsSync(join(HERE, '..', 'node_modules', 'typescript', 'package.json'));
+    if (/ENOTCACHED|ENOENT.*cache|offline/i.test(`${npm.stderr}${npm.stdout}`) && !sdkTypescript) {
+      t.skip('typescript 7.0.2 is not in the npm cache; run `npm ci` in sdk/ once (it needs the network), then run this test again');
       return;
     }
     assert.fail(`npm install --offline failed for a reason other than a cache miss:\n${npm.stderr}`);
