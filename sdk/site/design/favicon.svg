@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <style>.a{fill:#4ad6f5}.r{stroke:#4ad6f5}.k{fill:#f5fbff}@media (prefers-color-scheme:light){.a{fill:#0b5f7a}.r{stroke:#0b5f7a}.k{fill:#f3f6fa}}</style>
+  <path class="r" fill="none" stroke-width="6" d="M48.85 14.86A24 24 0 1 0 48.85 49.14"/>
+  <path class="a" d="M32 23L41 32L32 41L23 32ZM45 29.5L63 32L45 34.5Z"/>
+  <path class="k" d="M32 28L36 32L32 36L28 32Z"/>
+</svg>

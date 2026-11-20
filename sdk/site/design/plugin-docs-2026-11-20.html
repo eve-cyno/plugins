@@ -1,0 +1,623 @@
+<!-- source: claude-design-artifact QdEv9cVyqSfTPnWRQnrwVf version 1795173666-f832 project/eve-cyno/project/plugin-docs.html sha256 c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f (of the bytes below this line) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Getting started · EVE-CYNO plugin docs</title>
+<meta name="description" content="Developer docs for EVE-Cyno desktop plugins: getting started, the plugin API, the plugin.json manifest, permissions, packaging and the review process.">
+<!-- EVE-CYNO PLUGINS · docs (plugins.eve-cyno.dev /docs/…; host open, see the plan 2.4).
+     Derived from data-docs.html (2026-11-20, lane-plugin-docs task 1.2). Same shell, same class names, same data-site.js hooks;
+     the additions are listed in #plugin-docs-css below. One file, many page states: <article class="doc" data-page="…">.
+     The DESIGN-ONLY script at the bottom shows one state per #page=… hash. Production URLs (static build, one article per URL):
+       #page=start → /docs/start          #page=api/storage → /docs/api/storage       #page=manifest → /docs/manifest
+       index → /docs   tutorial   local-testing   api   api/types   api/versions   permissions   packaging   submitting
+       checks   policy   signing   licence   (only start, api/storage and manifest are drafted; the rest reuse the same parts)
+     Styles: site-base.css (token layer) + data-docs.css + the plugin-docs.css block below, nothing else. The wordmark-motion.css
+     is NOT loaded: the plugin docs use the static mark (.pd-mark), not the animated CYNO wordmark.
+     Themes: dark is the default (as in the data docs). A light theme is new here: #plugin-docs-css redefines the tokens for
+     prefers-color-scheme: light and for [data-theme="light"]; [data-theme="dark"] forces dark. Port it as plugin-docs.css.
+     Status banner: .status-banner is rendered on EVERY page from the build flag INDEX_LIVE. data-state="not-live" is the default
+     (INDEX_LIVE=false); data-state="live" is drawn only when the flag is true. The server renders one of them, never both.
+     Design-only parts are marked data-demo and never ported: the site-base stand-in style, the page-state switcher and the
+     ?demo=live / ?demo=drawer / ?demo=search board states (bottom scripts). -->
+<link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/svg+xml" sizes="16x16" href="brand/favicon-small.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style data-demo id="site-base-standin">/* DESIGN-ONLY stand-in for site-base.css (the Artifact does not hold that file; the repo links the real one). Token values and base rules copied from site-base.css. Never port. */
+:root { color-scheme: dark;
+  --c-void: #06080c; --c-void-2: #0b0f17; --c-nebula: #121a28; --c-nebula-2: #1b2638;
+  --c-line: #31435f; --c-line-ctl: #5c7198; --c-line-soft: #1e2a3f;
+  --c-fg: #e8eef7; --c-fg-muted: #a9b6cc; --c-fg-dim: #8b9ab6; --c-white-hot: #f5fbff;
+  --c-ice: #4ad6f5; --c-ice-2: #00b6d9; --c-blue: #7d8bff; --c-blue-text: #a5b4ff;
+  --c-red: #ff8c3d; --c-green: #5fd0a8;
+  --c-ok: #6ed878; --c-warn: #ffb84d; --c-bad: #ff5b6a; --c-bad-text: #ff7480;
+  --c-focus: #4ad6f5; --c-ink: #06080c;
+  --c-glass: rgba(11,15,23,.78); --c-scrim: rgba(6,8,12,.72);
+  --mode: var(--c-ice); --mode-text: var(--c-ice); --mode-glow: color-mix(in srgb, var(--mode) 40%, transparent);
+  --f-display: "Space Grotesk", system-ui, sans-serif; --f-body: "Space Grotesk", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --t-lead: clamp(1.0625rem, 1.6vw, 1.3125rem); --t-h2: clamp(1.375rem, 2.4vw, 1.75rem);
+  --t-body: 1.0625rem; --t-small: .9375rem; --t-label: .75rem; --t-micro: .6875rem; --track-label: .13em;
+  --maxw: 1200px; --radius: 2px;
+  --ease-out: cubic-bezier(.22,1,.36,1); --ease-in-out: cubic-bezier(.65,0,.35,1);
+  --dur-1: 120ms; --dur-2: 240ms; --dur-3: 480ms; }
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--c-void); color: var(--c-fg); font-family: var(--f-body); font-size: var(--t-body); line-height: 1.6; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: clip; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--c-void); }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 500; text-wrap: balance; }
+.wrap { max-width: var(--maxw); margin-inline: auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+code, pre { font-family: var(--f-mono); font-size: .875rem; }
+</style>
+<link rel="stylesheet" href="data-docs.css">
+<style id="plugin-docs-css">/* ==========================================================================
+   EVE-CYNO PLUGINS · plugin-docs.css  (new, 2026-11-20). Loads after site-base.css and data-docs.css.
+   Adds only: (1) the light theme, (2) the status banner, (3) the plugin lockup, (4) two verdict badges,
+   (5) a few dark-only literals of data-docs.css turned into tokens. Everything else is data-docs.css as is.
+   ========================================================================== */
+:root { --c-code-fg: #d4dcea; --c-hover: rgba(255, 255, 255, .04); }
+
+/* (1) light theme. Dark is the default; these blocks only redefine tokens. The two blocks hold the same values. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --c-void: #f3f6fb; --c-void-2: #ffffff; --c-nebula: #e7edf6; --c-nebula-2: #dbe4f0;
+    --c-line: #c2cfe0; --c-line-ctl: #74869f; --c-line-soft: #dce4ee;
+    --c-fg: #0d1626; --c-fg-muted: #3d4e69; --c-fg-dim: #566783; --c-white-hot: #ffffff;
+    --c-ice: #0a6c88; --c-ice-2: #0a6c88; --c-blue: #4a56d6; --c-blue-text: #3a45bf;
+    --c-red: #a04800; --c-red-2: #8f4100; --c-green: #0a7a56;
+    --c-ok: #1b7a2b; --c-warn: #8a5600; --c-bad: #b3202e; --c-bad-text: #a51c2a;
+    --c-focus: #0a6c88; --c-ink: #ffffff;
+    --c-glass: rgba(255, 255, 255, .82); --c-scrim: rgba(243, 246, 251, .88);
+    --code-bg: #eef2f8; --c-code-fg: #1b2a42; --c-hover: rgba(13, 22, 38, .05);
+    --c-ice-glow: rgba(10, 108, 136, .25);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --c-void: #f3f6fb; --c-void-2: #ffffff; --c-nebula: #e7edf6; --c-nebula-2: #dbe4f0;
+  --c-line: #c2cfe0; --c-line-ctl: #74869f; --c-line-soft: #dce4ee;
+  --c-fg: #0d1626; --c-fg-muted: #3d4e69; --c-fg-dim: #566783; --c-white-hot: #ffffff;
+  --c-ice: #0a6c88; --c-ice-2: #0a6c88; --c-blue: #4a56d6; --c-blue-text: #3a45bf;
+  --c-red: #a04800; --c-red-2: #8f4100; --c-green: #0a7a56;
+  --c-ok: #1b7a2b; --c-warn: #8a5600; --c-bad: #b3202e; --c-bad-text: #a51c2a;
+  --c-focus: #0a6c88; --c-ink: #ffffff;
+  --c-glass: rgba(255, 255, 255, .82); --c-scrim: rgba(243, 246, 251, .88);
+  --code-bg: #eef2f8; --c-code-fg: #1b2a42; --c-hover: rgba(13, 22, 38, .05);
+  --c-ice-glow: rgba(10, 108, 136, .25);
+}
+/* literals of data-docs.css that only read on dark, now tokens */
+.code pre { color: var(--c-code-fg); }
+.nav-link:hover { background: var(--c-hover); }
+.search-results { box-shadow: 0 18px 40px color-mix(in srgb, var(--c-void) 70%, #000); }
+
+/* (2) status banner: the Marketplace status, on every page, under the top bar. Not sticky. */
+.status-banner { --k: var(--c-warn); border-bottom: 1px solid color-mix(in srgb, var(--k) 38%, var(--c-line-soft)); background: color-mix(in srgb, var(--k) 8%, var(--c-void-2)); }
+.status-banner[data-state="live"] { --k: var(--c-ok); }
+.sb-in { max-width: var(--top-maxw); margin: 0 auto; padding: 11px max(24px, env(safe-area-inset-right, 0px)) 11px max(24px, env(safe-area-inset-left, 0px)); display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 14px; }
+.sb-in > .ico { width: 18px; height: 18px; margin-top: 3px; color: var(--k); }
+.sb-state { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; padding: 2px 8px; border: 1px dashed color-mix(in srgb, var(--k) 70%, transparent); border-radius: var(--radius); font-family: var(--f-mono); font-size: var(--fs-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--k); white-space: nowrap; }
+.sb-text { flex: 1 1 320px; min-width: 0; margin: 0; font-size: .9375rem; line-height: 1.55; color: var(--c-fg-muted); }
+.sb-text b { color: var(--c-fg); font-weight: 500; }
+.sb-text a { color: var(--c-fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--k) 60%, transparent); }
+.sb-text a:hover { text-decoration-color: var(--k); }
+
+/* (3) lockup: the static CYNO mark plus the product line. Accent is the docs green. */
+.pd-lockup { --cy-accent: var(--c-green); gap: 10px; color: var(--c-fg); }
+.pd-mark { width: 26px; height: 26px; color: var(--mode-text); flex-shrink: 0; }
+.pd-wm { display: inline-flex; align-items: baseline; gap: 8px; font-family: var(--f-display); font-weight: 600; font-size: 1rem; letter-spacing: .06em; white-space: nowrap; }
+.pd-wm small { font-family: var(--f-mono); font-weight: 400; font-size: var(--t-micro); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--mode-text); }
+
+/* (4) verdict badges for manifest examples; .badge-ok exists in data-docs.css */
+.badge-bad { color: var(--c-bad-text); border-color: color-mix(in srgb, var(--c-bad) 50%, transparent); }
+.badge-bad::before { content: ""; width: 6px; height: 6px; background: var(--c-bad); transform: rotate(45deg); }
+.code-head .badge { margin-left: auto; margin-right: 6px; }
+.code-head .badge + .code-copy { margin-left: 0; }
+.since { font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--c-fg-dim); white-space: nowrap; }
+@media (max-width: 560px) { .sb-in { padding-inline: 16px; } .pd-wm small { display: none; } }
+</style>
+</head>
+<body class="docs-page">
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ICON SPRITE (shared partial; same block in data-home.html plus doc-only icons). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="8.5" y="8.5" width="11" height="11" rx="1"/><path d="M15.5 8.5V5.5a1 1 0 00-1-1h-9a1 1 0 00-1 1v9a1 1 0 001 1h3"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-8.5 8.5M17 14v5H5V7h5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".6" fill="currentColor"/></symbol>
+  <symbol id="i-tip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5L21.5 20h-19z"/><path d="M12 10v4.5"/><circle cx="12" cy="17.2" r=".6" fill="currentColor"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="1"/><path d="M7 10l3 2.5L7 15M12.5 15.5H17"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v4M15 3v4M6.5 7h11v3.5a5.5 5.5 0 01-11 0zM12 16v5"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H7a2 2 0 00-2 2v3.5a2.5 2.5 0 01-2 2.5 2.5 2.5 0 012 2.5V18a2 2 0 002 2h1M16 4h1a2 2 0 012 2v3.5a2.5 2.5 0 002 2.5 2.5 2.5 0 00-2 2.5V18a2 2 0 01-2 2h-1"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M6 2.5h8l4.5 4.5v14.5H6z"/><path d="M14 2.5V7h4.5M9 12h6M9 15.5h6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 2.5l8 3.5v5.5c0 5-3.6 8.6-8 10-4.4-1.4-8-5-8-10V6z"/></symbol>
+  <symbol id="i-discord" viewBox="0 0 127.14 96.36"><path fill="currentColor" d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="icon-btn topbar-menu" type="button" data-drawer-open aria-label="Open documentation menu" aria-expanded="false"><svg class="ico" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    <a class="lockup pd-lockup" href="#page=index" aria-label="EVE-CYNO plugin docs home"><svg class="pd-mark" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false"><path d="M48.85 14.86A24 24 0 1 0 48.85 49.14" fill="none" stroke="currentColor" stroke-width="6"/><path d="M32 23L41 32L32 41L23 32Z" fill="currentColor"/><path d="M45 29.5L63 32L45 34.5Z" fill="currentColor"/></svg><span class="pd-wm">EVE-CYNO<small>Plugins</small></span></a>
+    <nav class="topnav" aria-label="Main">
+      <a href="#page=start" aria-current="page">Docs</a>
+      <a href="#page=api">API</a>
+      <a href="#page=manifest">Manifest</a>
+    </nav>
+    <div class="topbar-actions">
+      <div class="search" data-search>
+        <div class="search-field">
+          <svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>
+          <input class="search-input" id="docsSearch" type="search" placeholder="Search plugin docs" aria-label="Search plugin docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-autocomplete="list" data-search-input>
+          <kbd class="kbd" aria-hidden="true">/</kbd>
+          <button class="search-close" type="button" data-search-close aria-label="Close search"><svg class="ico" aria-hidden="true"><use href="#i-close"/></svg></button>
+        </div>
+        <div class="search-results" role="listbox" aria-label="Search results" data-search-results hidden></div>
+      </div>
+      <button class="icon-btn search-toggle" type="button" data-search-toggle aria-label="Search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></button>
+      <a class="btn-ghost topbar-discord" href="https://discord.gg/XZzkH38dt9" aria-label="EVE-Cyno Discord"><svg class="ico" aria-hidden="true"><use href="#i-discord"/></svg><span class="label">Discord</span></a>
+    </div>
+  </div>
+</header>
+<div class="scrim" data-drawer-scrim></div>
+
+<!-- STATUS BANNER. Every page, from the build flag INDEX_LIVE. The server renders exactly one of the two. -->
+<aside class="status-banner" data-state="not-live" role="status" aria-label="Marketplace status">
+  <div class="sb-in">
+    <svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg>
+    <span class="sb-state">Not live</span>
+    <p class="sb-text"><b>The plugin Marketplace is not live yet.</b> You can build a plugin and load it from a folder on your own machine today. The public plugin index is not published, so nobody can install a plugin from it and no plugin is listed. The submission pages describe the process for the day it opens. <a href="#page=index">What this means</a></p>
+  </div>
+</aside>
+<aside class="status-banner" data-state="live" role="status" aria-label="Marketplace status" hidden>
+  <div class="sb-in">
+    <svg class="ico" aria-hidden="true"><use href="#i-live"/></svg>
+    <span class="sb-state">Live</span>
+    <p class="sb-text"><b>The plugin Marketplace is open.</b> A plugin that passes review is listed under Settings &gt; Plugins and can be installed from there. <a href="#page=submitting">Submit yours</a></p>
+  </div>
+</aside>
+
+<div class="docs">
+
+  <!-- ============ LEFT NAV (drawer <= 900px) ============ -->
+  <aside class="docs-nav" data-drawer aria-label="Documentation">
+    <div class="nav-head">
+      <a class="lockup pd-lockup" href="#page=index" aria-label="EVE-CYNO plugin docs home"><svg class="pd-mark" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false"><path d="M48.85 14.86A24 24 0 1 0 48.85 49.14" fill="none" stroke="currentColor" stroke-width="6"/><path d="M32 23L41 32L32 41L23 32Z" fill="currentColor"/><path d="M45 29.5L63 32L45 34.5Z" fill="currentColor"/></svg><span class="pd-wm">EVE-CYNO<small>Plugins</small></span></a>
+      <button class="icon-btn" type="button" data-drawer-close aria-label="Close menu"><svg class="ico" aria-hidden="true"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="nav-meta">
+      <span class="nav-ver">API 1.29.0</span>
+      <span class="nav-status"><i aria-hidden="true"></i>index: <span data-slot="index-state">not live</span></span>
+    </div>
+    <nav aria-label="Docs pages">
+      <p class="nav-cap">Get started</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#page=index" data-nav="index">Overview</a></li>
+        <li><a class="nav-link" href="#page=start" data-nav="start">Getting started</a></li>
+        <li><a class="nav-link" href="#page=tutorial" data-nav="tutorial">Tutorial</a></li>
+        <li><a class="nav-link" href="#page=local-testing" data-nav="local-testing">Local testing</a></li>
+      </ul>
+      <p class="nav-cap">Plugin API</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#page=api" data-nav="api">API overview</a>
+          <details class="nav-sub" open>
+            <summary><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>Always present<span class="n">8</span></summary>
+            <ul>
+              <li><a class="nav-tool" href="#page=api/host" data-nav="api/host">host</a></li>
+              <li><a class="nav-tool" href="#page=api/storage" data-nav="api/storage">storage</a></li>
+              <li><a class="nav-tool" href="#page=api/commands" data-nav="api/commands">commands</a></li>
+              <li><a class="nav-tool" href="#page=api/settings" data-nav="api/settings">settings</a></li>
+              <li><a class="nav-tool" href="#page=api/status" data-nav="api/status">status</a></li>
+              <li><a class="nav-tool" href="#page=api/tile" data-nav="api/tile">tile</a></li>
+              <li><a class="nav-tool" href="#page=api/theme" data-nav="api/theme">theme</a></li>
+              <li><a class="nav-tool" href="#page=api/window" data-nav="api/window">window</a></li>
+            </ul>
+          </details>
+          <details class="nav-sub">
+            <summary><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>Optional<span class="n">19</span></summary>
+            <ul>
+              <li><a class="nav-tool" href="#page=api/characters" data-nav="api/characters">characters</a></li>
+              <li><a class="nav-tool" href="#page=api/esi" data-nav="api/esi">esi</a></li>
+              <li><a class="nav-tool" href="#page=api/logs" data-nav="api/logs">logs</a></li>
+              <li><a class="nav-tool" href="#page=api/services" data-nav="api/services">services</a></li>
+              <li><a class="nav-tool" href="#page=api/clipboard" data-nav="api/clipboard">clipboard</a></li>
+              <li><a class="nav-tool" href="#page=api/windows" data-nav="api/windows">windows</a></li>
+              <li><a class="nav-tool" href="#page=api/overlays" data-nav="api/overlays">overlays</a></li>
+              <li><a class="nav-tool" href="#page=api/thumbnails" data-nav="api/thumbnails">thumbnails</a></li>
+              <li><a class="nav-tool" href="#page=api/hotkeys" data-nav="api/hotkeys">hotkeys</a></li>
+              <li><a class="nav-tool" href="#page=api/notifications" data-nav="api/notifications">notifications</a></li>
+              <li><a class="nav-tool" href="#page=api/files" data-nav="api/files">files</a></li>
+              <li><a class="nav-tool" href="#page=api/gamelog" data-nav="api/gamelog">gamelog</a></li>
+              <li><a class="nav-tool" href="#page=api/data" data-nav="api/data">data</a></li>
+              <li><a class="nav-tool" href="#page=api/ai" data-nav="api/ai">ai</a></li>
+              <li><a class="nav-tool" href="#page=api/dataapi" data-nav="api/dataapi">dataapi</a></li>
+              <li><a class="nav-tool" href="#page=api/chat" data-nav="api/chat">chat</a></li>
+              <li><a class="nav-tool" href="#page=api/db" data-nav="api/db">db</a></li>
+              <li><a class="nav-tool" href="#page=api/fit" data-nav="api/fit">fit</a></li>
+              <li><a class="nav-tool" href="#page=api/permissions" data-nav="api/permissions">permissions</a></li>
+            </ul>
+          </details>
+        </li>
+        <li><a class="nav-link" href="#page=api/types" data-nav="api/types">All other types</a></li>
+        <li><a class="nav-link" href="#page=api/versions" data-nav="api/versions">What each version added</a></li>
+      </ul>
+      <p class="nav-cap">Reference</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#page=manifest" data-nav="manifest">plugin.json</a></li>
+        <li><a class="nav-link" href="#page=permissions" data-nav="permissions">Permissions and grants</a></li>
+        <li><a class="nav-link" href="#page=packaging" data-nav="packaging">Archive rules</a></li>
+      </ul>
+      <p class="nav-cap">Publish</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#page=submitting" data-nav="submitting">Submitting a plugin<span class="nav-tag" data-state-tag="not-live">not open</span></a></li>
+        <li><a class="nav-link" href="#page=checks" data-nav="checks">Checks C1 to C17</a></li>
+        <li><a class="nav-link" href="#page=policy" data-nav="policy">Review policy</a></li>
+        <li><a class="nav-link" href="#page=signing" data-nav="signing">Signing and the index</a></li>
+      </ul>
+      <p class="nav-cap">Project</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#page=licence" data-nav="licence">Licences</a></li>
+        <li><a class="nav-link" href="https://github.com/eve-cyno/plugins">Plugin repository<svg class="ico" aria-hidden="true"><use href="#i-ext"/></svg></a></li>
+      </ul>
+    </nav>
+    <a class="nav-discord" href="https://discord.gg/XZzkH38dt9"><svg class="ico" aria-hidden="true"><use href="#i-discord"/></svg><span><b>Questions?</b>Ask on the EVE-Cyno Discord</span></a>
+  </aside>
+
+  <main class="docs-main" id="main">
+
+<!-- =====================================================================
+     PAGE · Getting started  (#page=start → /docs/start)
+     ===================================================================== -->
+<article class="doc" data-page="start">
+  <header class="doc-head">
+    <ol class="crumbs"><li><a href="#page=index">Docs</a></li><li aria-current="page">Getting started</li></ol>
+    <h1>Getting started</h1>
+    <div class="doc-badges"><span class="badge badge-plain">Node 22 or newer</span><span class="badge badge-plain">Plugin API 1.29.0</span><span class="badge badge-plain">Local only for now</span></div>
+    <p class="doc-lede">Create a plugin from the template, build it and load it in the desktop app. About five minutes, no account and no permission request.</p>
+  </header>
+  <details class="toc" data-toc open>
+    <summary><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>On this page</summary>
+    <ul>
+      <li><a href="#start-before">Before you start</a></li>
+      <li><a href="#start-create">Create, build, load</a></li>
+      <li><a href="#start-files">What you get</a></li>
+      <li><a href="#start-limits">What a folder plugin may do</a></li>
+      <li><a href="#start-next">Next steps</a></li>
+    </ul>
+    <div class="toc-more"><a href="https://discord.gg/XZzkH38dt9"><svg class="ico" aria-hidden="true"><use href="#i-discord"/></svg>Ask on Discord</a><a href="#top"><svg class="ico" aria-hidden="true"><use href="#i-up"/></svg>Back to top</a></div>
+  </details>
+  <div class="doc-body prose">
+    <h2 id="start-before">Before you start<a class="h-anchor" href="#start-before" aria-label="Link to this section">#</a></h2>
+    <p>You need Node 22 or newer, npm, and the EVE-Cyno desktop app with Settings &gt; Plugins &gt; Developer available. A plugin is a folder with a <code>plugin.json</code>, one HTML page and a script. It runs in a sandbox and reaches the app only through the <a href="#page=api">plugin API</a>.</p>
+    <aside class="callout" data-kind="warning"><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg><div><p class="callout-title">Nobody can install your plugin yet</p><p>The Marketplace is not live. A plugin you build here runs on your machine, from a folder you chose. You cannot publish it, and no one else can find it. Build it anyway: the same folder is what you will submit.</p></div></aside>
+
+    <h2 id="start-create">Create, build, load<a class="h-anchor" href="#start-create" aria-label="Link to this section">#</a></h2>
+    <ol class="steps">
+      <li>
+        <span class="step-t">Create the project</span>
+        <div class="cmd" data-copy-scope><pre><code>npm create @eve-cyno/plugin my-plugin</code></pre><button class="code-copy" type="button" data-copy aria-label="Copy command"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      </li>
+      <li>
+        <span class="step-t">Build it</span>
+        <div class="cmd" data-copy-scope><pre><code>cd my-plugin &amp;&amp; npm run build</code></pre><button class="code-copy" type="button" data-copy aria-label="Copy command"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      </li>
+      <li>
+        <span class="step-t">Load the folder</span>
+        <p>In the app open <b>Settings &gt; Plugins &gt; Developer</b>, switch the developer folder on and pick <code>dist/&lt;your-id&gt;</code>. The app reloads the plugin each time the build changes it.</p>
+      </li>
+    </ol>
+
+    <h2 id="start-files">What you get<a class="h-anchor" href="#start-files" aria-label="Link to this section">#</a></h2>
+    <p>The template asks for no permission, which is the smallest thing a reviewer can read. One command and one tile action show where <code>contributes</code> goes.</p>
+    <div class="code" data-tabs data-tab-group="start-file" data-copy-scope>
+      <div class="code-head">
+        <div class="code-tabs" role="tablist" aria-label="Generated files">
+          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="tree">Files</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-tab="manifest">plugin.json</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-tab="main">src/main.ts</button>
+        </div>
+        <button class="code-copy" type="button" data-copy aria-label="Copy code"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button>
+      </div>
+      <pre data-panel="tree"><code>my-plugin/
+  plugin.json
+  package.json
+  tsconfig.json
+  src/main.ts
+  static/main.html
+  static/style.css
+  scripts/build.mjs
+  scripts/archive.mjs
+  entry/dev.example.my-plugin.json
+  types/eve-cyno-plugin-api/index.d.ts</code></pre>
+      <pre data-panel="manifest" hidden><code>{
+  <span class="tk-k">"id"</span>: <span class="tk-s">"dev.example.my-plugin"</span>,
+  <span class="tk-k">"name"</span>: <span class="tk-s">"My Plugin"</span>,
+  <span class="tk-k">"version"</span>: <span class="tk-s">"0.1.0"</span>,
+  <span class="tk-k">"engines"</span>: { <span class="tk-k">"eve-cyno-api"</span>: <span class="tk-s">"^1.29"</span> },
+  <span class="tk-k">"main"</span>: <span class="tk-s">"main.html"</span>,
+  <span class="tk-k">"activationEvents"</span>: [<span class="tk-s">"onStartup"</span>],
+  <span class="tk-k">"permissions"</span>: {}
+}</code></pre>
+      <pre data-panel="main" hidden><code><span class="tk-kw">import type</span> { EveCyno } <span class="tk-kw">from</span> <span class="tk-s">'@eve-cyno/plugin-api'</span>;
+
+<span class="tk-kw">const</span> eveCyno = (globalThis <span class="tk-kw">as</span> { eveCyno: EveCyno }).eveCyno;
+
+eveCyno.commands.onCommand((command) =&gt; {
+  <span class="tk-c">// the user ran one of this plugin's commands</span>
+  <span class="tk-kw">if</span> (command.id === <span class="tk-s">'hello'</span>) eveCyno.tile.setSummary({ title: <span class="tk-s">'Hello'</span> });
+});</code></pre>
+    </div>
+    <p class="code-cap">Generated at build time from the template, so these tabs always match what <code>npm create</code> writes.</p>
+
+    <h2 id="start-limits">What a folder plugin may do<a class="h-anchor" href="#start-limits" aria-label="Link to this section">#</a></h2>
+    <p>A plugin loaded from the developer folder gets the same API as an installed one. These rules stay the same either way.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Rule</th><th>Value</th><th>Where it is enforced</th></tr></thead>
+      <tbody>
+        <tr><td>Call budget per plugin</td><td class="num">100 calls, refilled at 100 a second</td><td>every method except <code>services.result</code></td></tr>
+        <tr><td>Refused call</td><td><code>rate_limited</code></td><td>before the call runs, nothing happened</td></tr>
+        <tr><td>Permissions</td><td>only those in <code>plugin.json</code></td><td>the manifest, checked when the folder loads</td></tr>
+        <tr><td>Engine range</td><td><code>^1.29</code> or lower</td><td><code>incompatible_api</code> if the app is older</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="start-next">Next steps<a class="h-anchor" href="#start-next" aria-label="Link to this section">#</a></h2>
+    <div class="linkcards">
+      <a class="linkcard" href="#page=tutorial"><svg class="ico" aria-hidden="true"><use href="#i-terminal"/></svg><span class="lc-t">Tutorial</span><svg class="go" aria-hidden="true"><use href="#i-arrow"/></svg><span class="lc-s">Read the generated plugin line by line.</span></a>
+      <a class="linkcard" href="#page=manifest"><svg class="ico" aria-hidden="true"><use href="#i-braces"/></svg><span class="lc-t">plugin.json reference</span><svg class="go" aria-hidden="true"><use href="#i-arrow"/></svg><span class="lc-s">Every property, its type and its limits.</span></a>
+    </div>
+
+    <nav class="pager" aria-label="Previous and next page">
+      <a class="prev" href="#page=index"><span class="pg-k"><svg class="ico" aria-hidden="true"><use href="#i-back"/></svg>Previous</span><span class="pg-t">Overview</span></a>
+      <a class="next" href="#page=tutorial"><span class="pg-k">Next<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="pg-t">Tutorial</span></a>
+    </nav>
+    <p class="doc-foot"><span>Mistake on this page? <a href="https://discord.gg/XZzkH38dt9">EVE-Cyno Discord</a></span><span>Built from the template and the API declarations · <span data-slot="version">api 1.29.0</span></span></p>
+  </div>
+</article>
+
+<!-- =====================================================================
+     PAGE · API namespace  (#page=api/storage → /docs/api/storage)
+     One page per namespace. The declaration block is read from the API d.ts at build time.
+     ===================================================================== -->
+<article class="doc" data-page="api/storage">
+  <header class="doc-head">
+    <ol class="crumbs"><li><a href="#page=index">Docs</a></li><li><a href="#page=api">API</a></li><li aria-current="page">storage</li></ol>
+    <h1 class="mono">storage</h1>
+    <div class="doc-badges"><span class="badge badge-ok">always present</span><span class="badge badge-plain">permissions.storage</span></div>
+    <p class="doc-lede">A small key-value store that belongs to your plugin. Values survive restarts and are written to disk within 250 ms.</p>
+  </header>
+  <details class="toc" data-toc open>
+    <summary><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>On this page</summary>
+    <ul>
+      <li><a href="#storage-decl">Declaration</a></li>
+      <li><a href="#storage-methods">Methods</a></li>
+      <li><a href="#storage-limits">Limits and errors</a></li>
+    </ul>
+    <div class="toc-more"><a href="https://discord.gg/XZzkH38dt9"><svg class="ico" aria-hidden="true"><use href="#i-discord"/></svg>Ask on Discord</a><a href="#top"><svg class="ico" aria-hidden="true"><use href="#i-up"/></svg>Back to top</a></div>
+  </details>
+  <div class="doc-body prose">
+    <h2 id="storage-decl">Declaration<a class="h-anchor" href="#storage-decl" aria-label="Link to this section">#</a></h2>
+    <p>Get the namespace from <code>getEveCyno()</code>. Every method returns a promise.</p>
+    <div class="code" data-copy-scope>
+      <div class="code-head"><span class="code-label">StorageNamespace · api/1.29.0.d.ts</span><button class="code-copy" type="button" data-copy aria-label="Copy code"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      <pre><code><span class="tk-kw">export interface</span> StorageNamespace {
+    get(params: { key: <span class="tk-n">string</span>; }): Promise&lt;<span class="tk-n">unknown</span>&gt;;
+    set(params: { key: <span class="tk-n">string</span>; value: <span class="tk-n">unknown</span>; }): Promise&lt;<span class="tk-n">true</span>&gt;;
+    delete(params: { key: <span class="tk-n">string</span>; }): Promise&lt;<span class="tk-n">boolean</span>&gt;;
+    keys(): Promise&lt;<span class="tk-n">string</span>[]&gt;;
+}</code></pre>
+    </div>
+
+    <h2 id="storage-methods">Methods<a class="h-anchor" href="#storage-methods" aria-label="Link to this section">#</a></h2>
+    <div class="tbl params"><table>
+      <thead><tr><th>Method</th><th>Returns</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="p-name">get</span></td><td><span class="p-type">Promise&lt;unknown&gt;</span></td><td>Reads one value. A key that was never set reads as <code>undefined</code>.</td></tr>
+        <tr><td><span class="p-name">set</span></td><td><span class="p-type">Promise&lt;true&gt;</span></td><td>Writes one value. Resolves once the write is in memory.</td></tr>
+        <tr><td><span class="p-name">delete</span></td><td><span class="p-type">Promise&lt;boolean&gt;</span></td><td>Removes a key. Resolves <code>true</code> when the key existed.</td></tr>
+        <tr><td><span class="p-name">keys</span></td><td><span class="p-type">Promise&lt;string[]&gt;</span></td><td>Lists every key your plugin has stored.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="code" data-copy-scope>
+      <div class="code-head"><span class="code-label">src/main.ts</span><button class="code-copy" type="button" data-copy aria-label="Copy code"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      <pre><code><span class="tk-kw">const</span> { storage } = getEveCyno();
+<span class="tk-kw">await</span> storage.set({ key: <span class="tk-s">'lastTab'</span>, value: <span class="tk-s">'ledger'</span> });
+<span class="tk-kw">const</span> tab = <span class="tk-kw">await</span> storage.get({ key: <span class="tk-s">'lastTab'</span> }); <span class="tk-c">// 'ledger'</span></code></pre>
+    </div>
+
+    <h2 id="storage-limits">Limits and errors<a class="h-anchor" href="#storage-limits" aria-label="Link to this section">#</a></h2>
+    <ul>
+      <li>A value may nest at most 64 levels deep. An own <code>__proto__</code> key is refused with <code>bad_params</code>.</li>
+      <li>A crash can lose the last 250 ms of writes. The host flushes at once when the plugin unloads or the app quits.</li>
+      <li><code>unavailable</code> means the file is locked or the disk refused the write. Reads keep working and writes resume after a retry.</li>
+    </ul>
+    <aside class="callout" data-kind="note"><svg class="ico" aria-hidden="true"><use href="#i-info"/></svg><div><p class="callout-title">Call budget</p><p>All pages of one plugin share 100 calls, refilled at 100 a second. A call past it fails with <code>rate_limited</code> before it runs, so the same call may go again after a short wait.</p></div></aside>
+
+    <nav class="pager" aria-label="Previous and next page">
+      <a class="prev" href="#page=api/host"><span class="pg-k"><svg class="ico" aria-hidden="true"><use href="#i-back"/></svg>Previous</span><span class="pg-t mono">host</span></a>
+      <a class="next" href="#page=api/commands"><span class="pg-k">Next<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="pg-t mono">commands</span></a>
+    </nav>
+    <p class="doc-foot"><span>Mistake on this page? <a href="https://discord.gg/XZzkH38dt9">EVE-Cyno Discord</a></span><span>Generated from api/1.29.0.d.ts · <span data-slot="version">api 1.29.0</span></span></p>
+  </div>
+</article>
+
+<!-- =====================================================================
+     PAGE · plugin.json reference  (#page=manifest → /docs/manifest)
+     ===================================================================== -->
+<article class="doc" data-page="manifest">
+  <header class="doc-head">
+    <ol class="crumbs"><li><a href="#page=index">Docs</a></li><li aria-current="page">plugin.json</li></ol>
+    <h1 class="mono">plugin.json</h1>
+    <div class="doc-badges"><span class="badge badge-plain">schema manifest.v1</span><span class="badge badge-plain">5 required</span></div>
+    <p class="doc-lede">The manifest names your plugin, says which API it needs and lists every permission it asks for. The app refuses a plugin whose manifest breaks a rule below.</p>
+  </header>
+  <details class="toc" data-toc open>
+    <summary><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg>On this page</summary>
+    <ul>
+      <li><a href="#manifest-props">Properties</a></li>
+      <li><a href="#manifest-examples">Accepted and refused</a></li>
+      <li><a href="#manifest-optional">Optional permissions</a></li>
+    </ul>
+    <div class="toc-more"><a href="https://discord.gg/XZzkH38dt9"><svg class="ico" aria-hidden="true"><use href="#i-discord"/></svg>Ask on Discord</a><a href="#top"><svg class="ico" aria-hidden="true"><use href="#i-up"/></svg>Back to top</a></div>
+  </details>
+  <div class="doc-body prose">
+    <h2 id="manifest-props">Properties<a class="h-anchor" href="#manifest-props" aria-label="Link to this section">#</a></h2>
+    <p>Fifteen top-level properties. The table is generated from the schema, one row per property.</p>
+    <div class="tbl params"><table>
+      <thead><tr><th>Property</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="p-name">id</span><span class="p-req">required</span></td><td><span class="p-type">string</span></td><td>Reverse-domain style, unique. The prefix <code>eve-cyno.host.</code> is reserved.</td></tr>
+        <tr><td><span class="p-name">name</span><span class="p-req">required</span></td><td><span class="p-type">string</span></td><td>Shown in Settings &gt; Plugins. Plain text only.</td></tr>
+        <tr><td><span class="p-name">version</span><span class="p-req">required</span></td><td><span class="p-type">string</span></td><td>Semantic version, for example <code>0.1.0</code>.</td></tr>
+        <tr><td><span class="p-name">engines</span><span class="p-req">required</span></td><td><span class="p-type">object</span></td><td><code>{ "eve-cyno-api": "^1.29" }</code>. The app refuses with <code>incompatible_api</code> when it is older.</td></tr>
+        <tr><td><span class="p-name">main</span><span class="p-req">required</span></td><td><span class="p-type">string</span></td><td>Path of the page the app loads, inside the plugin folder.</td></tr>
+        <tr><td><span class="p-name">author</span></td><td><span class="p-type">string</span></td><td>Shown next to the name.</td></tr>
+        <tr><td><span class="p-name">description</span></td><td><span class="p-type">string</span></td><td>One or two sentences for the plugin list.</td></tr>
+        <tr><td><span class="p-name">icon</span></td><td><span class="p-type">string</span></td><td>A lowercase name, 1 to 24 letters.</td></tr>
+        <tr><td><span class="p-name">color</span></td><td><span class="p-type">string</span></td><td>Accent colour of the tile.</td></tr>
+        <tr><td><span class="p-name">activationEvents</span></td><td><span class="p-type">array</span></td><td>When the plugin starts, for example <code>onStartup</code>.</td></tr>
+        <tr><td><span class="p-name">background</span></td><td><span class="p-type">boolean</span></td><td>Keep running when its window is closed.</td></tr>
+        <tr><td><span class="p-name">suspendUnderPressure</span></td><td><span class="p-type">boolean</span></td><td>Let the app pause a background plugin when the machine is under load.</td></tr>
+        <tr><td><span class="p-name">esiCompatibilityDate</span></td><td><span class="p-type">string</span></td><td>The ESI compatibility date the plugin was written against.</td></tr>
+        <tr><td><span class="p-name">permissions</span></td><td><span class="p-type">object</span></td><td>Twenty keys. See <a href="#page=permissions">Permissions and grants</a>.</td></tr>
+        <tr><td><span class="p-name">contributes</span></td><td><span class="p-type">object</span></td><td>Commands, settings, tile actions and other things the plugin adds to the app.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="manifest-examples">Accepted and refused<a class="h-anchor" href="#manifest-examples" aria-label="Link to this section">#</a></h2>
+    <p>Each example on this page runs through the app's own manifest parser when the docs are built. A block marked <span class="badge badge-ok">accept</span> must pass, and a block marked <span class="badge badge-bad">refuse</span> must throw the code it names.</p>
+    <div class="code" data-copy-scope>
+      <div class="code-head"><span class="code-label">plugin.json</span><span class="badge badge-ok">accept</span><button class="code-copy" type="button" data-copy aria-label="Copy code"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      <pre><code>{
+  <span class="tk-k">"id"</span>: <span class="tk-s">"dev.example.hello"</span>,
+  <span class="tk-k">"name"</span>: <span class="tk-s">"Hello"</span>,
+  <span class="tk-k">"version"</span>: <span class="tk-s">"0.1.0"</span>,
+  <span class="tk-k">"engines"</span>: { <span class="tk-k">"eve-cyno-api"</span>: <span class="tk-s">"^1.29"</span> },
+  <span class="tk-k">"main"</span>: <span class="tk-s">"main.html"</span>
+}</code></pre>
+    </div>
+    <div class="code" data-copy-scope>
+      <div class="code-head"><span class="code-label">plugin.json · incompatible_api</span><span class="badge badge-bad">refuse</span><button class="code-copy" type="button" data-copy aria-label="Copy code"><svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button></div>
+      <pre><code>{
+  <span class="tk-k">"id"</span>: <span class="tk-s">"dev.example.hello"</span>,
+  <span class="tk-k">"name"</span>: <span class="tk-s">"Hello"</span>,
+  <span class="tk-k">"version"</span>: <span class="tk-s">"0.1.0"</span>,
+  <span class="tk-k">"engines"</span>: { <span class="tk-k">"eve-cyno-api"</span>: <span class="tk-s">"^2.0"</span> },
+  <span class="tk-k">"main"</span>: <span class="tk-s">"main.html"</span>
+}</code></pre>
+    </div>
+
+    <h2 id="manifest-optional">Optional permissions<a class="h-anchor" href="#manifest-optional" aria-label="Link to this section">#</a></h2>
+    <p>A permission listed under <code>permissions.optional</code> is asked for at run time, after the user has used the plugin. It needs <code>eve-cyno-api</code> <code>^1.17</code> or newer.</p>
+    <dl class="facts">
+      <dt>Needs engines</dt><dd><b>^1.17</b> or newer</dd>
+      <dt>Asked</dt><dd>When the plugin calls <code>permissions.request</code>, from one user gesture</dd>
+      <dt>Refused</dt><dd>The call resolves <code>'declined'</code>; the plugin keeps working without it</dd>
+    </dl>
+    <aside class="callout" data-kind="tip"><svg class="ico" aria-hidden="true"><use href="#i-tip"/></svg><div><p class="callout-title">Ask for less</p><p>A plugin with an empty <code>permissions</code> object is the quickest to review. Add a permission when a feature needs it, not before.</p></div></aside>
+
+    <nav class="pager" aria-label="Previous and next page">
+      <a class="prev" href="#page=api"><span class="pg-k"><svg class="ico" aria-hidden="true"><use href="#i-back"/></svg>Previous</span><span class="pg-t">API overview</span></a>
+      <a class="next" href="#page=permissions"><span class="pg-k">Next<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="pg-t">Permissions and grants</span></a>
+    </nav>
+    <p class="doc-foot"><span>Mistake on this page? <a href="https://discord.gg/XZzkH38dt9">EVE-Cyno Discord</a></span><span>Generated from manifest.v1.json · <span data-slot="version">api 1.29.0</span></span></p>
+  </div>
+</article>
+
+  </main>
+</div>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="f-grid">
+      <div>
+        <a class="lockup pd-lockup" href="#page=index" aria-label="EVE-CYNO plugin docs home"><svg class="pd-mark" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false"><path d="M48.85 14.86A24 24 0 1 0 48.85 49.14" fill="none" stroke="currentColor" stroke-width="6"/><path d="M32 23L41 32L32 41L23 32Z" fill="currentColor"/><path d="M45 29.5L63 32L45 34.5Z" fill="currentColor"/></svg><span class="pd-wm">EVE-CYNO<small>Plugins</small></span></a>
+        <p>Developer docs for EVE-Cyno desktop plugins. Hobby-run by Bythlak. Not an official EVE Online or Fenris Creations service.</p>
+      </div>
+      <div><h4>Docs</h4><ul><li><a href="#page=start">Getting started</a></li><li><a href="#page=api">Plugin API</a></li><li><a href="#page=manifest">plugin.json</a></li><li><a href="#page=permissions">Permissions</a></li><li><a href="#page=submitting">Submitting</a></li></ul></div>
+      <div><h4>Source</h4><ul><li><a href="https://github.com/eve-cyno/plugins">Plugin repository (MIT)</a></li><li><a href="#page=licence">Licences</a></li><li><a href="#page=policy">Review policy</a></li></ul></div>
+      <div><h4>Service</h4><ul><li><a href="https://discord.gg/XZzkH38dt9">Discord</a></li><li><a href="https://data.eve-cyno.dev/docs">Data API docs</a></li><li><a href="https://eve-cyno.dev">eve-cyno.dev</a></li></ul></div>
+    </div>
+    <p class="dla">© 2014 Fenris Creations hf. All rights reserved. 'EVE', 'EVE Online', 'Fenris Creations', and all related logos and images are trademarks or registered trademarks of Fenris Creations hf. This material is used with limited permission of Fenris Creations. No official affiliation or endorsement by Fenris Creations is stated or implied. Created under the EVE Developer License Agreement.</p>
+    <p class="dla">Non-commercial. Some reference text is from the <a href="https://wiki.eveuniversity.org/">EVE University Wiki</a>, licensed <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>. Plugins belong to their authors.</p>
+  </div>
+</footer>
+
+<script type="application/json" data-search-index>[{"t":"Overview","u":"#page=index","k":"page","s":"Plugin overview"},{"t":"Getting started","u":"#page=start","k":"page","s":"Node 22+, one command, a running plugin"},{"t":"Tutorial","u":"#page=tutorial","k":"page","s":"Walk through the generated plugin"},{"t":"Local testing","u":"#page=local-testing","k":"page","s":"Load a folder in Settings > Plugins > Developer"},{"t":"API overview","u":"#page=api","k":"page","s":"getEveCyno, namespaces, the call limit"},{"t":"plugin.json reference","u":"#page=manifest","k":"page","s":"Every manifest property"},{"t":"Permissions and grants","u":"#page=permissions","k":"page","s":"What each permission unlocks"},{"t":"Archive rules","u":"#page=packaging","k":"page","s":"Zip layout and limits"},{"t":"Submitting a plugin","u":"#page=submitting","k":"page","s":"The entry pull request"},{"t":"Checks C1 to C17","u":"#page=checks","k":"page","s":"What review runs"},{"t":"Review policy","u":"#page=policy","k":"page","s":"What gets a plugin refused"},{"t":"Signing and the index","u":"#page=signing","k":"page","s":"What the signed index means for an author"},{"t":"Licences","u":"#page=licence","k":"page","s":"SDK, template output and docs"},{"t":"host","u":"#page=api/host","k":"tool","s":"Namespace host"},{"t":"storage","u":"#page=api/storage","k":"tool","s":"Namespace storage"},{"t":"commands","u":"#page=api/commands","k":"tool","s":"Namespace commands"},{"t":"settings","u":"#page=api/settings","k":"tool","s":"Namespace settings"},{"t":"status","u":"#page=api/status","k":"tool","s":"Namespace status"},{"t":"tile","u":"#page=api/tile","k":"tool","s":"Namespace tile"},{"t":"theme","u":"#page=api/theme","k":"tool","s":"Namespace theme"},{"t":"window","u":"#page=api/window","k":"tool","s":"Namespace window"},{"t":"characters","u":"#page=api/characters","k":"tool","s":"Namespace characters"},{"t":"esi","u":"#page=api/esi","k":"tool","s":"Namespace esi"},{"t":"logs","u":"#page=api/logs","k":"tool","s":"Namespace logs"},{"t":"services","u":"#page=api/services","k":"tool","s":"Namespace services"},{"t":"clipboard","u":"#page=api/clipboard","k":"tool","s":"Namespace clipboard"},{"t":"windows","u":"#page=api/windows","k":"tool","s":"Namespace windows"},{"t":"overlays","u":"#page=api/overlays","k":"tool","s":"Namespace overlays"},{"t":"thumbnails","u":"#page=api/thumbnails","k":"tool","s":"Namespace thumbnails"},{"t":"hotkeys","u":"#page=api/hotkeys","k":"tool","s":"Namespace hotkeys"},{"t":"notifications","u":"#page=api/notifications","k":"tool","s":"Namespace notifications"},{"t":"files","u":"#page=api/files","k":"tool","s":"Namespace files"},{"t":"gamelog","u":"#page=api/gamelog","k":"tool","s":"Namespace gamelog"},{"t":"data","u":"#page=api/data","k":"tool","s":"Namespace data"},{"t":"ai","u":"#page=api/ai","k":"tool","s":"Namespace ai"},{"t":"dataapi","u":"#page=api/dataapi","k":"tool","s":"Namespace dataapi"},{"t":"chat","u":"#page=api/chat","k":"tool","s":"Namespace chat"},{"t":"db","u":"#page=api/db","k":"tool","s":"Namespace db"},{"t":"fit","u":"#page=api/fit","k":"tool","s":"Namespace fit"},{"t":"permissions","u":"#page=api/permissions","k":"tool","s":"Namespace permissions"}]</script>
+<script src="data-site.js" defer></script>
+
+<!-- ============ DESIGN-ONLY: page-state switcher (#page=…). Never port. ============
+     Shows one <article class="doc" data-page> per hash and marks the nav link. A slug with no drafted article falls back to
+     Getting started. In production the build renders one article per URL. -->
+<script data-demo>
+(function () {
+  var pages = [].slice.call(document.querySelectorAll('.doc[data-page]'));
+  var navs = [].slice.call(document.querySelectorAll('[data-nav]'));
+  var current = null;
+  function find(slug) { for (var i = 0; i < pages.length; i++) if (pages[i].getAttribute('data-page') === slug) return pages[i]; return null; }
+  function show(page) {
+    pages.forEach(function (p) { p.hidden = p !== page; });
+    var slug = page.getAttribute('data-page');
+    navs.forEach(function (a) {
+      if (a.getAttribute('data-nav') === slug) { a.setAttribute('aria-current', 'page'); var d = a.closest('details'); if (d) d.open = true; }
+      else a.removeAttribute('aria-current');
+    });
+    var h1 = page.querySelector('h1');
+    document.title = (h1 ? h1.textContent + ' · ' : '') + 'EVE-CYNO plugin docs';
+    current = page;
+  }
+  function route() {
+    var h = decodeURIComponent(location.hash.slice(1));
+    var m = /^page=(.+)$/.exec(h);
+    if (m) {
+      show(find(m[1]) || find('start'));
+      window.scrollTo({ top: 0, behavior: 'instant' in document.documentElement.style ? 'instant' : 'auto' });
+      return;
+    }
+    var target = h && document.getElementById(h);
+    var owner = target && target.closest('.doc[data-page]');
+    if (owner && owner !== current) { show(owner); target.scrollIntoView(); }
+    else if (!current) show(find('start'));
+  }
+  window.addEventListener('hashchange', route);
+  route();
+})();
+</script>
+
+<!-- DESIGN-ONLY (data-demo): board states. ?demo=live swaps the status banner to the live state (INDEX_LIVE=true),
+     ?demo=drawer opens the left nav, ?demo=search opens search. Never port. -->
+<script data-demo>
+(function () {
+  if (/[?&]demo=live/.test(location.search)) {
+    [].forEach.call(document.querySelectorAll('.status-banner'), function (b) { b.hidden = b.getAttribute('data-state') !== 'live'; });
+    var s = document.querySelector('[data-slot="index-state"]'); if (s) s.textContent = 'live';
+    [].forEach.call(document.querySelectorAll('[data-state-tag="not-live"]'), function (t) { t.hidden = true; });
+  }
+  var m = /[?&]demo=(drawer|search)/.exec(location.search);
+  if (!m) return;
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (m[1] === 'drawer') { var b = document.querySelector('[data-drawer-open]'); if (b) b.click(); return; }
+      var t = document.querySelector('[data-search-toggle]');
+      if (t && getComputedStyle(t).display !== 'none') t.click();
+      var i = document.querySelector('[data-search-input]');
+      if (i) { i.value = /[?&]q=([^&]*)/.test(location.search) ? decodeURIComponent(RegExp.$1) : 'storage'; i.dispatchEvent(new Event('input', { bubbles: true })); }
+    }, 120);
+  });
+})();
+</script>
+</body>
+</html>

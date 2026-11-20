@@ -1,0 +1,65 @@
+/* ==========================================================================
+   EVE-CYNO PLUGINS · plugin-docs.css  (new, 2026-11-20). Loads after site-base.css and data-docs.css.
+   Adds only: (1) the light theme, (2) the status banner, (3) the plugin lockup, (4) two verdict badges,
+   (5) a few dark-only literals of data-docs.css turned into tokens. Everything else is data-docs.css as is.
+   ========================================================================== */
+:root { --c-code-fg: #d4dcea; --c-hover: rgba(255, 255, 255, .04); }
+
+/* (1) light theme. Dark is the default; these blocks only redefine tokens. The two blocks hold the same values. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --c-void: #f3f6fb; --c-void-2: #ffffff; --c-nebula: #e7edf6; --c-nebula-2: #dbe4f0;
+    --c-line: #c2cfe0; --c-line-ctl: #74869f; --c-line-soft: #dce4ee;
+    --c-fg: #0d1626; --c-fg-muted: #3d4e69; --c-fg-dim: #566783; --c-white-hot: #ffffff;
+    --c-ice: #0a6c88; --c-ice-2: #0a6c88; --c-blue: #4a56d6; --c-blue-text: #3a45bf;
+    --c-red: #a04800; --c-red-2: #8f4100; --c-green: #0a7a56;
+    --c-ok: #1b7a2b; --c-warn: #8a5600; --c-bad: #b3202e; --c-bad-text: #a51c2a;
+    --c-focus: #0a6c88; --c-ink: #ffffff;
+    --c-glass: rgba(255, 255, 255, .82); --c-scrim: rgba(243, 246, 251, .88);
+    --code-bg: #eef2f8; --c-code-fg: #1b2a42; --c-hover: rgba(13, 22, 38, .05);
+    --c-ice-glow: rgba(10, 108, 136, .25);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --c-void: #f3f6fb; --c-void-2: #ffffff; --c-nebula: #e7edf6; --c-nebula-2: #dbe4f0;
+  --c-line: #c2cfe0; --c-line-ctl: #74869f; --c-line-soft: #dce4ee;
+  --c-fg: #0d1626; --c-fg-muted: #3d4e69; --c-fg-dim: #566783; --c-white-hot: #ffffff;
+  --c-ice: #0a6c88; --c-ice-2: #0a6c88; --c-blue: #4a56d6; --c-blue-text: #3a45bf;
+  --c-red: #a04800; --c-red-2: #8f4100; --c-green: #0a7a56;
+  --c-ok: #1b7a2b; --c-warn: #8a5600; --c-bad: #b3202e; --c-bad-text: #a51c2a;
+  --c-focus: #0a6c88; --c-ink: #ffffff;
+  --c-glass: rgba(255, 255, 255, .82); --c-scrim: rgba(243, 246, 251, .88);
+  --code-bg: #eef2f8; --c-code-fg: #1b2a42; --c-hover: rgba(13, 22, 38, .05);
+  --c-ice-glow: rgba(10, 108, 136, .25);
+}
+/* literals of data-docs.css that only read on dark, now tokens */
+.code pre { color: var(--c-code-fg); }
+.nav-link:hover { background: var(--c-hover); }
+.search-results { box-shadow: 0 18px 40px color-mix(in srgb, var(--c-void) 70%, #000); }
+
+/* (2) status banner: the Marketplace status, on every page, under the top bar. Not sticky. */
+.status-banner { --k: var(--c-warn); border-bottom: 1px solid color-mix(in srgb, var(--k) 38%, var(--c-line-soft)); background: color-mix(in srgb, var(--k) 8%, var(--c-void-2)); }
+.status-banner[data-state="live"] { --k: var(--c-ok); }
+.sb-in { max-width: var(--top-maxw); margin: 0 auto; padding: 11px max(24px, env(safe-area-inset-right, 0px)) 11px max(24px, env(safe-area-inset-left, 0px)); display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 14px; }
+.sb-in > .ico { width: 18px; height: 18px; margin-top: 3px; color: var(--k); }
+.sb-state { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; padding: 2px 8px; border: 1px dashed color-mix(in srgb, var(--k) 70%, transparent); border-radius: var(--radius); font-family: var(--f-mono); font-size: var(--fs-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--k); white-space: nowrap; }
+.sb-text { flex: 1 1 320px; min-width: 0; margin: 0; font-size: .9375rem; line-height: 1.55; color: var(--c-fg-muted); }
+.sb-text b { color: var(--c-fg); font-weight: 500; }
+.sb-text a { color: var(--c-fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--k) 60%, transparent); }
+.sb-text a:hover { text-decoration-color: var(--k); }
+
+/* (3) lockup: the static CYNO mark plus the product line. Accent is the docs green. */
+.pd-lockup { --cy-accent: var(--c-green); gap: 10px; color: var(--c-fg); }
+.pd-mark { width: 26px; height: 26px; color: var(--mode-text); flex-shrink: 0; }
+.pd-wm { display: inline-flex; align-items: baseline; gap: 8px; font-family: var(--f-display); font-weight: 600; font-size: 1rem; letter-spacing: .06em; white-space: nowrap; }
+.pd-wm small { font-family: var(--f-mono); font-weight: 400; font-size: var(--t-micro); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--mode-text); }
+
+/* (4) verdict badges for manifest examples; .badge-ok exists in data-docs.css */
+.badge-bad { color: var(--c-bad-text); border-color: color-mix(in srgb, var(--c-bad) 50%, transparent); }
+.badge-bad::before { content: ""; width: 6px; height: 6px; background: var(--c-bad); transform: rotate(45deg); }
+.code-head .badge { margin-left: auto; margin-right: 6px; }
+.code-head .badge + .code-copy { margin-left: 0; }
+.since { font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--c-fg-dim); white-space: nowrap; }
+@media (max-width: 560px) { .sb-in { padding-inline: 16px; } .pd-wm small { display: none; } }
