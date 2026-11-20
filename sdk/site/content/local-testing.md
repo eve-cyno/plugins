@@ -60,10 +60,10 @@ A folder plugin is a plugin like any other: the same plugin API, the same call l
   Characters, Marketplace, Home), and neither name nor author may contain EVE-Cyno in any spelling. Look-alike letters count as the
   letters they look like.
 - **No links.** The folder itself may not be a symbolic link. `plugin.json` and the `main` file must be plain files inside the
-  folder: not a symbolic link (not even one that points inside the folder) and not a file with a second hard link. A file the page
-  loads is served only when it is a plain file inside the folder, not a symbolic link and without a second hard link. On Windows a
-  link or junction anywhere on its path is refused too. The template's build copies files one by one and refuses links, so a
-  folder it writes has none.
+  folder, not symbolic links (not even one that points inside the folder). The `main` file may not have a second hard link either.
+  A file the page loads is served only when it is a plain file inside the folder, not a symbolic link and without a second hard
+  link. On Windows a link or junction anywhere on its path is refused too. The template's build copies files one by one and
+  refuses links, so a folder it writes has none.
 - **A revoked version stays off.** A version the Marketplace revoked cannot be switched on, from a folder or from anywhere else.
 
 ## Examples

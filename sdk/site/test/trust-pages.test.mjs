@@ -57,6 +57,18 @@ const lineOf = (slug, lead) => {
   return lines[0];
 };
 
+/** The source list item that starts with `- <lead>`, its continuation lines joined to it with one space. */
+const bulletOf = (slug, lead) => {
+  const lines = source(slug).split('\n');
+  const at = lines.findIndex((l) => l.startsWith(`- ${lead}`));
+  assert.ok(at >= 0, `${slug}: a list item starts with "- ${lead}"`);
+  const item = [lines[at]];
+  for (let i = at + 1; i < lines.length && /^ {2}\S/.test(lines[i]); i++) item.push(lines[i].trim());
+  return item.join(' ');
+};
+/** The sentences of a Markdown text (a full stop, a question mark or an exclamation mark ends one). */
+const sentencesOf = (text) => text.split(/(?<=[.!?])\s+/).filter(Boolean);
+
 /** The rows of the source table whose header row starts with `| <first> |`, as cell lists (raw Markdown). */
 function tableOf(slug, first) {
   const lines = source(slug).split('\n');
@@ -305,6 +317,10 @@ test('local testing: a folder plugin passes the installed-plugin checks of the v
   const hard = make('main-hard', (d) => linkSync(join(d, 'main.html'), join(root, 'main-copy.html')));
   assert.ok(refused(hard));
   assert.ok(!('refused' in inspectPluginDir(root, hard, false, true)), 'only the strict (installed) rule refuses a hard link');
+  // plugin.json: a symbolic link is refused, a second hard link is not (the manifest reader has no link-count rule).
+  assert.ok(refused(make('json-link', (d) => { writeFileSync(join(d, 'manifest.json'), JSON.stringify(MANIFEST)); rmSync(join(d, 'plugin.json')); symlinkSync('manifest.json', join(d, 'plugin.json')); })));
+  const jsonHard = make('json-hard', (d) => linkSync(join(d, 'plugin.json'), join(root, 'plugin-copy.json')));
+  assert.equal(inspectPluginDir(root, jsonHard, true, true).manifest.id, MANIFEST.id, 'a hard-linked plugin.json loads');
   // A file the page asks for: never one with a second hard link, never a link.
   const files = make('files', (d) => { writeFileSync(join(d, 'app.js'), 'x'); linkSync(join(d, 'app.js'), join(root, 'app-copy.js')); symlinkSync('main.html', join(d, 'alias.html')); });
   const dir = join(root, files);
@@ -315,6 +331,13 @@ test('local testing: a folder plugin passes the installed-plugin checks of the v
   closeSync(okFile.fd);
   const md = source('local-testing');
   for (const phrase of [/folder name/i, /symbolic link/i, /hard link/i, /`id_taken`/]) assert.match(md, phrase);
+  // The page's link rule names, for a second hard link, only the files the loader counts links of: `main` and a served file.
+  const links = sentencesOf(bulletOf('local-testing', '**No links.**'));
+  const hardLinked = links.filter((s) => /hard link/.test(s));
+  assert.ok(hardLinked.length >= 2, 'a hard-link sentence for main and one for a served file');
+  assert.deepEqual([...new Set(hardLinked.flatMap(ticks))], ['main'], 'a hard-link sentence names main and no other file');
+  assert.ok(hardLinked.some((s) => /file the page loads/.test(s)), 'a hard-link sentence for a served file');
+  assert.ok(links.some((s) => ticks(s).includes('plugin.json') && /symbolic link/.test(s) && !/hard link/.test(s)), 'plugin.json: no symbolic link');
 });
 
 test('the trust pages reuse no heading of the parts generated after them', () => {
