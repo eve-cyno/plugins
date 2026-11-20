@@ -239,7 +239,9 @@ jobs:
           [ "$(dpkg -S /usr/bin/minisign 2>/dev/null)" = "minisign: /usr/bin/minisign" ] || fail "/usr/bin/minisign is not from the minisign package"
           ver=$(dpkg-query -W -f='${Version}' minisign 2>/dev/null) && [ -n "$ver" ] || fail "the minisign package is not installed"
           [ -z "$(dpkg --verify minisign 2>&1)" ] || fail "the files of the minisign package were changed"
-          good() { [[ "$1" =~ ^https?://([a-z0-9-]+\.)?archive\.ubuntu\.com/ubuntu/?$ || "$1" =~ ^https?://security\.ubuntu\.com/ubuntu/?$ ]]; }
+          # The EC2 form: GitHub's hosted runners in Amazon EC2 list Canonical's regional mirror there (one region label, then
+          # ec2.archive.ubuntu.com); apt still verifies the archive's signed InRelease, whichever mirror served it.
+          good() { [[ "$1" =~ ^https?://([a-z0-9-]+\.)?archive\.ubuntu\.com/ubuntu/?$ || "$1" =~ ^https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu/?$ || "$1" =~ ^https?://security\.ubuntu\.com/ubuntu/?$ ]]; }
           srcs=$(apt-cache policy minisign | awk -v v="$ver" '$1 == "***" { cur = ($2 == v); next } NF == 2 && $2 ~ /^[0-9]+$/ && $1 !~ /^[0-9]+$/ { cur = ($1 == v); next } cur && $1 ~ /^[0-9]+$/ && $2 != "/var/lib/dpkg/status" { print $2 }')
           [ -n "$srcs" ] || fail "apt names no source for minisign $ver"
           while read -r s; do

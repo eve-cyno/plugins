@@ -74,7 +74,7 @@ const SIGN_STEPS = Object.freeze([
   ['Download the head', 'fe25c749d019cae6983c395f5a5a2f09511eb2ec2b625c4929c8b5a39922221a'],
   ['Check the head', '8a0d87ce6388f3144fc26c3fe3b6a1cc40b412dc8b9e79b7d89af507691b2174'],
   ["Install minisign (Ubuntu's package)", 'e74c83aee20fa376add918ba57699f7e1852f9a74c1311c9f5cc92bc803e3cd8'],
-  ["Check that minisign is Ubuntu's", 'e5989d9baec687b69fe7aa9a51125caa3528af68cad3ff8ff16943200f706559'],
+  ["Check that minisign is Ubuntu's", '9f23bf2c618e9e1e0cd4f348de193d6052ad9c169709d834a06b81cb00051de5'],
   ['Sign with the index key', '120d06026e3722118571fe2949bbba6171d78577f3ea2fa52a593fbe0b9d1107'],
   ['Shred the secret key file', '7276c82848efebf6e90d2632b8a3676ea1a0d5a3b7334d18cf975d1e5fe7e429'],
   ['Verify against the pinned public key', '5d07dbb8daf6499905bc75259a00860baa377ea431026fb0b6aed7582cdeb942'],
