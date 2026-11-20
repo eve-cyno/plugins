@@ -1,4 +1,4 @@
-<!-- source: the EVE-Cyno design system, version 1795173666-f832, file project/eve-cyno/project/plugin-docs.html (sha256 c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f); the bytes below this line are that file with one internal work-item name cut from its header comment -->
+<!-- source: the EVE-Cyno design system, version 1795190238-d942, file project/eve-cyno/project/plugin-docs.html (sha256 1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f); the bytes below this line are that file with one internal work-item name and one plan reference cut from its header comment -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Getting started · EVE-CYNO plugin docs</title>
 <meta name="description" content="Developer docs for EVE-Cyno desktop plugins: getting started, the plugin API, the plugin.json manifest, permissions, packaging and the review process.">
-<!-- EVE-CYNO PLUGINS · docs (plugins.eve-cyno.dev /docs/…; host open, see the plan 2.4).
+<!-- EVE-CYNO PLUGINS · docs (plugins.eve-cyno.dev /docs/…; host open).
      Derived from data-docs.html (2026-11-20). Same shell, same class names, same data-site.js hooks;
      the additions are listed in #plugin-docs-css below. One file, many page states: <article class="doc" data-page="…">.
      The DESIGN-ONLY script at the bottom shows one state per #page=… hash. Production URLs (static build, one article per URL):
@@ -23,8 +23,6 @@
      ?demo=live / ?demo=drawer / ?demo=search board states (bottom scripts). -->
 <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" type="image/svg+xml" sizes="16x16" href="brand/favicon-small.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style data-demo id="site-base-standin">/* DESIGN-ONLY stand-in for site-base.css (the Artifact does not hold that file; the repo links the real one). Token values and base rules copied from site-base.css. Never port. */
 :root { color-scheme: dark;
   --c-void: #06080c; --c-void-2: #0b0f17; --c-nebula: #121a28; --c-nebula-2: #1b2638;
@@ -545,7 +543,7 @@ eveCyno.commands.onCommand((command) =&gt; {
     <div class="f-grid">
       <div>
         <a class="lockup pd-lockup" href="#page=index" aria-label="EVE-CYNO plugin docs home"><svg class="pd-mark" viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false"><path d="M48.85 14.86A24 24 0 1 0 48.85 49.14" fill="none" stroke="currentColor" stroke-width="6"/><path d="M32 23L41 32L32 41L23 32Z" fill="currentColor"/><path d="M45 29.5L63 32L45 34.5Z" fill="currentColor"/></svg><span class="pd-wm">EVE-CYNO<small>Plugins</small></span></a>
-        <p>Developer docs for EVE-Cyno desktop plugins. Hobby-run by Bythlak. Not an official EVE Online or Fenris Creations service.</p>
+        <p>Free tools for EVE pilots. Not an official EVE Online or Fenris Creations service.</p><p>A free, non-commercial fan project. Donations are voluntary and unlock nothing.</p>
       </div>
       <div><h4>Docs</h4><ul><li><a href="#page=start">Getting started</a></li><li><a href="#page=api">Plugin API</a></li><li><a href="#page=manifest">plugin.json</a></li><li><a href="#page=permissions">Permissions</a></li><li><a href="#page=submitting">Submitting</a></li></ul></div>
       <div><h4>Source</h4><ul><li><a href="https://github.com/eve-cyno/plugins">Plugin repository (MIT)</a></li><li><a href="#page=licence">Licences</a></li><li><a href="#page=policy">Review policy</a></li></ul></div>

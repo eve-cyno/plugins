@@ -124,27 +124,43 @@ test('the design pins in PINS.md match the files', () => {
   const snapshot = readFileSync(DESIGN_SNAPSHOT, 'utf8');
   const [first, ...rest] = snapshot.split('\n');
   // The design file's own sha256 is the provenance record (line 1 and the table); the bytes below line 1 are that file with one
-  // internal work-item name cut, and PINS.md pins their sha256 too.
-  assert.ok(first.startsWith('<!-- source: the EVE-Cyno design system, version 1795173666-f832, file project/eve-cyno/project/plugin-docs.html (sha256 c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f);'), first);
+  // internal work-item name and one plan reference cut, and PINS.md pins their sha256 too.
+  assert.ok(first.startsWith('<!-- source: the EVE-Cyno design system, version 1795190238-d942, file project/eve-cyno/project/plugin-docs.html (sha256 1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f);'), first);
   const committed = /the bytes below line 1 here have sha256 `([0-9a-f]{64})`/.exec(pins)?.[1];
   assert.ok(committed, 'PINS.md pins the committed snapshot bytes');
   assert.equal(sha(rest.join('\n')), committed);
-  assert.match(pins, /`plugin-docs-2026-11-20\.html` \| `plugin-docs\.html` \| `c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f` \|/);
+  assert.match(pins, /`plugin-docs-2026-11-20\.html` \| `plugin-docs\.html` \| `1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f` \|/);
   for (const name of ['plugin-docs.css', 'site-base.css', 'data-docs.css', 'data-site.js', 'favicon.svg', 'favicon-small.svg']) {
     const row = new RegExp(`\`${name}\`[^\\n]*\`([0-9a-f]{64})\``).exec(pins);
     assert.ok(row, `${name} has a pin`);
     assert.equal(sha(readFileSync(join(DESIGN_DIR, name))), row[1], name);
   }
-  assert.ok(pins.includes('c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f'));
+  assert.ok(pins.includes('1e4626cdb67f16315806c56740296a9ae1768dcb91a2345fc438954d0ff5499f'));
   assert.equal(`${/<style id="plugin-docs-css">([\s\S]*?)<\/style>/.exec(snapshot)[1]}`, readFileSync(join(DESIGN_DIR, 'plugin-docs.css'), 'utf8'));
 });
 
 test('the design files name no private link, design id or work item', () => {
   // A claude.ai link, a design id (22 letters and digits, mixed case), the old source tag, an internal work-item name.
-  const banned = [/claude\.ai/i, /claude-design-artifact/, /\b(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{22}\b/, /\blane-[a-z]/, /\btask \d+\.\d+/];
+  const banned = [/claude\.ai/i, /claude-design-artifact/, /\b(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{22}\b/, /\blane-[a-z]/, /\btask \d+\.\d+/, /\bplan \d+\.\d+/i, /open_design_sync/];
   for (const name of readdirSync(DESIGN_DIR)) {
     const text = readFileSync(join(DESIGN_DIR, name), 'utf8');
     for (const re of banned) assert.doesNotMatch(text, re, `${name}: ${re}`);
+  }
+});
+
+test('the pinned snapshot has no font-host reference, and the footer is the design\'s', () => {
+  const snapshot = readFileSync(DESIGN_SNAPSHOT, 'utf8');
+  assert.doesNotMatch(snapshot, /googleapis|gstatic|fonts\.google/i);
+  const foot = /<footer class="site-foot">[\s\S]*?<\/footer>/.exec(snapshot)[0];
+  assert.match(foot, /Free tools for EVE pilots\. Not an official EVE Online or Fenris Creations service\./);
+  assert.match(foot, /A free, non-commercial fan project\. Donations are voluntary and unlock nothing\./);
+  assert.match(foot, /<a href="https:\/\/discord\.gg\/XZzkH38dt9">Discord<\/a>/);
+  for (const name of readdirSync(DESIGN_DIR)) assert.doesNotMatch(readFileSync(join(DESIGN_DIR, name), 'utf8'), /Hobby-run|\bCCP\b/, name);
+  for (const slug of off.pages.map((p) => p.slug)) {
+    const page = html(join(tmp, 'off'), slug);
+    assert.ok(page.includes('Free tools for EVE pilots. Not an official EVE Online or Fenris Creations service.'), slug);
+    assert.ok(page.includes('A free, non-commercial fan project. Donations are voluntary and unlock nothing.'), slug);
+    assert.doesNotMatch(page, /Hobby-run|\bCCP\b/, slug);
   }
 });
 
