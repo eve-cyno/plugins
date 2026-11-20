@@ -1,0 +1,12 @@
+{
+  "name": "eve-cyno-plugins-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Plugin SDK for the EVE-Cyno desktop app: docs site, scaffold and the vendored plugin API",
+  "type": "module",
+  "scripts": {
+    "vendor:verify": "node tools/vendor-api.mjs --verify",
+    "test": "node --test \"test/**/*.test.mjs\""
+  }
+}

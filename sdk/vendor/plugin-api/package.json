@@ -1,0 +1,11 @@
+{
+  "name": "@eve-cyno/plugin-api",
+  "version": "1.29.0",
+  "description": "Types for the EVE-Cyno desktop plugin API (the eveCyno global)",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "LICENSE", "README.md"],
+  "private": true
+}
