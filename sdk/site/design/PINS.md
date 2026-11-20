@@ -1,7 +1,7 @@
 # Design pins
 
-Source of every file here: the design-system Artifact `https://claude.ai/artifact/QdEv9cVyqSfTPnWRQnrwVf`, version
-`1795173666-f832` (read 2026-11-20). The files are pulled, never edited; the site build reads them (`site/lib/page.mjs`).
+Source of every file here: the EVE-Cyno design system (the project's design Artifact), version `1795173666-f832` (read
+2026-11-20). The files are pulled, never edited (the one cut is noted below); the site build reads them (`site/lib/page.mjs`).
 A new design version means a new pull, new sha256 values here, and a green `site/test/build.test.mjs`.
 
 | File here | Artifact path (`project/eve-cyno/project/...`) | sha256 |
@@ -16,9 +16,11 @@ A new design version means a new pull, new sha256 values here, and a green `site
 
 Notes:
 
-- `plugin-docs-2026-11-20.html` has one extra first line, a `source:` comment. The sha256 above is of the bytes below that
-  line, which are the Artifact file byte for byte. The `<style data-demo>`, the page-state switcher and the demo board script
-  are in the snapshot as designed; the build never uses them.
+- `plugin-docs-2026-11-20.html` has one extra first line, a `source:` comment, and one cut: an internal work-item name in the
+  design's header comment (after `Derived from data-docs.html (2026-11-20`) is removed. The sha256 in the table is of the
+  Artifact file; the bytes below line 1 here have sha256 `3b3a0f8563a760a37b631ba073040c291aeac49cd0e3761ae9ae13d2d1941b11`,
+  and the test checks that one. Nothing else differs, and no built page carries that comment. The `<style data-demo>`, the
+  page-state switcher and the demo board script are in the snapshot as designed; the build never uses them.
 - `site-base.css` is in the Artifact (the design file's header says it is not; that note is wrong). Its sha256 equals the pin of
   `eve-cyno-web/docs/open_design_sync/artifact-pins.md` for `site-base.css` (`1794617686-adcc`). The design file carries a
   design-only stand-in (`<style data-demo id="site-base-standin">`) that is not ported.

@@ -123,8 +123,13 @@ test('the design pins in PINS.md match the files', () => {
   const pins = readFileSync(join(DESIGN_DIR, 'PINS.md'), 'utf8');
   const snapshot = readFileSync(DESIGN_SNAPSHOT, 'utf8');
   const [first, ...rest] = snapshot.split('\n');
-  assert.match(first, /^<!-- source: claude-design-artifact QdEv9cVyqSfTPnWRQnrwVf version 1795173666-f832 /);
-  assert.equal(sha(rest.join('\n')), 'c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f');
+  // The design file's own sha256 is the provenance record (line 1 and the table); the bytes below line 1 are that file with one
+  // internal work-item name cut, and PINS.md pins their sha256 too.
+  assert.ok(first.startsWith('<!-- source: the EVE-Cyno design system, version 1795173666-f832, file project/eve-cyno/project/plugin-docs.html (sha256 c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f);'), first);
+  const committed = /the bytes below line 1 here have sha256 `([0-9a-f]{64})`/.exec(pins)?.[1];
+  assert.ok(committed, 'PINS.md pins the committed snapshot bytes');
+  assert.equal(sha(rest.join('\n')), committed);
+  assert.match(pins, /`plugin-docs-2026-11-20\.html` \| `plugin-docs\.html` \| `c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f` \|/);
   for (const name of ['plugin-docs.css', 'site-base.css', 'data-docs.css', 'data-site.js', 'favicon.svg', 'favicon-small.svg']) {
     const row = new RegExp(`\`${name}\`[^\\n]*\`([0-9a-f]{64})\``).exec(pins);
     assert.ok(row, `${name} has a pin`);
@@ -132,6 +137,15 @@ test('the design pins in PINS.md match the files', () => {
   }
   assert.ok(pins.includes('c3aecaf137c0faf1782483f9a27b3f04d31903b9797e37392ed458f299d1ba4f'));
   assert.equal(`${/<style id="plugin-docs-css">([\s\S]*?)<\/style>/.exec(snapshot)[1]}`, readFileSync(join(DESIGN_DIR, 'plugin-docs.css'), 'utf8'));
+});
+
+test('the design files name no private link, design id or work item', () => {
+  // A claude.ai link, a design id (22 letters and digits, mixed case), the old source tag, an internal work-item name.
+  const banned = [/claude\.ai/i, /claude-design-artifact/, /\b(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{22}\b/, /\blane-[a-z]/, /\btask \d+\.\d+/];
+  for (const name of readdirSync(DESIGN_DIR)) {
+    const text = readFileSync(join(DESIGN_DIR, name), 'utf8');
+    for (const re of banned) assert.doesNotMatch(text, re, `${name}: ${re}`);
+  }
 });
 
 test('the search index lists every page once, with a URL that exists', () => {
