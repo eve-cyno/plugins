@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ARCHIVE_TOTAL_MS, MAX_REDIRECTS } from '../../../tools/lib/archives.mjs';
+import { checkEntry as reviewEntry, checkNames } from '../../../tools/lib/diff.mjs';
+import { checkIds } from '../../../tools/lib/entries.mjs';
 import { zip } from '../../../tools/test/zipwrite.mjs';
 import { build, readChecks, REPO_ROOT } from '../build.mjs';
 import { namespacesOf, parseDts } from '../lib/dts.mjs';
@@ -302,6 +304,39 @@ test('checks: one row per check id the index tools name, and the review classes 
   const rows = tableOf('checks', 'Class');
   assert.deepEqual(rows.map((r) => ticks(r[0])[0]), classes);
   for (const r of rows) assert.deepEqual(r[1].split(/,\s*/).sort(), [...setBy.get(ticks(r[0])[0])].sort(), r[0]);
+});
+
+test('checks: the C2 and C3 rows and the first-party class are the id, name and first-party rules of the index tools', () => {
+  const rows = new Map(tableOf('checks', 'Check').map((r) => [r[0], r[2]]));
+  // C2: both reserved id prefixes, the project's one bound to FIRST_PARTY_ID_PREFIX of tools/lib/entries.mjs.
+  const fp = /\bconst FIRST_PARTY_ID_PREFIX = '([^']+)';/.exec(readFileSync(join(REPO_ROOT, 'tools', 'lib', 'entries.mjs'), 'utf8'))?.[1];
+  assert.ok(fp, 'FIRST_PARTY_ID_PREFIX in tools/lib/entries.mjs');
+  const { HOST_ID_PREFIX } = require(join(HOST, 'manifest.js'));
+  const c2 = rows.get('C2');
+  assert.ok(c2.includes(`does not start with \`${HOST_ID_PREFIX}\``), `C2 names ${HOST_ID_PREFIX}`);
+  assert.ok(c2.includes(`does not start with \`${fp}\` unless the entry is first-party`), `C2 names ${fp} for first-party entries only`);
+  const file = (id, extra = {}) => ({ file: `${id}.json`, entry: { id, ...extra } });
+  assert.ok(checkIds([file(`${fp}my-plugin`)]).some((p) => p.check === 'C2' && p.message.includes(fp)), `${fp} without firstParty`);
+  assert.deepEqual(checkIds([file(`${fp}my-plugin`, { firstParty: true })]), [], `${fp} with firstParty`);
+  assert.ok(checkIds([file(`${HOST_ID_PREFIX}my-plugin`, { firstParty: true })]).some((p) => p.message.includes(HOST_ID_PREFIX)), `${HOST_ID_PREFIX} even first-party`);
+  // C3: a reserved name is refused unless the entry is first-party; a first-party entry with maintainers is refused.
+  assert.match(rows.get('C3'), /a reserved name or author \(allowed in a first-party entry only\)/);
+  assert.match(rows.get('C3'), /a first-party entry that lists maintainers/);
+  const entry = { ...LISTING, type: 'plugin', versions: [] };
+  assert.equal(checkNames({ ...entry, name: 'EVE-Cyno Tools' }, null, []).length, 1);
+  assert.deepEqual(checkNames({ ...entry, name: 'EVE-Cyno Tools', firstParty: true }, null, []), []);
+  assert.equal(checkNames({ ...entry, firstParty: true, maintainers: ['example-author'] }, null, []).length, 1);
+  // The first-party class: any change to an entry that is first-party before or after the pull request, a firstParty flip included.
+  const when = tableOf('checks', 'Class').find((r) => ticks(r[0])[0] === 'first-party')[2];
+  assert.match(when, /first-party \(`firstParty: true`\) before or after the pull request, and the pull request changes anything in it, setting or dropping `firstParty` included/);
+  const fpFlag = (head, base) => reviewEntry(head, base).flags.includes('first-party');
+  const fpEntry = { ...entry, firstParty: true };
+  assert.equal(fpFlag({ ...fpEntry, summary: 'Changed.' }, fpEntry), true, 'a first-party entry changed elsewhere than its flag');
+  assert.equal(fpFlag(fpEntry, fpEntry), false, 'a first-party entry left as it was');
+  assert.equal(fpFlag(fpEntry, entry), true, 'firstParty set');
+  assert.equal(fpFlag(entry, fpEntry), true, 'firstParty dropped');
+  assert.equal(fpFlag(fpEntry, null), true, 'a new first-party entry');
+  assert.equal(fpFlag({ ...entry, summary: 'Changed.' }, entry), false, 'a change to an entry that is not first-party');
 });
 
 test('checks: the C4 download bounds are the index tools\' own, and the local run is the template\'s command', () => {

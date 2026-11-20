@@ -18,21 +18,21 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 
 | Check | Run | What it checks |
 |---|---|---|
-| C1 | refuse | The entry file has the shape of the entry schema and of the app's own listing rules: known categories, versions newest first, every URL canonical https with no user name, query or fragment. `entries/` holds only `<id>.json` files. |
-| C2 | refuse | The file is named `<id>.json`. The id follows the plugin id rule, does not start with `eve-cyno.host.`, does not start with a Windows device name, and no other entry has it. |
-| C3 | refuse, review | Names: a reserved name or author, and a new or renamed entry whose name reads like another entry's name, are refused. Sets the `first-party` class. |
-| C4 | refuse | The download from your URL: https on the default port, no user name or query, at most 5 redirects (each https), public addresses only, at most 32 MiB, no content coding, ended after 60 s without progress or 600 s in all. |
+| C1 | refuse | The entry file has the shape of the entry schema and of the app's own listing rules: known categories, versions newest first, every URL canonical https with no user name, password, query or fragment. `entries/` holds only `<id>.json` files (and an empty `.gitkeep`). |
+| C2 | refuse | The file is named `<id>.json`. The id follows the plugin id rule, does not start with `eve-cyno.host.`, does not start with `dev.evecyno.` unless the entry is first-party (`firstParty: true`), does not have a Windows device name as its first segment, and no other entry has it. |
+| C3 | refuse, review | Names: a reserved name or author (allowed in a first-party entry only), a new or renamed entry whose name reads like another entry's name, and a first-party entry that lists maintainers are refused. Sets the `first-party` class. |
+| C4 | refuse | The download from your URL: https on the default port, no user name or password, no query or fragment in your URL, at most 5 redirects (each https on the default port), public addresses only, at most 32 MiB, no content coding, ended after 60 s without progress or 600 s in all. |
 | C5 | refuse | The download's size and SHA-256 equal the ones the entry pins. |
 | C6 | refuse | The app's zip reader accepts the archive: see [Archive rules](@@packaging). |
 | C7 | refuse | The app's install checks on the unpacked archive: `plugin.json` at the root, the manifest parser, the listing equal to `plugin.json`, the loader's folder checks. |
-| C8 | refuse | Version rules: valid versions, newest first; a merged version never changes and is never removed (it can be marked `"unlisted": true`); an added version is listed and higher than every merged one. |
+| C8 | refuse | Version rules: valid versions, newest first; a merged version never changes and is never removed (it can be marked `"unlisted": true`, and stays unlisted once it is); an added version is listed and higher than every merged one; a merged entry is never removed. |
 | C9 | refuse | Every archive URL of the catalog built from the entries is its mirror name, `archives/<sha256>.zip`. |
 | C10 | review | Sets `escalation` and `identity`. |
 | C11 | review | Sets `new`. |
-| C12 | refuse | Provenance, when the entry declares it: `gh attestation verify` binds the archive to the repository the entry names. |
+| C12 | refuse | Provenance, when the entry declares it: `gh attestation verify` binds the archive to an attestation made on a GitHub-hosted runner in the repository that the entry's `source` names, by the declared workflow when there is one. |
 | C13 | review | Sets `maintenance` and `multi-entry`. |
 | C14 | review | Sets `identity` when the author of the pull request is not a maintainer of an entry it changes or removes. |
-| C15 | refuse, review | `revoked.json` follows the app's rules, and a revocation added in the pull request is dated today or yesterday (UTC). Sets `revocation`, `lift` and `revoked`. |
+| C15 | refuse, review | `revoked.json` follows the app's rules, and a revocation added or changed in the pull request is dated today or yesterday (UTC). Sets `revocation`, `lift` and `revoked`. |
 | C16 | refuse | The whole index builds, is signed with a key made for the run and thrown away, and verifies with the app's own index verifier. |
 | C17 | review | Sets `engines`. |
 
@@ -41,9 +41,9 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 | Class | Set by | When |
 |---|---|---|
 | `new` | C11 | The entry is new: the index has no plugin with this id yet. |
-| `escalation` | C10 | An added version asks for more than the version before it, turns `background` on, or has no lower version to compare with. Only the required permissions are compared; the app asks for an optional item when the plugin requests it. |
+| `escalation` | C10 | An added version asks for more than the version before it, turns `background` on, or, in an entry the index already has, has no lower version to compare with. A `plugin.json` that cannot be read to compare sets it too. Only the required permissions are compared: the user switches each optional item on or off in the app, and the plugin runs without it. |
 | `identity` | C10, C14 | The name, author or type changed, the provenance repository changed or was dropped, the maintainers changed, or the author of the pull request is not one of them. |
-| `first-party` | C3 | The entry's `firstParty` flag changed. |
+| `first-party` | C3 | The entry is first-party (`firstParty: true`) before or after the pull request, and the pull request changes anything in it, setting or dropping `firstParty` included. |
 | `engines` | C17 | An added version's `engines` range does not reach the major API version of the current app. |
 | `maintenance` | C13 | The pull request changes a file other than `entries/<id>.json` and `revoked.json`. |
 | `multi-entry` | C13 | The pull request changes more than one entry file. |
