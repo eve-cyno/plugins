@@ -100,7 +100,7 @@ test('render: the entry stub has the index fields and no provenance', () => {
   assert.ok(!('provenance' in e));
   assert.equal(e.versions.length, 1);
   assert.equal(e.versions[0].version, '0.1.0');
-  assert.deepEqual(e.versions[0].engines, { 'eve-cyno-api': '^1.29' });
+  assert.equal(e.versions[0].engines, '^1.29');
   assert.deepEqual(e.versions[0].permissions, {});
   assert.match(e.versions[0].url, /^https:\/\//);
 });

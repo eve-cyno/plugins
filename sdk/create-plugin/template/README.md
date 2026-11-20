@@ -30,9 +30,9 @@ Run `npm install` once (it installs TypeScript only). Then:
 
 - `npm run build` compiles `src/` with `tsc` and writes the plugin folder `dist/{{id}}/`: `plugin.json`, `static/*` and the compiled `main.js`.
 - `npm test` runs the tests.
-- `npm run pack` writes `dist/{{id}}-<version>.zip`, a stored zip that is the same bytes on every run, the file you attach to a release.
+- `npm run pack` writes `dist/{{id}}-<version>.zip`, a stored zip that is the same bytes on every run, the file you attach to a release. It runs `npm run build` first, so the archive is always the current source.
 - `npm run entry -- --url <https release URL of the zip>` fills `entry/{{id}}.json` with the archive's sha256 and size and copies `engines` and `permissions` from `plugin.json`.
-- `npm run check -- --plugins <path to a clone of eve-cyno/plugins>` runs that repository's own checks on your entry and archive, offline.
+- `npm run check -- --plugins <path to a clone of eve-cyno/plugins>` runs that repository's own checks on your entry and archive. It needs `npm ci` run once in that clone, and network access only when the entry declares `provenance`.
 
 ## Try it in the app
 
