@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "dev.evecyno.miningoverlay",
+  "type": "plugin",
+  "name": "Mining Overlay",
+  "author": "EVE-Cyno",
+  "firstParty": true,
+  "summary": "An always-on-top list of your mining characters: cycle, m³ per hour and an estimate of the hold.",
+  "description": "Mining Overlay is a small window above the game with one row per character that mines on this computer. A row shows the state (Mining, Learning, Stalled, Stopped, Hold full or No data), the time since the last mining cycle against the cycle the plugin learned, the m³ per hour (or per minute), and how full the hold is, with the time until it is full. The overlay only displays: clicks go through it to the game, it sends no input to the game, and it plays no sound and shows no notification. Settings (overlay on or off, corner, offset, width, density, rate unit, the hull of each character, Reset hold, stall tolerance) are on the plugin's page in EVE-Cyno.\n\nThe hold figure is an estimate. The game log gives units; the plugin turns them into m³ with each ore's volume and compares the sum with the base mining hold of the hull. Skills, rigs and modules that change the hold or the yield are not applied. Run EVE in Fixed Window mode, not Fullscreen, or the overlay is hidden.\n\nPermissions and why:\n- gameEvents (mining and notice): what your game logs say about mining (yields, residue, and the lines that say a miner stopped) and the notices for jumps and undocking, for the characters you play on this computer. It never sees chat or the raw log files.\n- overlays: the one always-on-top list window, never one per character.\n- characters (all): the names of your characters, so a row can say who mines.\n- Optional, ESI esi-location.read_ship_type.v1: which ship a character flies, so the hold capacity follows the hull without a pick. The install prompt lists it with its switch on; Allow on the plugin's page asks again only if the switch was turned off. You can decline: the hull pick keeps working. Only the ship type is used, in memory; the ship's name is dropped.\n\nThe plugin sends nothing out of this computer. It stores its settings and the hull you picked per character, never a character name, a log line or an amount you mined. It understands the English game client only.\n\nEVE Online and all related materials are the property of Fenris Creations. EVE-Cyno is not affiliated with Fenris Creations.",
+  "categories": [
+    "industry"
+  ],
+  "source": null,
+  "versions": [
+    {
+      "version": "0.1.0",
+      "released": "2026-11-20",
+      "changes": "First Marketplace release.",
+      "engines": "^1.29",
+      "permissions": {
+        "gameEvents": [
+          "mining",
+          "notice"
+        ],
+        "overlays": true,
+        "characters": "all",
+        "optional": {
+          "esi": [
+            "esi-location.read_ship_type.v1"
+          ]
+        }
+      },
+      "url": "https://downloads.eve-cyno.dev/plugins/dev.evecyno.miningoverlay/0.1.0/dev.evecyno.miningoverlay-0.1.0.zip",
+      "sha256": "54e09da4265d4504bf6df638787249e6242c5117a3bf4084b9cbd5c6aa99322d",
+      "size": 129354
+    }
+  ]
+}
