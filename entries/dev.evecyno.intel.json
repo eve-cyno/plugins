@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "dev.evecyno.intel",
+  "type": "plugin",
+  "name": "Intel",
+  "author": "EVE-Cyno",
+  "firstParty": true,
+  "summary": "Reads intel reports into a feed and map markers, warns you when hostiles come close, shows gate camps.",
+  "description": "Intel turns the intel you hand it into a feed and markers on the map. Paste a line, copy one while clipboard watching is on, or pick the chat channels it may read. Each line that names a system becomes a row and a marker; +12 draws twelve marks around the system, a symbol per ship class. Alarms fire for a channel report that opens a system or grows, and for an open report that comes near one of your characters or a home system: a toast with a sound up to 2 jumps, without sound up to 5. Actions answer on a click: Kills lists up to 10 kills of the last hour, Route draws a route from your nearest online character, Waypoint sets one autopilot waypoint. Three views read public gate-kill files: Gate camps, Route danger and Roam targets.\n\nWhat it never does: it never puts a pilot name or a word of chat on the map, in a toast or on the tile; it never stores a chat line; it never sends a line anywhere; it changes nothing in the game without a click; it never opens a link from a line.\n\nPermissions, each with its reason: the universe data pack (system names and regions), clipboard read (off until you turn it on), the chat logs of the channels you pick (the Marketplace install of this plugin is the one network plugin that may read chat; a manual copy or a development folder gets none), your selected characters and two ESI scopes for where your online characters are, the waypoint scope for the one click waypoint, network access to data.eve-cyno.dev for kills and the public gate files, notifications and background running so an alarm reaches you while you look at the game, and the Map service for the markers. Installing from the Marketplace asks you again for the channels, the character selection and any revoke you made while Intel shipped with the app. Uninstalling removes its stored choices.\n\nData from zKillboard killmails and the game's ESI; EVE Online and its data are the property of Fenris Creations. Not affiliated with Fenris Creations.",
+  "categories": [
+    "intel"
+  ],
+  "source": null,
+  "versions": [
+    {
+      "version": "0.2.0",
+      "released": "2026-11-23",
+      "changes": "First Marketplace release; before this the plugin shipped with the app.",
+      "engines": "^1.28",
+      "permissions": {
+        "characters": "selected",
+        "esi": [
+          "esi-location.read_location.v1",
+          "esi-location.read_online.v1",
+          "esi-ui.write_waypoint.v1"
+        ],
+        "logs": [
+          "chatlogs"
+        ],
+        "data": [
+          "sde.universe"
+        ],
+        "clipboard": [
+          "read"
+        ],
+        "notifications": true,
+        "services": {
+          "evecyno.map": "^1"
+        },
+        "network": [
+          "https://data.eve-cyno.dev"
+        ]
+      },
+      "url": "https://downloads.eve-cyno.dev/plugins/dev.evecyno.intel/0.2.0/dev.evecyno.intel-0.2.0.zip",
+      "sha256": "71772b2bfa6fcf9201df73c8c4531736cabc356455f5f1a11d0eb885800ca5a7",
+      "size": 472725
+    }
+  ]
+}
