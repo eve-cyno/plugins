@@ -466,7 +466,7 @@ below. O1 is the owner's alone.
    A new pin is read the same way and changes every `uses:` line of that action in one commit; the owner reads it in the compare
    view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
-   `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
+   `npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
    in the checkout that holds the change (the coordinator's gate on its own change, not a reading; the check fails on a desktop
    commit that is not on desktop `main`). The owner reads the new `vendor/` against the vendor check of step 0.2, run from the
    unmoved trusted worktree, in the order of step 0 (or of step 4 or 5 of "Before every index and mirror approval").
@@ -518,6 +518,29 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
         login, and the app shows a `firstParty` entry as signed by EVE-Cyno whatever its author reads; only this reading stops a
         third party's `firstParty` entry (`NEEDS REVIEW new first-party` is the verdict line) or a third party's change to one (the
         class is set on any change to an entry that is `firstParty` on either side: `NEEDS REVIEW identity first-party`).
+      - The review class `wasm` (one `FLAG wasm C10` line per added version whose `plugin.json` sets `wasm: true`, naming its ways
+        out or saying "no way out"): POLICY.md "Human review" holds every such version for a reading of that version, with or
+        without a way out, and the owner says "merge" only when all three rules below hold (plan dp4 W1, 3.2). The host cannot
+        check R2 or R3; only this reading does.
+        - **R2, the build source.** Every `.wasm` file in the archive is built from public source that the entry's `source`
+          names, and that source holds the command that builds it. Build it from there (or read the build of a run that
+          published it) and compare the SHA-256 of each built file with the archive's file of that name; a file nobody can
+          rebuild, or a SHA-256 that differs: no merge. R2 covers the `.wasm` files only: a module held any other way (inlined
+          in a script, under another file name) is R3's to find.
+        - **R3, the byte source.** The plugin compiles only WebAssembly files inside its archive. Every `WebAssembly.compile`,
+          `compileStreaming`, `instantiate`, `instantiateStreaming` and `new WebAssembly.Module` in its pages and Workers reads a
+          file of its own archive (a `fetch` of a path of the plugin), never bytes from a network origin, a service, `ai`,
+          `account`, the clipboard, a file the user picks, its storage, or text other players can write (ESI answers, mail and
+          contract scopes included, chat logs, game logs). A module inlined in a script (a base64 or array literal handed to
+          `WebAssembly`) is no archive file either: it escapes R2. Read the code with the ways out the FLAG line names in
+          mind: once `wasm: true` is set, the host cannot tell fetched bytes from shipped ones. Anything that builds or loads
+          WebAssembly from other bytes: no merge.
+        - **R4, the dogma module.** C18 (refuse) fails an archive that holds the package `@eve-cyno/dogma-wasm` (its
+          `MANIFEST.json`) when the entry is not first-party. C18 trusts the entry's `firstParty: true`, so `PASS C18` means
+          nothing until the first-party reading above confirms that the project opened the pull request. Then the archive holds the
+          package's `LICENSE` (PolyForm Strict 1.0.0, the desktop's, byte for byte) and `NOTICE` next to the module. A module
+          that looks like it under another name (the same SHA-256 as the package's `dogma.wasm`, or its licence text) in an
+          entry that is not first-party: no merge; C18 reads only the MANIFEST.json.
       - `SCOPE OWNER <names>` (exit 3): the jobs' green proves nothing. The owner reads every change at the link: the entries and
         revocations as above, and every other change (the lines marked `owner`: a tool, a workflow, `package.json` or
         `package-lock.json`, `entries/.gitattributes`, a deletion, a link or a mode change), each ticked off as below.

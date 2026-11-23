@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// tools/check.mjs: every check of plan 3.2 (C1-C17) over a base tree and a head tree, with the vendored host code.
+// tools/check.mjs: every check of plan 3.2 (C1-C17, and C18 of plan dp4 W1) over a base tree and a head tree, with the vendored host code.
 //
 //   refuse  --base <dir> --head <dir> [--summary <file>] [--archive-cache <dir>]        check.yml, job checks
 //     C1 entry shape and flags.json, C2 ids, C3 names (refusals), C4-C7 the archive of every version not on the base, C8 version
-//     rules, C12 provenance (declared only), C15 revocations (the host's rules; an added one dated today or yesterday, UTC), C16 the
-//     whole index built, signed with a throwaway key made in the run and verified by the vendored index-verify.mjs --key --archives,
-//     C9 the mirror names of that catalog. Exit 1 on any FAIL.
+//     rules, C12 provenance (declared only), C15 revocations (the host's rules; an added one dated today or yesterday, UTC), C18 the
+//     dogma module package (its MANIFEST.json) in the archive of an entry that is not first-party, C16 the whole index built, signed
+//     with a throwaway key made in the run and verified by the vendored index-verify.mjs --key --archives, C9 the mirror names of that
+//     catalog. Exit 1 on any FAIL.
 //   review  --base <dir> --head <dir> [--author <login>] [--summary <file>] [--archive-cache <dir>]   check.yml, job review
 //     The review classes: first-party (C3), escalation and identity (C10: the host's delta of requested permissions, background turned
 //     on, or no lower version to compare with on a known id; name, author or type changed, the provenance repository changed or
 //     dropped, the maintainers changed; the permissions and the background flag read from each archive's plugin.json), new (C11),
 //     maintenance (C13: anything changed but entries/<id>.json and revoked.json), multi-entry (C13: more than one entry file changed),
 //     identity (C14: the author is not a maintainer of a base entry the pull request changes or removes), revocation and lift (C15),
-//     revoked (C15: an added version of an id that revoked.json names, on the base or the head), engines (C17). Exit 3 with
+//     revoked (C15: an added version of an id that revoked.json names, on the base or the head), engines (C17), wasm (C10, plan dp4
+//     W1 R1: an added version whose archive's plugin.json sets wasm: true, one line per version naming its ways out). Exit 3 with
 //     NEEDS REVIEW <classes> when any is set.
 //   publish --base <dir> --head <dir> --target production|test [--summary <file>] [--archive-cache <dir>]   publish.yml, job build
 //     The refusals of `refuse` against the live base (tools/build-index.mjs base: catalog.json, or an empty tree for a first or a test
@@ -34,8 +36,8 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import semver from 'semver';
 import { MARKET_URL_PREFIX, checkCatalogMirrors, checkEntry as entryProblems, checkIds, checkVersionRules, isListed, readEntries, toListing } from './lib/entries.mjs';
-import { checkArchiveBytes } from './lib/archives.mjs';
-import { checkEntry as diffEntry, checkNames, versionBefore } from './lib/diff.mjs';
+import { DOGMA_PACKAGE, checkArchiveBytes, dogmaManifests } from './lib/archives.mjs';
+import { checkEntry as diffEntry, checkNames, versionBefore, wasmReason } from './lib/diff.mjs';
 import { checkProvenance } from './lib/provenance.mjs';
 import { PREFIXES, ROOT, buildIndex, obtainArchive, prefixProblem, readJson, refusalLines, revKey, runVendored } from './lib/indexbuild.mjs';
 import { createReport } from './lib/summary.mjs';
@@ -162,6 +164,10 @@ async function checkArchives(head, base) {
       const c = checkArchiveBytes(got.bytes, l, lv, { tmpdir: work });
       if (!c.ok) { R.fail(c.check, `${at}: ${c.why}`); continue; }
       R.pass('C4-C7', `${at}: ${v.size} bytes, SHA-256 as pinned, the app's reader and staged checks pass`);
+      // C18 (plan dp4 W1 R4): the dogma module (its engine is under PolyForm Strict) only in a first-party archive.
+      const dogma = e.type === 'plugin' ? dogmaManifests(c.entries) : [];
+      if (dogma.length > 0 && e.firstParty !== true) { R.fail('C18', `${at}: it holds the ${DOGMA_PACKAGE} package (${dogma.slice(0, 3).join(', ')}), which only a first-party entry may ship`); continue; }
+      if (dogma.length > 0) R.pass('C18', `${at}: the ${DOGMA_PACKAGE} package in a first-party entry`);
       if (e.provenance === undefined) continue;
       const p = await checkProvenance({ entry: e, archive: path.join(cache, `${v.sha256}.zip`), sha256: v.sha256 });
       if (p.problem) R.fail('C12', `${at}: ${p.problem}`);
@@ -273,9 +279,16 @@ async function entryFlags(head, base) {
       }
       // The archive's permissions (the optional ones in permissions.optional), never the entry copy's: an unlisted version's archive is
       // not checked again (C4-C7 check a version when it is added), so its entry copy is only what the last pull request wrote there.
+      // R1 reads `wasm` and the services the plugin provides (`provides`, its contributes.services) from the archive too; a version whose
+      // plugin.json was not read has neither (it is flagged escalation above), so the entry can never say what R1 reads.
       const deco = (v) => {
         const m = read.get(v?.version);
-        return m ? { ...v, permissions: m.permissions, background: m.background === true } : v;
+        if (!m) {
+          if (!v) return v;
+          const { wasm: _w, provides: _p, ...rest } = v;
+          return rest;
+        }
+        return { ...v, permissions: m.permissions, background: m.background === true, wasm: m.wasm === true, provides: m.contributes?.services ?? [] };
       };
       he = { ...e, versions: e.versions.map(deco) };
       be = b ? { ...b, versions: b.versions.map(deco) } : null;
@@ -310,7 +323,9 @@ async function entryFlags(head, base) {
       engines: 'a new version\'s engines admit no host API major that a released host supports',
       revoked: 'a new version of an id that revoked.json names (on the base or the head)',
     };
-    for (const f of flags) R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
+    for (const f of flags) if (f !== 'wasm') R.flag(f, { new: 'C11', escalation: 'C10', identity: 'C10 C14', 'first-party': 'C3', engines: 'C17', revoked: 'C15' }[f], `${e.id}: ${why[f]}`);
+    // R1: one line per added version that sets wasm, naming its ways out (diff.mjs wasmWays, the vendored canSendOut).
+    if (flags.includes('wasm')) for (const w of r.wasm) R.flag('wasm', 'C10', `${e.id} ${w.version}: ${wasmReason(w.ways)}`);
   }
   for (const [id, b] of base.entries) {
     if (head.entries.some(e => e.id === id)) continue;

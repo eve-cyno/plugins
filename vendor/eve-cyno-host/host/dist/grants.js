@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ScriptedPrompter = exports.DenyPrompter = exports.GrantStore = exports.isNotSaved = exports.optionalRequested = exports.emptyGranted = exports.isRevokeKind = exports.REVOKE_KINDS = exports.GAME_EVENT_FAMILIES = void 0;
+exports.wasmGainReviewed = exports.wasmReach = exports.ScriptedPrompter = exports.DenyPrompter = exports.GrantStore = exports.isNotSaved = exports.optionalRequested = exports.emptyGranted = exports.isRevokeKind = exports.REVOKE_KINDS = exports.GAME_EVENT_FAMILIES = void 0;
 exports.declaredKinds = declaredKinds;
 exports.stripKind = stripKind;
 exports.requested = requested;
@@ -735,7 +735,7 @@ async function ensureGrantNow(store, prompter, m, providers, hooks, o) {
     // An install is not (it is asked as Allow and Deny: a Deny installs nothing). Nor is a staged update reviewed for more than its optional items (H1): one that
     // changes who the plugin is (`identity`, I3), or whose required part fires the A5 reset (M1), keeps "Keep <version>" with the switches, so a refusal never
     // moves the plugin to the new author's version or wipes its data.
-    const optionalOnly = isEmpty(withoutItems(d, optDelta)) && !bgNew && !(0, optional_1.isEmptySet)(optDelta)
+    const optionalOnly = isEmpty(withoutItems(d, optDelta)) && !bgNew && o?.wasmGain !== true && !(0, optional_1.isEmptySet)(optDelta)
         && (!confirm || (previous !== undefined && o?.identity === undefined && !fires(withoutItems(req, optDelta))));
     // Owner answer 2026-11-06 (multi-client host groups, question 2 option e; docs/platform-notes.md "A Deny of a new kind keeps a bundled plugin running"): in the update
     // prompt of a bundled plugin, the revocable kinds the old grant did not hold at all (`DENY_KEEPS`), when they are everything required that is new, are what a Deny
@@ -812,13 +812,30 @@ async function ensureGrantNow(store, prompter, m, providers, hooks, o) {
     return settle(granted, true, { pluginId: m.id, version: m.version, granted, decidedAt: now(), ...flags(narrowed || narrow), ...picks(granted), ...declinedFor(granted, off) });
 }
 /**
+ * API 1.30.0 (plan dp4 W1 3.6): whether a plugin of manifest `m` has a way out (`canSendOut`) with every optional item on, declined or not: the WebAssembly line's
+ * "could run code it did not ship with" and the review of a gain (wasmGainReviewed) read it. It may overstate what the grant holds and never understates it.
+ */
+const wasmReach = (m) => (0, windowsview_1.canSendOut)(withItems(requested(m), (0, optional_1.optionalOf)(m)), (m.contributes.services?.length ?? 0) > 0);
+exports.wasmReach = wasmReach;
+/**
+ * Plan dp4 W1 H7 (owner answer OQ-7 (b), R-A fix round): an update from `installed` to `next` makes outside code possible: `next` has `wasm` and a way out
+ * (wasmReach), and `installed` did not have both. That covers turning `wasm` on with a way out, and a way out added to a version that had `wasm` without one (a
+ * provided service, a server back after a version without it), so two silent steps never add up to it. Both versions with `wasm` and a way out: false. Read from
+ * the two manifests only (the staged and the registered one), never from the grant record: no record field. No installed manifest: false (an install is asked anyway).
+ * Not reviewed (OQ-7 (c), a record field, was not chosen; the copy is the user's own act): a manual or Developer-folder copy that gains it, as there is no staged
+ * manifest; when a loader ask of such a copy opens for another reason, its WebAssembly line is not marked new (prompts.ts productPromptView reads `staged`).
+ */
+const wasmGainReviewed = (next, installed) => next.wasm === true && (0, exports.wasmReach)(next) && installed !== undefined && !(installed.wasm === true && (0, exports.wasmReach)(installed));
+exports.wasmGainReviewed = wasmGainReviewed;
+/**
  * R29: whether an update to `m` needs the user's review before its files are used: its request (cut by what the user took back, kept narrowed)
  * asks for more than the plugin's current grant, allowing it would fire the A5 reset, or it would newly keep running in the background with no
- * view (I2). Read exactly as the next ensureGrant reads it.
+ * view (I2). Read exactly as the next ensureGrant reads it. With `installed` (the registered manifest, plan dp4 W1 H7) also when it makes outside code
+ * possible (`wasm` with a way out, which `installed` did not have: wasmGainReviewed).
  */
-function reviewNeeded(store, m, providers, builtIn = false, firstPartyExempt = false) {
+function reviewNeeded(store, m, providers, builtIn = false, firstPartyExempt = false, installed) {
     const b = basisOf(store, m, providers, false, false, builtIn, firstPartyExempt);
-    return !isEmpty(b.d) || b.reset || b.bgNew;
+    return !isEmpty(b.d) || b.reset || b.bgNew || (0, exports.wasmGainReviewed)(m, installed);
 }
 // Calls are queued per (store, plugin id): each runs with its own manifest and providers against the record the earlier
 // call saved. Identical requests still prompt once (the later run sees an empty delta or deniedVersion).

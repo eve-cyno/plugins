@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test';
 import { build, DESIGN_DIR, DESIGN_SNAPSHOT, readChecks, REPO_ROOT } from '../build.mjs';
 import { namespacesOf, parseDts } from '../lib/dts.mjs';
 import { DROPPED_TEXT, EXCLUDED_SECTIONS, frozenParts, mapSections, parseReadme, readReadme, REWRITES, SECTION_PAGES, SPLIT_SECTIONS } from '../lib/readme.mjs';
-import { schemaCounts } from '../lib/schema.mjs';
+import { NOTES, schemaCounts } from '../lib/schema.mjs';
 
 const API = new URL('../../vendor/plugin-api/', import.meta.url);
 const API_VERSION = JSON.parse(readFileSync(new URL('PIN.json', API), 'utf8')).version;
@@ -196,14 +196,16 @@ test('source of truth: the namespace list, the manifest rows, the check ids', ()
 
   const schema = JSON.parse(readFileSync(join(REPO_ROOT, 'vendor/eve-cyno-host/host/dist/schemas/manifest.v1.json'), 'utf8'));
   const counts = schemaCounts(schema);
-  assert.deepEqual(counts, { top: 15, required: 5, permissions: 20, contributes: 9 });
+  assert.deepEqual(counts, { top: 16, required: 5, permissions: 20, contributes: 9 });
   const manifest = html(join(tmp, 'off'), 'manifest');
   for (const key of Object.keys(schema.properties)) assert.match(manifest, new RegExp(`<span class="p-name">${key}</span>`), key);
+  for (const key of Object.keys(schema.properties)) assert.ok(NOTES[key], `NOTES.${key}: every top-level property has a hand-written note`);
+  assert.match(manifest, /<span class="p-name">wasm<\/span>.*\^1\.30/, 'the wasm row says which engines range it needs');
   for (const key of Object.keys(schema.properties.permissions.properties)) assert.match(manifest, new RegExp(`<span class="p-name">permissions\\.${key}</span>`), key);
   for (const key of Object.keys(schema.properties.contributes.properties)) assert.match(manifest, new RegExp(`<span class="p-name">contributes\\.${key}</span>`), key);
 
   const { checkIds, classes } = readChecks(REPO_ROOT);
-  assert.equal(checkIds.length, 17);
+  assert.equal(checkIds.length, 18);
   const checks = html(join(tmp, 'off'), 'checks');
   for (const id of checkIds) assert.match(checks, new RegExp(`<code>${id}</code>`));
   for (const c of classes) assert.match(checks, new RegExp(`<code>${c}</code>`));

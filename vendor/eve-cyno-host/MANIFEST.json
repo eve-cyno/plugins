@@ -2,10 +2,10 @@
   "schema": 1,
   "generator": "tools/vendor-host.mjs",
   "desktop": {
-    "commit": "b41ef45e53bc05c8bf6a7254d157f8b0ad3aacd9"
+    "commit": "be038a97782a15bdc315996bcd193607efa1f048"
   },
   "build": "npm --prefix host run build (product: no test key)",
-  "hostApi": "1.29.0",
+  "hostApi": "1.30.0",
   "dependencies": {
     "ajv": {
       "version": "8.20.0",
@@ -81,8 +81,8 @@
       "origin": "build"
     },
     "host/dist/grants.js": {
-      "sha256": "5cb7e345904fc4fdb81438de3dda4bb2c98fbc0c1463b87c225a0428e1c55e97",
-      "size": 67841,
+      "sha256": "fc0550a277249a7086080290c0692f42bcb0e964d54ac7bdc558fe4a067367ea",
+      "size": 69877,
       "origin": "build"
     },
     "host/dist/loader.js": {
@@ -91,8 +91,8 @@
       "origin": "build"
     },
     "host/dist/manifest.js": {
-      "sha256": "44704680878ed13a9d907c99bbf4124b7ec704db0bbc3bb8397109a3da172905",
-      "size": 39643,
+      "sha256": "efa756fc972d85e11e11c7269614bd757a8c5edf2481a766ef70dcb112ee29ed",
+      "size": 40872,
       "origin": "build"
     },
     "host/dist/market/admit.js": {
@@ -141,8 +141,8 @@
       "origin": "build"
     },
     "host/dist/schemas/manifest.v1.json": {
-      "sha256": "c26cd757b5bb76065d5aa7b89ac0588d39f9097f657fbeb2d7aba665d29687a6",
-      "size": 7947,
+      "sha256": "b654f5dd6e89a1abc6d8e1a26908760925e5c819b27a275267c8bf6b8f69b26d",
+      "size": 7986,
       "origin": "build"
     },
     "host/dist/schemas/theme-package.v1.json": {

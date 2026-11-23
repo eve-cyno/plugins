@@ -18,10 +18,10 @@ are the API's own declarations, under the MIT licence in that folder.
 
 | Path | What |
 |---|---|
-| `plugin.json` | The manifest: id, name, version, the API range (`^1.29`), the main page, what the plugin contributes. |
+| `plugin.json` | The manifest: id, name, version, the API range (`^1.30`), the main page, what the plugin contributes. |
 | `src/main.ts` | The typed entry. It reads the `eveCyno` global the host injects and uses the theme, commands and tile namespaces. |
 | `static/` | `main.html` and `style.css`: copied as they are into the plugin folder. |
-| `types/eve-cyno-plugin-api/` | The plugin API's declarations (1.29.0), the same as the npm package `@eve-cyno/plugin-api@1.29.0`, so the project builds without it. |
+| `types/eve-cyno-plugin-api/` | The plugin API's declarations (1.30.0), so the project builds without the npm package `@eve-cyno/plugin-api` (1.30.0 goes to npm with the first app release that carries API 1.30.0; 1.29.0 there has the same declarations). |
 | `test/` | `node --test` tests of the manifest. Add yours here. |
 | `entry/{{id}}.json` | The index entry stub: what the plugin's Marketplace listing says. |
 | `scripts/` | The build, the archive, the entry and the check scripts the commands below run. |

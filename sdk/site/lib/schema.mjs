@@ -17,6 +17,7 @@ export const NOTES = {
   activationEvents: 'When the plugin starts, for example `onStartup`.',
   background: 'Keep running when its window is closed.',
   suspendUnderPressure: 'Let the app pause a background plugin when the machine is under load.',
+  wasm: 'Let the pages and Workers compile WebAssembly (API 1.30.0): a manifest that writes the key, `true` or `false`, needs `{ "eve-cyno-api": "^1.30" }`. It is no permission. Compile only `.wasm` files from your archive, built from the public source your entry names; the index has a maintainer review every version that sets it.',
   esiCompatibilityDate: 'The ESI compatibility date the plugin was written against.',
   permissions: 'What the plugin asks for. See Permissions and grants.',
   contributes: 'Commands, status items, the tile action, settings and services the plugin adds to the app.',

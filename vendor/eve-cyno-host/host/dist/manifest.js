@@ -36,9 +36,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HOST_ID_PREFIX = exports.isDisplayText = exports.AI_NUMBER_API = exports.OPTIONAL_API = exports.SEMVER = exports.INTERFACE_ID = exports.isPluginId = exports.PLUGIN_ID_RE = exports.DEFAULT_STORAGE_MB = exports.MAX_MANIFEST_BYTES = exports.SHARED_HOSTS = exports.ACTIVATION = exports.HOST_API = void 0;
+exports.HOST_ID_PREFIX = exports.isDisplayText = exports.WASM_API = exports.AI_NUMBER_API = exports.OPTIONAL_API = exports.SEMVER = exports.INTERFACE_ID = exports.isPluginId = exports.PLUGIN_ID_RE = exports.DEFAULT_STORAGE_MB = exports.MAX_MANIFEST_BYTES = exports.SHARED_HOSTS = exports.ACTIVATION = exports.HOST_API = void 0;
+exports.enginesMinAtLeast = enginesMinAtLeast;
 exports.optionalEnginesOk = optionalEnginesOk;
 exports.aiNumberApi = aiNumberApi;
+exports.wasmEnginesOk = wasmEnginesOk;
 exports.displayProblem = displayProblem;
 exports.newPluginAjv = newPluginAjv;
 exports.canonicalOrigin = canonicalOrigin;
@@ -57,7 +59,7 @@ const manifest_v1_json_1 = __importDefault(require("./schemas/manifest.v1.json")
 const esi_scopes_json_1 = __importDefault(require("./schemas/esi-scopes.json"));
 const errors_1 = require("./errors");
 const dataallow_1 = require("./dataallow");
-exports.HOST_API = { version: '1.29.0', majors: [1] };
+exports.HOST_API = { version: '1.30.0', majors: [1] };
 exports.ACTIVATION = ['onStartup', 'onCommand:', 'onService:'];
 exports.SHARED_HOSTS = [
     'discord.com', 'discordapp.com', 'hooks.slack.com', 'api.telegram.org', 'webhook.site', 'pastebin.com', 'gist.github.com', 'api.github.com',
@@ -82,17 +84,24 @@ exports.SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d
 const MAIN_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 // A host name that is safe to put into a CSP source list: LDH labels, at least two of them (so no `*`, `;`, `,`, `'`, `_`).
 const LDH_HOST = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
-/** The plugin API version that brought `permissions.optional`: a manifest that writes the key needs an engines range whose lowest version is at least this one. */
-exports.OPTIONAL_API = '1.17.0';
-/** Whether an engines range admits only hosts that know `permissions.optional` (its lowest version is at least OPTIONAL_API, prereleases of it below). */
-function optionalEnginesOk(range) {
+/**
+ * Whether an engines range admits only hosts of plugin API `v` or later: its lowest version is at least `v` (a prerelease of `v` is below it). Not a range or
+ * unreadable: false. The one rule behind every key or shape gated by an API version (optionalEnginesOk, aiNumberApi, wasmEnginesOk).
+ */
+function enginesMinAtLeast(range, v) {
     try {
         const min = semver.validRange(range) === null ? null : semver.minVersion(range);
-        return min !== null && semver.gte(min, exports.OPTIONAL_API);
+        return min !== null && semver.gte(min, v);
     }
     catch {
         return false;
     }
+}
+/** The plugin API version that brought `permissions.optional`: a manifest that writes the key needs an engines range whose lowest version is at least this one. */
+exports.OPTIONAL_API = '1.17.0';
+/** Whether an engines range admits only hosts that know `permissions.optional` (its lowest version is at least OPTIONAL_API, prereleases of it below). */
+function optionalEnginesOk(range) {
+    return enginesMinAtLeast(range, exports.OPTIONAL_API);
 }
 /**
  * The plugin API version whose `AiLimits.turnsPerAsk` is any whole number from 1 to 30 and whose `ai` stream has the `tool` event (1.26.0). A plugin whose engines
@@ -102,15 +111,13 @@ function optionalEnginesOk(range) {
 exports.AI_NUMBER_API = '1.26.0';
 /** Whether an engines range admits only hosts of API 1.26.0 or later (its lowest version is at least AI_NUMBER_API). Absent, not a range or unreadable: false, the older shape. */
 function aiNumberApi(range) {
-    if (typeof range !== 'string')
-        return false;
-    try {
-        const min = semver.validRange(range) === null ? null : semver.minVersion(range);
-        return min !== null && semver.gte(min, exports.AI_NUMBER_API);
-    }
-    catch {
-        return false;
-    }
+    return typeof range === 'string' && enginesMinAtLeast(range, exports.AI_NUMBER_API);
+}
+/** The plugin API version that brought the manifest field `wasm`: a manifest that writes the key (true or false) needs an engines range whose lowest version is at least this one. */
+exports.WASM_API = '1.30.0';
+/** Whether an engines range admits only hosts that know `wasm` (its lowest version is at least WASM_API, prereleases of it below). Not a range or unreadable: false. */
+function wasmEnginesOk(range) {
+    return enginesMinAtLeast(range, exports.WASM_API);
 }
 const bad = (msg) => (0, errors_1.coded)('bad_manifest', msg);
 // Display text shown in the consent prompt: trimmed, 1-60 characters, no control characters (so no newline, no bell).
@@ -614,12 +621,17 @@ function parseInner(raw) {
     if (Object.hasOwn(m.permissions ?? {}, 'optional') && !optionalEnginesOk(range)) {
         throw bad(`permissions.optional needs engines.eve-cyno-api with a lowest version of at least ${exports.OPTIONAL_API}, such as ^${exports.OPTIONAL_API.split('.').slice(0, 2).join('.')} (${range})`);
     }
+    // API 1.30.0: the same rule for `wasm`, with either value: a host below 1.30.0 refuses the key (schema), so the range must leave every such host out.
+    if (Object.hasOwn(m, 'wasm') && !wasmEnginesOk(range)) {
+        throw bad(`wasm needs engines.eve-cyno-api with a lowest version of at least ${exports.WASM_API}, such as ^${exports.WASM_API.split('.').slice(0, 2).join('.')} (${range})`);
+    }
     if (!semver.satisfies(exports.HOST_API.version, range))
         throw (0, errors_1.coded)('incompatible_api', `engines.eve-cyno-api: ${range} does not include host API ${exports.HOST_API.version}`);
     return {
         id: m.id, name, ...(author !== undefined ? { author } : {}), version: m.version, engines: { 'eve-cyno-api': range },
         ...(m.esiCompatibilityDate ? { esiCompatibilityDate: m.esiCompatibilityDate } : {}),
         main: m.main, activationEvents: [...events], ...(m.background ? { background: true } : {}), ...(m.suspendUnderPressure ? { suspendUnderPressure: true } : {}),
+        ...(m.wasm === true ? { wasm: true } : {}),
         ...(m.color !== undefined ? { color: m.color.toLowerCase() } : {}), ...(m.icon !== undefined ? { icon: m.icon } : {}), ...(description !== undefined ? { description } : {}),
         permissions, contributes: { ...c, ...(commands ? { commands } : {}), ...(statusItems ? { statusItems } : {}), ...(tile ? { tile } : {}) },
     };

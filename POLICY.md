@@ -15,6 +15,9 @@ previous version, and, when you declare it, the build provenance from your GitHu
 A maintainer reviews every new plugin and every version that asks for more permissions, runs in the background for the first time, or
 changes its author, name or type, its provenance repository or its maintainers. A version that asks for nothing new is merged after
 the checks pass and a maintainer has read the change.
+A maintainer also reviews every version whose plugin.json sets `wasm: true`. Each WebAssembly file must be built from public source
+named in the entry's `source`, with the build command in that source, and the plugin may compile only WebAssembly files inside its
+archive, never bytes it downloads or receives.
 There is no fixed review time.
 
 ## What we do not list
@@ -23,7 +26,7 @@ Plugins that automate gameplay, send one input to several game clients, read the
 process or its memory, or go around the plugin API; anything against Fenris Creations' terms (client modification, botting,
 real-money trading); plugins whose name or author reads as EVE-Cyno. Only the project's own entries may set `firstParty`, and only they may use that name or
 author; a pull request from anyone else that sets `firstParty` or uses them is refused. An id that starts with `dev.evecyno.` is
-refused unless its entry sets `firstParty`; only the project changes a `firstParty` entry, and a maintainer reads every change to one.
+refused unless its entry sets `firstParty`; only the project changes a `firstParty` entry, and a maintainer reads every change to one. An archive that holds the EVE-Cyno dogma module (the `@eve-cyno/dogma-wasm` package, found by its `MANIFEST.json`) is refused unless its entry sets `firstParty`; only the project's own entries may ship that module.
 
 ## Mirroring
 

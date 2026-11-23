@@ -27,7 +27,7 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 | C7 | refuse | The app's install checks on the unpacked archive: `plugin.json` at the root, the manifest parser, the listing equal to `plugin.json`, the loader's folder checks (a theme package: `theme.json`). |
 | C8 | refuse | Version rules: valid versions, newest first; a merged version never changes and is never removed (it can be marked `"unlisted": true`, and stays unlisted once it is); an added version is listed and higher than every merged one; a merged entry is never removed. |
 | C9 | refuse | Every archive URL of the catalog built from the entries is its mirror name, `archives/<sha256>.zip`. |
-| C10 | review | Sets `escalation` and `identity`. |
+| C10 | review | Sets `escalation`, `identity` and `wasm`. |
 | C11 | review | Sets `new`. |
 | C12 | refuse | Provenance, when the entry declares it: `gh attestation verify` binds the archive to an attestation made on a GitHub-hosted runner in the repository that the entry's `source` names, by the declared workflow when there is one. |
 | C13 | review | Sets `maintenance` and `multi-entry`. |
@@ -35,6 +35,7 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 | C15 | refuse, review | `revoked.json` follows the app's rules, and a revocation added or changed in the pull request is dated today or yesterday (UTC). Sets `revocation`, `lift` and `revoked`. |
 | C16 | refuse | The whole index builds, is signed with a key made for the run and thrown away, and verifies with the app's own index verifier. |
 | C17 | review | Sets `engines`. |
+| C18 | refuse | The dogma module package (a `MANIFEST.json` in any folder that names `@eve-cyno/dogma-wasm`) is in the archive of an entry that is not first-party. Its engine is under PolyForm Strict, so only the project's own entries ship it. |
 
 ## What sets a review class
 
@@ -50,6 +51,7 @@ Every line of the output is a PASS, FAIL, FLAG or NOTE line that names its check
 | `revocation` | C15 | A revocation is added or changed. |
 | `lift` | C15 | A revocation is removed. |
 | `revoked` | C15 | A version is added to an id that `revoked.json` names. |
+| `wasm` | C10 | An added version's `plugin.json` sets `wasm: true` (the `wasm` row of [plugin.json](@@manifest)). Every such version is read, with or without a way out; the line names its ways out (network, optional network, services it uses or provides, `ai`, `account`) or says it has none. |
 
 ## Run them on your machine
 

@@ -11,6 +11,8 @@
 //      listingDifference, the loader's folder checks) in a temp folder removed at once. A theme package: theme.json and an optional
 //      LICENSE at the root and nothing else, parsePackage, themeListingDifference, then what the app's theme store refuses when it
 //      adds the package (themes/packages.ts addNow): a LICENSE over MAX_LICENSE_BYTES or not UTF-8, and no usable theme.
+//   C18 a plugin archive that holds the dogma module package (plan dp4 W1 R4: a MANIFEST.json, in any folder, that names the package
+//      @eve-cyno/dogma-wasm) is refused unless the entry is first-party; tools/check.mjs decides, dogmaManifests finds them.
 // Nothing here throws on hostile input: every refusal is {ok: false, check, error, why}. `why` never carries a URL, a header value or a
 // local path; C7's reasons are the app's own messages, which may name a field of the archive's manifest, so a job summary escapes `why`
 // like any other text.
@@ -265,15 +267,36 @@ function pluginCheck(entries, l, v, tmpdir) {
   }
   try {
     const c = SC.checkStagedPlugin(entries, root, l, v);
-    return c.ok ? { ok: true, manifest: c.manifest } : refused('C7', c.error, c.why);
+    return c.ok ? { ok: true, manifest: c.manifest, entries } : refused('C7', c.error, c.why);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
+/** The package name the dogma module's MANIFEST.json carries in its field `package` (desktop packages/dogma-wasm, plan dp4 W1 5.5). */
+export const DOGMA_PACKAGE = '@eve-cyno/dogma-wasm';
+
+/**
+ * C18: the names of the archive entries (as the app's reader gives them) that are the dogma module's MANIFEST.json: a file named
+ * MANIFEST.json in any folder (any letter case) whose JSON `package` is DOGMA_PACKAGE, as JSON.parse reads it (a repeated key: the last
+ * one), or whose text holds that name at all, so a file that does not parse, or spells it inside another field, is not a way past it.
+ */
+export function dogmaManifests(entries) {
+  const hits = [];
+  for (const e of entries ?? []) {
+    if (e.dir || typeof e.name !== 'string' || e.name.split('/').at(-1).toLowerCase() !== 'manifest.json') continue;
+    const text = Buffer.from(e.data ?? []).toString('utf8');
+    let pkg = null;
+    try { pkg = JSON.parse(text)?.package ?? null; } catch { /* not JSON: the text test below still applies */ }
+    if (pkg === DOGMA_PACKAGE || text.includes(DOGMA_PACKAGE)) hits.push(e.name);
+  }
+  return hits;
+}
+
 /**
  * C5-C7 on downloaded `bytes` for the parsed listing `l` at version `v` (as the vendored parseCatalog gives them: the size and SHA-256
- * are the listing's). Resolves {ok: true, manifest?} or {ok: false, check, error, why}. `o.tmpdir`: the parent of the staging folder.
+ * are the listing's). Resolves {ok: true, manifest?, entries?} (a plugin: its manifest and the reader's entries) or {ok: false, check, error,
+ * why}. `o.tmpdir`: the parent of the staging folder.
  */
 export function checkArchiveBytes(bytes, l, v, o = {}) {
   if (bytes.length !== v.archive.size) return refused('C5', 'size_mismatch', `${bytes.length} bytes; the entry pins ${v.archive.size}`);

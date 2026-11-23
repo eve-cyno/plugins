@@ -1,6 +1,6 @@
 {
   "name": "@eve-cyno/create-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/eve-cyno/plugins.git", "directory": "sdk/create-plugin" },
   "homepage": "https://docs.eve-cyno.dev/plugins/",
@@ -8,7 +8,7 @@
   "publishConfig": { "access": "public" },
   "description": "Generates a working EVE-Cyno desktop plugin project: manifest, typed entry, build, test and the index entry stub",
   "type": "module",
-  "eveCynoApi": "1.29.0",
+  "eveCynoApi": "1.30.0",
   "bin": { "create-plugin": "bin/create-plugin.mjs" },
   "files": ["bin/", "lib/", "template/", "LICENSE", "README.md"],
   "engines": { "node": ">=22.2" },

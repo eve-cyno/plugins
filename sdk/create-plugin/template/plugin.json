@@ -3,7 +3,7 @@
   "name": {{name|json}},
   "author": {{author|json}},
   "version": "0.1.0",
-  "engines": { "eve-cyno-api": "^1.29" },
+  "engines": { "eve-cyno-api": "^1.30" },
   "main": "main.html",
   "activationEvents": ["onStartup"],
   "icon": "plugin",

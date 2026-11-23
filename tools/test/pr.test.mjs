@@ -7,7 +7,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, cacheArchive, cleanup, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
+import { PERMS, ROOT, cacheArchive, cleanup, linesOf, manifest, pluginEntry, pluginZip, run, sha, tempDir, themeEntry, themeZip, version, writeTree } from './trees.mjs';
 import { ISSUER, PREDICATE } from '../lib/provenance.mjs';
 import { toListing } from '../lib/entries.mjs';
 import { zerosAtExactRatio, zerosAtMostRatio, zip } from './zipwrite.mjs';
@@ -664,5 +664,110 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     assert.equal(o.code, 3, o.stdout + o.stderr);
     assert.doesNotMatch(o.stdout, /^FLAG escalation /m, 'another first-party id');
     assert.equal(last(o.stdout), 'NEEDS REVIEW first-party');
+  });
+});
+
+// plan dp4 W1 (API 1.30.0): R1 flags every added version whose archive's plugin.json sets `wasm: true` (class `wasm`, owner answer
+// OQ-3 (a)), the reason naming its ways out; R4 (C18) refuses the dogma module package outside a first-party entry.
+describe('PR fixture suite: WebAssembly (R1, R4)', () => {
+  const W = '^1.30.0';
+  const SEALED = Object.freeze({ characters: 'selected' });
+  /** A head adding 1.1.0 whose archive is `m` (engines ^1.30.0); the entry pins the manifest's permissions. */
+  const wasmHead = (perms, over = {}, extra = []) => head(pluginZip(manifest({ version: '1.1.0', engines: { 'eve-cyno-api': W }, permissions: perms, wasm: true, ...over }), extra), { pin: { engines: W, permissions: perms } });
+  const review = async (h, base = baseTree()) => {
+    assert.equal((await check('refuse', base, h)).code, 0, 'a valid archive: refuse passes, review decides');
+    const r = await check('review', base, h, ['--author', 'example-login']);
+    assert.equal(r.code, 3, r.stdout + r.stderr);
+    return r;
+  };
+  const FLAG = /^FLAG wasm C10 dev\.example\.intel 1\.1\.0: its plugin\.json sets wasm: true \(it may compile and run WebAssembly\); (.*)$/m;
+
+  test('PR-wasm-sealed: a wasm version with no way out is flagged wasm, "no way out"', async () => {
+    const r = await review(wasmHead(SEALED));
+    assert.equal(r.stdout.match(FLAG)?.[1], 'no way out', r.stdout);
+    assert.equal(last(r.stdout), 'NEEDS REVIEW wasm');
+  });
+
+  test('PR-wasm-ways: required network, optional network, a consumed service and ai are each named', async () => {
+    const cases = [
+      [PERMS, 'ways out: required network https://api.example.com'],
+      [{ characters: 'selected', optional: { network: ['https://opt.example.com'] } }, 'ways out: optional network https://opt.example.com'],
+      [{ characters: 'selected', services: { 'evecyno.map': '^1' } }, 'ways out: consumed service evecyno.map'],
+      [{ characters: 'selected', ai: true }, 'ways out: ai'],
+    ];
+    for (const [perms, want] of cases) {
+      const r = await review(wasmHead(perms));
+      assert.equal(r.stdout.match(FLAG)?.[1], want, r.stdout);
+      assert.match(last(r.stdout), /^NEEDS REVIEW (escalation )?wasm$/);
+    }
+  });
+
+  test('PR-wasm-false: wasm false sets no flag', async () => {
+    const r = await check('review', baseTree(), wasmHead(SEALED, { wasm: false }), ['--author', 'example-login']);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(last(r.stdout), 'NO REVIEW NEEDED');
+  });
+
+  test('PR-wasm-duplicate-key: plugin.json is read as the host reads it, the last of a repeated key wins', async () => {
+    const text = (first, lastValue) => `{"wasm": ${first}, ${JSON.stringify(manifest({ version: '1.1.0', engines: { 'eve-cyno-api': W }, permissions: SEALED })).slice(1, -1)}, "wasm": ${lastValue}}`;
+    const dup = (first, lastValue) => zip([{ name: 'plugin.json', data: text(first, lastValue) }, { name: 'index.html', data: '<!doctype html><title>Intel</title>' }]);
+    const on = await review(head(dup(false, true), { pin: { engines: W, permissions: SEALED } }));
+    assert.equal(on.stdout.match(FLAG)?.[1], 'no way out', '"wasm": false, ..., "wasm": true cannot slip past R1');
+    const off = await check('review', baseTree(), head(dup(true, false), { pin: { engines: W, permissions: SEALED } }), ['--author', 'example-login']);
+    assert.equal(off.code, 0, 'the host reads false there too: no WebAssembly, no flag');
+  });
+
+  test('PR-wasm-publish-listed: publish against the live catalog flags no listed wasm version again, only an added one', async () => {
+    const A110 = pluginZip(manifest({ version: '1.1.0', engines: { 'eve-cyno-api': W }, permissions: SEALED, wasm: true }));
+    const A120 = pluginZip(manifest({ version: '1.2.0', engines: { 'eve-cyno-api': W }, permissions: SEALED, wasm: true }));
+    cacheArchive(cache, A110);
+    cacheArchive(cache, A120);
+    const v110 = version('1.1.0', A110, { engines: W, permissions: SEALED });
+    const listed = pluginEntry([v110, version('1.0.0', A100)]);
+    const same = await check('publish', catalogBase([listed]), tree({ entries: [listed] }), ['--target', 'test']);
+    assert.equal(same.code, 0, same.stdout + same.stderr);
+    assert.doesNotMatch(same.stdout, /^FLAG wasm /m, 'a listed wasm version is not flagged again');
+    const added = await check('publish', catalogBase([listed]), tree({ entries: [pluginEntry([version('1.2.0', A120, { engines: W, permissions: SEALED }), v110, version('1.0.0', A100)])] }), ['--target', 'test']);
+    assert.equal(added.code, 0, added.stdout + added.stderr);
+    assert.deepEqual(linesOf(added.stdout, 'FLAG wasm').map((l) => l.split(':')[0]), ['FLAG wasm C10 dev.example.intel 1.2.0']);
+  });
+
+  test('PR-wasm-engines: a wasm manifest whose engines admit a host below 1.30.0 is refused at C7', async () => {
+    // A host below API 1.30.0 refuses the key itself (schema: unknown key), so the host requires a range that leaves every such host out.
+    // Against the vendored host of 1.29.0 (before this re-vendor) every wasm manifest was refused at C7: `//wasm: unknown key`.
+    const bad = head(pluginZip(manifest({ version: '1.1.0', engines: { 'eve-cyno-api': '^1.29.0' }, permissions: SEALED, wasm: true })), { pin: { engines: '^1.29.0', permissions: SEALED } });
+    await refused(bad, /^FAIL C7 dev\.example\.intel 1\.1\.0: .*wasm needs engines\.eve-cyno-api/m);
+  });
+
+  const DOGMA = { name: 'vendor/dogma-wasm/MANIFEST.json', data: JSON.stringify({ package: '@eve-cyno/dogma-wasm', module: 'dogma.wasm' }) };
+  test('PR-dogma-third-party: the dogma module package in an entry that is not first-party is refused at C18', async () => {
+    await refused(wasmHead(SEALED, {}, [DOGMA]), /^FAIL C18 dev\.example\.intel 1\.1\.0: it holds the @eve-cyno\/dogma-wasm package \(vendor\/dogma-wasm\/MANIFEST\.json\), which only a first-party entry may ship$/m);
+    // A repeated key (the last wins, as JSON.parse reads it) and another letter case of the file name are no way past it.
+    const twice = { name: 'lib/manifest.JSON', data: '{"package": "@eve-cyno/dogma-wasm", "package": "x"}' };
+    await refused(wasmHead(SEALED, {}, [twice]), /^FAIL C18 dev\.example\.intel 1\.1\.0: it holds the @eve-cyno\/dogma-wasm package \(lib\/manifest\.JSON\)/m);
+    // The name spelled with a JSON escape: the text holds no literal match, JSON.parse reads the package name.
+    const escaped = { name: 'MANIFEST.json', data: '{"package": "\\u0040eve-cyno/dogma-wasm"}' };
+    assert.ok(!escaped.data.includes('@eve-cyno/dogma-wasm'));
+    await refused(wasmHead(SEALED, {}, [escaped]), /^FAIL C18 dev\.example\.intel 1\.1\.0: it holds the @eve-cyno\/dogma-wasm package \(MANIFEST\.json\)/m);
+    // Another package's MANIFEST.json is no refusal.
+    const other = await check('refuse', baseTree(), wasmHead(SEALED, {}, [{ name: 'vendor/x/MANIFEST.json', data: '{"package":"@example/other"}' }]));
+    assert.equal(other.code, 0, other.stdout + other.stderr);
+    assert.doesNotMatch(other.stdout, /C18/);
+  });
+
+  test('PR-dogma-first-party: the dogma module package in a first-party entry passes C18', async () => {
+    const id = 'dev.evecyno.fitoracle';
+    const bytes = pluginZip(manifest({ id, name: 'Fit Oracle', author: 'EVE-Cyno', version: '0.1.0', engines: { 'eve-cyno-api': W }, permissions: SEALED, wasm: true }), [DOGMA]);
+    cacheArchive(cache, bytes);
+    const e = pluginEntry([version('0.1.0', bytes, { engines: W, permissions: SEALED })], { id, name: 'Fit Oracle', author: 'EVE-Cyno', firstParty: true, source: null });
+    delete e.maintainers;
+    const h = tree({ entries: [pluginEntry([version('1.0.0', A100)]), e] });
+    const r = await check('refuse', baseTree(), h);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^PASS C18 dev\.evecyno\.fitoracle 0\.1\.0: the @eve-cyno\/dogma-wasm package in a first-party entry$/m);
+    assert.equal(last(r.stdout), 'CHECKS PASSED');
+    const v = await check('review', baseTree(), h, ['--author', 'example-login']);
+    assert.match(v.stdout, /^FLAG wasm C10 dev\.evecyno\.fitoracle 0\.1\.0: .*; no way out$/m);
+    assert.equal(last(v.stdout), 'NEEDS REVIEW new first-party wasm');
   });
 });

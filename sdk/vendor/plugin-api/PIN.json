@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "generator": "sdk/tools/vendor-api.mjs",
-  "desktopCommit": "a449bffc74344bc36518b1d6d7488dd7cbbd20df",
-  "version": "1.29.0",
+  "desktopCommit": "be038a97782a15bdc315996bcd193607efa1f048",
+  "version": "1.30.0",
   "files": {
-    "1.29.0.d.ts": "376b189c7acea5d20614ae2a19610a5b08ee2787fae641d8fe8c5bb2f8d5bccf",
+    "1.30.0.d.ts": "376b189c7acea5d20614ae2a19610a5b08ee2787fae641d8fe8c5bb2f8d5bccf",
     "LICENSE": "e931cc324cd0c64eac1b5fb511468e8ed900a551f6427b54836527a8a4f0c0b5",
-    "README.md": "d5853e0d926ed4b1fa22a3feb2aac341439adcb9bad833f130c616c8a6dccb30",
-    "package.json": "252e01cbef4b50198007ff1ea4a718b0a7dd2dfa45a86e62363ddfd918500b38"
+    "README.md": "bc362f1760f0806718aef94679bd63e9a85405f2fdcd74b05d97e1cdecc1d201",
+    "package.json": "8acf18cfab1ebbb15441cb086c9a95584c39a359abff0a1ef01b9c9b9942b3bd"
   }
 }
