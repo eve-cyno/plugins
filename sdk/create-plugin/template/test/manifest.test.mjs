@@ -20,7 +20,7 @@ test('the version is the package version and the entry stub names it', () => {
 });
 
 test('engines name the API minor the bundled types describe', () => {
-  assert.deepEqual(manifest.engines, { 'eve-cyno-api': '^1.29' });
+  assert.deepEqual(manifest.engines, { 'eve-cyno-api': '^1.30' });
   assert.match(read('types/eve-cyno-plugin-api/index.d.ts'), /export declare function getEveCyno/);
 });
 

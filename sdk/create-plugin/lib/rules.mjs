@@ -7,7 +7,7 @@
 // digits by NFKC or by dropping accents is caught here.
 
 export const HOST_ID_PREFIX = 'eve-cyno.host.';
-export const API_MINOR_RANGE = '^1.29';
+export const API_MINOR_RANGE = '^1.30';
 
 const ID_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*){2,}$/;
 const ID_MAX = 100;

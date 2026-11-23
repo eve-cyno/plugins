@@ -48,7 +48,7 @@ test('verify: a wrong commit fails', () => {
 
 test('verify: a wrong version fails', () => {
   const s = sandbox();
-  editJson(s.manifestPath, (m) => { m.hostApi = '1.30.0'; });
+  editJson(s.manifestPath, (m) => { m.hostApi = '0.0.0'; });
   assert.match(verify(s).join('\n'), /version/);
 });
 

@@ -73,7 +73,7 @@ test('render: plugin.json carries the answers, the API minor and no permission',
   assert.equal(m.author, ANSWERS.author);
   assert.equal(m.description, ANSWERS.description);
   assert.equal(m.version, '0.1.0');
-  assert.deepEqual(m.engines, { 'eve-cyno-api': '^1.29' });
+  assert.deepEqual(m.engines, { 'eve-cyno-api': '^1.30' });
   assert.deepEqual(m.permissions, {});
   assert.equal(m.main, 'main.html');
   assert.deepEqual(m.activationEvents, ['onStartup']);
@@ -113,7 +113,7 @@ test('render: the entry stub has the index fields and no provenance', () => {
   assert.ok(!('provenance' in e));
   assert.equal(e.versions.length, 1);
   assert.equal(e.versions[0].version, '0.1.0');
-  assert.equal(e.versions[0].engines, '^1.29');
+  assert.equal(e.versions[0].engines, '^1.30');
   assert.deepEqual(e.versions[0].permissions, {});
   assert.match(e.versions[0].url, /^https:\/\//);
 });
@@ -146,10 +146,10 @@ test('determinism: different ids change the entry file name and nothing else is 
   assert.ok(!x.has('entry/com.example.hello-ledger.json'));
 });
 
-test('bundled types equal the vendored plugin-api 1.29.0 byte for byte', () => {
+test('bundled types equal the vendored plugin-api 1.30.0 byte for byte', () => {
   const vendor = join(REPO, 'sdk', 'vendor', 'plugin-api');
   const files = render(ANSWERS);
-  assert.ok(Buffer.from(files.get('types/eve-cyno-plugin-api/index.d.ts')).equals(readFileSync(join(vendor, '1.29.0.d.ts'))));
+  assert.ok(Buffer.from(files.get('types/eve-cyno-plugin-api/index.d.ts')).equals(readFileSync(join(vendor, '1.30.0.d.ts'))));
   assert.ok(Buffer.from(files.get('types/eve-cyno-plugin-api/LICENSE')).equals(readFileSync(join(vendor, 'LICENSE'))));
 });
 
@@ -271,7 +271,7 @@ test('rules agree with the vendored host: display text', () => {
 test('CLI: --version prints the scaffold and the API version', () => {
   const out = execFileSync(process.execPath, [BIN, '--version'], { encoding: 'utf8' });
   const { version } = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8'));
-  assert.equal(out, `@eve-cyno/create-plugin ${version} (plugin API 1.29.0)\n`);
+  assert.equal(out, `@eve-cyno/create-plugin ${version} (plugin API 1.30.0)\n`);
 });
 
 test('CLI: --yes with every answer writes the project', () => {

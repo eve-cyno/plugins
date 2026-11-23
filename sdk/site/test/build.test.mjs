@@ -196,7 +196,7 @@ test('source of truth: the namespace list, the manifest rows, the check ids', ()
 
   const schema = JSON.parse(readFileSync(join(REPO_ROOT, 'vendor/eve-cyno-host/host/dist/schemas/manifest.v1.json'), 'utf8'));
   const counts = schemaCounts(schema);
-  assert.deepEqual(counts, { top: 15, required: 5, permissions: 20, contributes: 9 });
+  assert.deepEqual(counts, { top: 16, required: 5, permissions: 20, contributes: 9 });
   const manifest = html(join(tmp, 'off'), 'manifest');
   for (const key of Object.keys(schema.properties)) assert.match(manifest, new RegExp(`<span class="p-name">${key}</span>`), key);
   for (const key of Object.keys(schema.properties.permissions.properties)) assert.match(manifest, new RegExp(`<span class="p-name">permissions\\.${key}</span>`), key);

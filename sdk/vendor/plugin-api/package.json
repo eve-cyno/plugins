@@ -1,11 +1,15 @@
 {
   "name": "@eve-cyno/plugin-api",
-  "version": "1.29.0",
+  "version": "1.30.0",
   "description": "Types for the EVE-Cyno desktop plugin API (the eveCyno global)",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist", "LICENSE", "README.md"],
-  "private": true
+  "homepage": "https://docs.eve-cyno.dev/plugins/",
+  "bugs": "https://github.com/eve-cyno/plugins/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/eve-cyno/desktop.git", "directory": "packages/plugin-api" },
+  "publishConfig": { "access": "public" },
+  "scripts": { "prepack": "node ../../host/node_modules/typescript/bin/tsc -p tsconfig.build.json" }
 }

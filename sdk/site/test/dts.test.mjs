@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { assignDeclarations, docText, firstSentence, interfaceMembers, namespacesOf, parseDts, referencedNames } from '../lib/dts.mjs';
 
-const VENDORED = new URL('../../vendor/plugin-api/1.29.0.d.ts', import.meta.url);
+const VENDORED = new URL('../../vendor/plugin-api/1.30.0.d.ts', import.meta.url);
 const SAMPLE = `/** Codes. */
 export type Code = 'a' | 'b';
 export interface Item {

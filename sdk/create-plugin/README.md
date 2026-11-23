@@ -15,7 +15,7 @@ node sdk/create-plugin/bin/create-plugin.mjs [dir] [--id <id>] [--name <name>] [
 
 It asks for what is missing (id, name, author, description) unless `--yes` is given; `--yes` needs `--id` and `--author`. The folder
 defaults to the last segment of the id, the name to that segment in title case. `--version` prints the scaffold version and the plugin
-API version it bundles (1.29.0).
+API version it bundles (1.30.0).
 
 ## What it refuses
 
@@ -36,12 +36,12 @@ The same answers give the same bytes: nothing in the output depends on the clock
 
 ## What it writes
 
-`plugin.json` (no permission, API range `^1.29`, one command and the tile action that runs it), `package.json` (private, TypeScript
+`plugin.json` (no permission, API range `^1.30`, one command and the tile action that runs it), `package.json` (private, TypeScript
 7.0.2 as the only dev dependency, scripts `build`, `test`, `pack`, `entry`, `check`), `tsconfig.json`, `src/main.ts`, `static/main.html`,
 `static/style.css`, `test/manifest.test.mjs`, `entry/<id>.json`, a README for the new project, `.gitignore`, and
 `types/eve-cyno-plugin-api/` (the API's declarations and licence, copied from `sdk/vendor/plugin-api`).
 
-The project carries the API's declarations in `types/` and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`, so it builds without the npm package. The same declarations are published as `@eve-cyno/plugin-api@1.29.0`; to use that package instead, add it as a dev dependency, remove the `paths` entry and delete `types/`.
+The project carries the API's declarations in `types/` and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`, so it builds without the npm package. The same declarations are published as `@eve-cyno/plugin-api@1.30.0`; to use that package instead, add it as a dev dependency, remove the `paths` entry and delete `types/`.
 
 ## Licences
 

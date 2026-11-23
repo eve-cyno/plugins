@@ -54,7 +54,7 @@ test('scaffold: generate, install, build, test, pack, entry, check', { timeout: 
   const m = M.parseManifest(JSON.parse(readFileSync(join(proj, 'dist', ID, 'plugin.json'), 'utf8')));
   assert.equal(m.id, ID);
   assert.equal(m.version, '0.1.0');
-  assert.equal(m.engines['eve-cyno-api'], '^1.29');
+  assert.equal(m.engines['eve-cyno-api'], '^1.30');
   assert.ok(existsSync(join(proj, 'dist', ID, 'main.js')));
 
   // pack builds first; two runs, same bytes; a copy with other mtimes too
@@ -79,7 +79,7 @@ test('scaffold: generate, install, build, test, pack, entry, check', { timeout: 
   const v = JSON.parse(readFileSync(ej, 'utf8')).versions[0];
   assert.equal(v.sha256, sha(zip));
   assert.equal(v.size, zip.length);
-  assert.equal(v.engines, '^1.29');
+  assert.equal(v.engines, '^1.30');
   assert.equal(v.url, URL_);
 
   // the repository's own tools/check.mjs, direct
