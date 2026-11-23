@@ -13,6 +13,28 @@
   "source": null,
   "versions": [
     {
+      "version": "0.1.1",
+      "released": "2026-11-23",
+      "changes": "The board is ported: it shows the ESI states and an empty table. The failed-read note no longer says your pick is used. The ESI help text explains how the install prompt offers the ship-type permission.",
+      "engines": "^1.29",
+      "permissions": {
+        "gameEvents": [
+          "mining",
+          "notice"
+        ],
+        "overlays": true,
+        "characters": "all",
+        "optional": {
+          "esi": [
+            "esi-location.read_ship_type.v1"
+          ]
+        }
+      },
+      "url": "https://downloads.eve-cyno.dev/plugins/dev.evecyno.miningoverlay/0.1.1/dev.evecyno.miningoverlay-0.1.1.zip",
+      "sha256": "a7cdffcc7345691101e844c62600ab727564c8a015adb8bfe91b2859cce2838c",
+      "size": 129818
+    },
+    {
       "version": "0.1.0",
       "released": "2026-11-20",
       "changes": "First Marketplace release.",
