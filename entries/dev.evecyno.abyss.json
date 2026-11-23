@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "dev.evecyno.abyss",
+  "type": "plugin",
+  "name": "Abyss Overlay",
+  "author": "EVE-Cyno",
+  "firstParty": true,
+  "summary": "An always-on-top list of the NPCs in your Abyssal room, from the game log: counts, kill order, damage, weak resists.",
+  "description": "Abyss Overlay is a small window above the game that lists the NPCs of your Abyssal Filament room, read from your game log: how many of each type, which to kill first, what damage each deals and which resist is weakest. The overlay only displays: clicks go through it to the game, it sends no input to the game, it reads nothing from the screen and has no overview copy. You pick the tier and the weather on the plugin's page.\n\nHow it works and its limits: a new room starts when combat pauses for a set time (15 seconds by default, 6 to 60 in the settings) and then a line comes from a kind of NPC not seen in the previous room, or when you press the hotkey (Control+Alt+Shift+N by default) or the New room button. Counts come from the first volley of a room and are a lower bound. The room rules were measured in one recorded run of three rooms on one client; other tiers, weathers and clients may differ. It understands the English game client only. Run EVE in Fixed Window mode, not Fullscreen, or the overlay is hidden.\n\nPermissions and why:\n- gameEvents (combat, ewar and notice): what your game logs say about fights, electronic warfare and jumps, for the characters you play on this computer. It never sees chat or the raw log files, and it keeps no player names.\n- overlays: the one always-on-top list window. This permission also lets a plugin see the names of your game windows; this plugin does not read them.\n- hotkeys: the chord that starts a new room.\n\nNPC names come from a table shipped with the plugin. The plugin sends nothing out of this computer. It stores only its settings (tier, weather, window placement, room gap, hotkey).\n\nSome texts are not yet checked against the live wiki: the weather notes, the tier ranges and the four NPC family notes come from the EVE University wiki (CC BY-SA) as copied into the project, and the Dark weather lines and the Tessella family note are unverified.\n\nEVE Online and all related materials are the property of Fenris Creations. EVE-Cyno is not affiliated with Fenris Creations.",
+  "categories": [
+    "tools"
+  ],
+  "source": null,
+  "versions": [
+    {
+      "version": "0.1.0",
+      "released": "2026-11-23",
+      "changes": "First Marketplace release.",
+      "engines": "^1.29",
+      "permissions": {
+        "gameEvents": [
+          "combat",
+          "ewar",
+          "notice"
+        ],
+        "overlays": true,
+        "hotkeys": true
+      },
+      "url": "https://downloads.eve-cyno.dev/plugins/dev.evecyno.abyss/0.1.0/dev.evecyno.abyss-0.1.0.zip",
+      "sha256": "d6f9df098a88525ee7841cb543a1735cb15eb754620bce618c496a09e2eacd85",
+      "size": 187877
+    }
+  ]
+}
