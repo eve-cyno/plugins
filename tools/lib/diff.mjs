@@ -1,7 +1,7 @@
 // Checks C3 (names), C10 (permissions diff), C11 (new plugin), C14 (maintainer), C17 (engines reach) and the review class of a new
 // version of a revoked id (C15) over plain parsed entries.
-// Every rule that the app also applies comes from the vendored host (requested, delta, isEmpty, foldName, listingAdmit, HOST_API);
-// nothing here reimplements them. Pure: no I/O. An escalation is a flag (`NEEDS REVIEW escalation`), never a refusal.
+// Every rule that the app also applies comes from the vendored host (requested, delta, isEmpty, isFirstPartyExempt, foldName, listingAdmit,
+// HOST_API); nothing here reimplements them. Pure: no I/O. An escalation is a flag (`NEEDS REVIEW escalation`), never a refusal.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,27 @@ const { requested, delta, isEmpty } = require(path.join(DIST, 'grants.js'));
 const { foldName } = require(path.join(DIST, 'market', 'names.js'));
 const { listingAdmit } = require(path.join(DIST, 'market', 'admit.js'));
 const { HOST_API } = require(path.join(DIST, 'manifest.js'));
+const { isFirstPartyExempt } = require(path.join(DIST, 'firstpartyallow.js'));
+
+/**
+ * The app's first-party verdict for one entry of this index (vendored firstpartyallow.js isFirstPartyExempt, owner rulings Q1 = A1, Q2 = P1),
+ * read from the entry alone: this repository is the official index, so the origin is `market` and official, first-party when the entry's
+ * `firstParty` is true, as the app reads a listing of the official index (desktop market/installer.ts firstPartyOf, market/updates.ts).
+ * False for an id not on FIRST_PARTY_ALLOWLIST and for no entry.
+ */
+const exemptOf = (e) => e != null && isFirstPartyExempt(e.id, () => ({ source: 'market', official: true, firstParty: e.firstParty === true }));
+
+/**
+ * The first-party input of host `requested` for C10 on `head` (`base`: the entry on the base, or null). `after`, for an added version: the
+ * head's verdict, which the app's update prompt reads. `before`, for the version before it: exempt only when the head and the base both
+ * are, since a grant made while the entry was not first-party holds no `chatlogs` and the app asks for them again (fail closed: never
+ * fewer escalations than the app asks of a user whose grant was made at the base version; C10 sees only the base and the head, not each
+ * user's grant history).
+ */
+export function firstPartyExempt(head, base) {
+  const after = exemptOf(head);
+  return { before: after && exemptOf(base ?? head), after };
+}
 
 /**
  * What C10 reads of one version: its permissions (check.mjs puts the archive's plugin.json permissions and `background` in place of
@@ -23,10 +44,11 @@ const asManifest = (v) => ({ permissions: v.permissions ?? {} });
 
 /**
  * C10 for one pair. `escalation`: the new version asks for something the old one did not (host `delta` of `requested`, not empty).
- * `background`: the new version turns `background` on. Both lead to a review, never to a refusal.
+ * `background`: the new version turns `background` on. Both lead to a review, never to a refusal. `exempt`: the first-party input of
+ * `requested` for each side (firstPartyExempt); none is the rule for every plugin that is not built-in or first-party exempt.
  */
-export function permissionsDiff(oldV, newV) {
-  const d = delta(requested(asManifest(oldV)), requested(asManifest(newV)));
+export function permissionsDiff(oldV, newV, exempt = { before: false, after: false }) {
+  const d = delta(requested(asManifest(oldV), false, exempt.before === true), requested(asManifest(newV), false, exempt.after === true));
   return { escalation: !isEmpty(d), delta: d, background: newV.background === true && oldV.background !== true };
 }
 
@@ -118,6 +140,7 @@ export function checkEntry(head, base, { others = [], prAuthor = null, revoked =
   const known = new Set((base?.versions ?? []).map((v) => v.version));
   // A revocation names the id: a new version of it is read by a maintainer, whatever it asks for (C15).
   const revokedId = revoked.some((r) => typeof r === 'object' && r !== null && r.id === head.id);
+  const exempt = firstPartyExempt(head, base);
   for (const v of head.versions) {
     // An unlisted version is never an added one (C8): against a live catalog, which leaves it out, it is not compared again.
     if (known.has(v.version) || v.unlisted === true) continue;
@@ -126,7 +149,7 @@ export function checkEntry(head, base, { others = [], prAuthor = null, revoked =
     const prev = versionBefore(v, head, base);
     // Fail closed: a known id with no lower version at all leaves nothing to compare with (C8 refuses such a version anyway).
     if (prev === null) { if (base !== null) flags.add('escalation'); continue; }
-    const d = permissionsDiff(prev, v);
+    const d = permissionsDiff(prev, v, exempt);
     if (d.escalation || d.background) flags.add('escalation');
   }
   return { refusals, flags: [...flags] };

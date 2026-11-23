@@ -1,7 +1,7 @@
 // DF-*: C10, C11, C14, C17 (tools/lib/diff.mjs). Each failing case is the proof of the line it guards (mutants: see the commit message).
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { checkEntry, enginesReach, permissionsDiff, sameEntry } from '../lib/diff.mjs';
+import { checkEntry, enginesReach, firstPartyExempt, permissionsDiff, sameEntry } from '../lib/diff.mjs';
 
 const ver = (version, permissions = {}, extra = {}) => ({ version, engines: '^1.20.0', permissions, ...extra });
 const entry = (versions, extra = {}) => ({ id: 'dev.example.intel', name: 'Intel Board', author: 'Example Author', maintainers: ['alice'], versions, ...extra });
@@ -25,6 +25,70 @@ describe('permissions diff (C10)', () => {
   test('DF-background: background turned on is reported', () => {
     assert.equal(permissionsDiff(ver('1.0.0'), ver('1.1.0', {}, { background: true })).background, true);
     assert.equal(permissionsDiff(ver('1.0.0', {}, { background: true }), ver('1.1.0', {}, { background: true })).background, false);
+  });
+});
+
+// The first-party exemption (vendored firstpartyallow.js, owner rulings Q1 = A1, Q2 = P1): the official first-party install of an id on
+// FIRST_PARTY_ALLOWLIST keeps `chatlogs` in host `requested` although it can send data out, so the app asks for them again when a version
+// adds them. C10 reads the same rule from the entry: the id, the entry's `firstParty` mark, and this index being the official one.
+describe('first-party chatlogs (C10)', () => {
+  const INTEL = 'dev.evecyno.intel';
+  const project = (id, versions, extra = {}) => {
+    const x = entry(versions, { id, name: 'Intel', author: 'EVE-Cyno', firstParty: true, ...extra });
+    delete x.maintainers;
+    return x;
+  };
+  const sends = { network: ['https://a.example'] }; // can send data out (windowsview.js canSendOut): HT-M1 drops chatlogs for others
+  const noChat = ver('1.0.0', { ...sends, logs: ['gamelogs'] });
+  const chat = ver('1.1.0', { ...sends, logs: ['gamelogs', 'chatlogs'] });
+  const escalates = (head, base) => checkEntry(head, base, { prAuthor: null }).flags.includes('escalation');
+
+  test('DF-fp-chatlogs: the first-party Intel entry gaining chatlogs is an escalation that names them', () => {
+    const base = project(INTEL, [noChat]), head = project(INTEL, [chat, noChat]);
+    const d = permissionsDiff(noChat, chat, firstPartyExempt(head, base));
+    assert.equal(d.escalation, true);
+    assert.deepEqual(d.delta.logs, ['chatlogs']);
+    assert.equal(escalates(head, base), true);
+  });
+  test('DF-fp-chatlogs-other: the same versions under another id, or without the firstParty mark, count no chatlogs', () => {
+    const cases = [
+      ['another dev.evecyno. id', (v) => project('dev.evecyno.map', v)],
+      ['a third-party id marked firstParty', (v) => project('dev.example.intel', v)],
+      ['Intel with firstParty false', (v) => project(INTEL, v, { firstParty: false })],
+      ['Intel with firstParty "true"', (v) => project(INTEL, v, { firstParty: 'true' })],
+      ['Intel without firstParty', (v) => { const x = project(INTEL, v); delete x.firstParty; return x; }],
+    ];
+    for (const [label, mk] of cases) {
+      const base = mk([noChat]), head = mk([chat, noChat]);
+      assert.deepEqual(firstPartyExempt(head, base), { before: false, after: false }, label);
+      const d = permissionsDiff(noChat, chat, firstPartyExempt(head, base));
+      assert.equal(d.escalation, false, label);
+      assert.deepEqual(d.delta.logs, [], label);
+      assert.equal(escalates(head, base), false, label);
+    }
+  });
+  test('DF-fp-chatlogs-same: an Intel update that asks for the same permissions is no escalation', () => {
+    const was = ver('1.0.0', { ...sends, logs: ['chatlogs'] }), now = ver('1.1.0', { ...sends, logs: ['chatlogs'] });
+    const base = project(INTEL, [was]), head = project(INTEL, [now, was]);
+    assert.deepEqual(firstPartyExempt(head, base), { before: true, after: true });
+    assert.equal(permissionsDiff(was, now, firstPartyExempt(head, base)).escalation, false);
+    assert.equal(escalates(head, base), false);
+    assert.deepEqual(firstPartyExempt(head, null), { before: true, after: true }, 'a new entry: the head alone');
+  });
+  test('DF-fp-chatlogs-mark-set: Intel marked first-party only on the head compares its version before as not exempt (fail closed)', () => {
+    // A grant made while the entry was not first-party holds no chatlogs, so the app asks for them again.
+    const was = ver('1.0.0', { ...sends, logs: ['chatlogs'] }), now = ver('1.1.0', { ...sends, logs: ['chatlogs'] });
+    const base = project(INTEL, [was], { firstParty: false }), head = project(INTEL, [now, was]);
+    assert.deepEqual(firstPartyExempt(head, base), { before: false, after: true });
+    assert.deepEqual(permissionsDiff(was, now, firstPartyExempt(head, base)).delta.logs, ['chatlogs']);
+    assert.equal(escalates(head, base), true);
+    assert.deepEqual(firstPartyExempt(project(INTEL, [now, was], { firstParty: false }), project(INTEL, [was])), { before: false, after: false }, 'the mark dropped');
+  });
+  test('DF-chatlogs-third-party: a third-party plugin that can send data out adds chatlogs with no escalation (HT-M1), a sealed one escalates', () => {
+    assert.deepEqual(checkEntry(entry([chat, noChat]), entry([noChat]), { prAuthor: 'alice' }).flags, []);
+    assert.equal(permissionsDiff(noChat, chat).escalation, false, 'no first-party input: not exempt');
+    const sealedOld = ver('1.0.0', { logs: ['gamelogs'] }), sealedNew = ver('1.1.0', { logs: ['gamelogs', 'chatlogs'] });
+    assert.deepEqual(checkEntry(entry([sealedNew, sealedOld]), entry([sealedOld]), { prAuthor: 'alice' }).flags, ['escalation']);
   });
 });
 
