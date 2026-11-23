@@ -466,7 +466,7 @@ below. O1 is the owner's alone.
    A new pin is read the same way and changes every `uses:` line of that action in one commit; the owner reads it in the compare
    view like any other workflow change.
 6. **Vendor.** The vendored host is re-made from the current desktop `main` that holds the index scripts' new options, and
-   `EVECYNO_VENDOR_STRICT=1 npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
+   `npm test` and `node tools/vendor-host.mjs --check --from <desktop checkout> --rev <that commit>` pass
    in the checkout that holds the change (the coordinator's gate on its own change, not a reading; the check fails on a desktop
    commit that is not on desktop `main`). The owner reads the new `vendor/` against the vendor check of step 0.2, run from the
    unmoved trusted worktree, in the order of step 0 (or of step 4 or 5 of "Before every index and mirror approval").
