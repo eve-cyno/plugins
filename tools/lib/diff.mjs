@@ -27,7 +27,8 @@ const exemptOf = (e) => e != null && isFirstPartyExempt(e.id, () => ({ source: '
  * The first-party input of host `requested` for C10 on `head` (`base`: the entry on the base, or null). `after`, for an added version: the
  * head's verdict, which the app's update prompt reads. `before`, for the version before it: exempt only when the head and the base both
  * are, since a grant made while the entry was not first-party holds no `chatlogs` and the app asks for them again (fail closed: never
- * fewer escalations than the app's prompt).
+ * fewer escalations than the app asks of a user whose grant was made at the base version; C10 sees only the base and the head, not each
+ * user's grant history).
  */
 export function firstPartyExempt(head, base) {
   const after = exemptOf(head);

@@ -628,4 +628,41 @@ process.exitCode = Number(e.STUB_EXIT || 0);
     assert.match(p.stdout, /^FLAG first-party C3 dev\.evecyno\.miningledger: /m, 'publish against a tree base');
     assert.equal(last(p.stdout), 'CHECKS PASSED');
   });
+
+  test('PR-escalation-first-party-chatlogs: the first-party Intel entry whose new archive adds chatlogs is flagged escalation against a tree and a catalog base', async () => {
+    // The vendored firstpartyallow.js exemption: the official first-party install of dev.evecyno.intel keeps chatlogs although it can send
+    // data out, so the app asks for them again. C10 reads the permissions from the archives and firstParty from the entries.
+    const firstParty = (id) => {
+      const perms = (logs) => ({ characters: 'selected', network: ['https://api.example.com'], logs });
+      const at = (v, logs) => {
+        const bytes = pluginZip(manifest({ id, name: 'Intel', author: 'EVE-Cyno', version: v, permissions: perms(logs) }));
+        cacheArchive(cache, bytes);
+        return version(v, bytes, { permissions: perms(logs) });
+      };
+      const entry = (versions) => {
+        const e = pluginEntry(versions, { id, name: 'Intel', author: 'EVE-Cyno', firstParty: true, source: null });
+        delete e.maintainers;
+        return e;
+      };
+      const v100 = at('1.0.0', ['gamelogs']), v110 = at('1.1.0', ['gamelogs', 'chatlogs']);
+      return { base: entry([v100]), head: tree({ entries: [entry([v110, v100])] }) };
+    };
+    const intel = firstParty('dev.evecyno.intel');
+    const t = await check('review', tree({ entries: [intel.base] }), intel.head);
+    assert.equal(t.code, 3, t.stdout + t.stderr);
+    assert.match(t.stdout, /^FLAG escalation C10 dev\.evecyno\.intel: /m, 'against a tree base');
+    assert.match(last(t.stdout), /^NEEDS REVIEW .*escalation/);
+    const c = await check('publish', catalogBase([intel.base]), intel.head, ['--target', 'test']);
+    assert.equal(c.code, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, /^NOTE base: the live catalog \(1 listings\)$/m, 'the base is read as a catalog');
+    assert.match(c.stdout, /^FLAG escalation C10 dev\.evecyno\.intel: /m, 'against a catalog base');
+    assert.equal(last(c.stdout), 'CHECKS PASSED');
+
+    // The same entry and archives under an id not on FIRST_PARTY_ALLOWLIST: HT-M1 drops chatlogs from both sides, nothing new is asked.
+    const other = firstParty('dev.evecyno.map');
+    const o = await check('review', tree({ entries: [other.base] }), other.head);
+    assert.equal(o.code, 3, o.stdout + o.stderr);
+    assert.doesNotMatch(o.stdout, /^FLAG escalation /m, 'another first-party id');
+    assert.equal(last(o.stdout), 'NEEDS REVIEW first-party');
+  });
 });
