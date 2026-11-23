@@ -6,7 +6,7 @@ exports.allowedPacks = allowedPacks;
 // (uniform model), but parseManifest refuses it unless the id is listed here; the namespace exists only for a listed id that declares the pack.
 // Pure (no Electron).
 exports.PACK_IDS = ['sde.universe', 'sde.types', 'market.hubs']; // market.hubs (API 1.27.0): downloaded by the host (datapacks.ts DYNAMIC_PACKS)
-/** The built-in plugins that may read a pack, and which. Public read-only data: no consent (the hub price table too: spec A2.6, no `network` for Assets). */
+/** The plugin ids that may read a pack, and which; the namespace also needs the plugin built-in or the first-party exempt install (namespaces.ts, firstpartyallow.ts). Public read-only data: no consent (the hub price table too: spec A2.6, no `network` for Assets). */
 exports.DATA_ALLOWLIST = new Map([['dev.evecyno.map', ['sde.universe']], ['dev.evecyno.intel', ['sde.universe']], ['dev.evecyno.assets', ['sde.universe', 'sde.types', 'market.hubs']]]);
 /** The packs a manifest declares that its id is allowed (declared ∩ allowlisted), in PACK_IDS order. */
 function allowedPacks(m) {

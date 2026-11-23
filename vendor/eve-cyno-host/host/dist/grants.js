@@ -44,9 +44,9 @@ const isRevokeKind = (v) => typeof v === 'string' && exports.REVOKE_KINDS.includ
 exports.isRevokeKind = isRevokeKind;
 /**
  * The revocable kinds the manifest declares (a row of the Privacy page exists only for these). HT-M1 (owner decision 2026-11-06): `chatlogs` is declared only when
- * `requested(m, builtIn)` asks for it, so a non-built-in plugin that can send data out has no Chat logs row (it never gets `chat`).
+ * `requested(m, builtIn, firstPartyExempt)` asks for it, so a plugin that can send data out and is neither built-in nor first-party exempt has no Chat logs row (it never gets `chat`).
  */
-function declaredKinds(m, builtIn = false) {
+function declaredKinds(m, builtIn = false, firstPartyExempt = false) {
     const p = m.permissions;
     const out = [];
     if (p.characters !== undefined && p.characters !== 'none')
@@ -59,7 +59,7 @@ function declaredKinds(m, builtIn = false) {
         out.push('ai');
     if (p.logs?.includes('gamelogs'))
         out.push('gamelogs');
-    if (requested(m, builtIn).logs.includes('chatlogs'))
+    if (requested(m, builtIn, firstPartyExempt).logs.includes('chatlogs'))
         out.push('chatlogs');
     if ((p.gameEvents?.length ?? 0) > 0)
         out.push('gameEvents');
@@ -187,8 +187,10 @@ exports.emptyGranted = emptyGranted;
 // HT-M1 (owner decision 2026-11-06): `chatlogs` is not requested by a non-built-in plugin that can send data out (`canSendOut`, the rule namespaces.ts reads): it never gets `chat`,
 // so the prompt must not ask for it and the grant must not store it. "Can send data out" reads the required part plus every optional item, declined or not
 // (plan 2026-11-09, section 3.7): an optional origin the user switched off must never make a plugin look sealed.
+// `firstPartyExempt` (owner ruling Q1 = A1, 2026-11-20): the caller's verdict (firstpartyallow.ts isFirstPartyExempt) that the plugin is the official first-party
+// install of a listed id; it keeps `chatlogs` as `builtIn` does, and nothing else: `permissions.database` stays built-in only. Default false.
 // The result is the required part only (the first-run sign-in scopes, onboarding and the Marketplace lines read it); `optionalRequested` holds the rest.
-function requested(m, builtIn = false) {
+function requested(m, builtIn = false, firstPartyExempt = false) {
     const p = m.permissions;
     const services = {};
     for (const [iface, range] of Object.entries(p.services ?? {}))
@@ -202,13 +204,14 @@ function requested(m, builtIn = false) {
         },
         storageMB: p.storage?.quotaMB ?? 0, databaseMB: builtIn ? p.database?.quotaMB ?? 0 : 0, services,
     };
-    const out = !builtIn && g.logs.includes('chatlogs') && (0, windowsview_1.canSendOut)(withItems(g, (0, optional_1.optionalOf)(m)), (m.contributes?.services?.length ?? 0) > 0);
+    const out = !builtIn && firstPartyExempt !== true && g.logs.includes('chatlogs') && (0, windowsview_1.canSendOut)(withItems(g, (0, optional_1.optionalOf)(m)), (m.contributes?.services?.length ?? 0) > 0);
     return out ? { ...g, logs: g.logs.filter(l => l !== 'chatlogs') } : g;
 }
 /**
  * What the first-run wizard's sign-in plans for (main.ts `planned`, read through vaultservice `plannedScopes`): the required part (`requested`) of each plugin in `ids`
  * that `eligible` keeps (registered, not switched off, not revoked, no grant yet). Never an optional item (optional permissions S8): one the user allows later reaches
- * Re-authorise through the grant. A plugin whose manifest is gone adds nothing.
+ * Re-authorise through the grant. A plugin whose manifest is gone adds nothing. The first-party verdict (firstpartyallow.ts) is not passed on purpose: it changes
+ * `logs` only (`chatlogs`), never the ESI scopes plannedScopes reads from this.
  */
 function firstRunGrants(ids, o) {
     return ids.filter(id => o.eligible(id)).flatMap(id => { const m = o.manifestOf(id); return m ? [requested(m, o.builtIn(id))] : []; });
@@ -614,14 +617,14 @@ function switchedOff(declined, offered) {
 // Optional permissions (plan 2026-11-09, section 3.2): the request adds every optional item the record has not declined (`declined`, read cut to the manifest's
 // optional items), so a declined item is never asked for by itself; `optDelta` is the optional part of the delta. `reset` is the A5 rule over the whole request
 // (what the ask shows and reviewNeeded reads); a decision reads the rule again on the grant it stores (section 3.5), which the switches can make smaller.
-function basisOf(store, m, providers, fresh, bundled = false, builtIn = false) {
+function basisOf(store, m, providers, fresh, bundled = false, builtIn = false, firstPartyExempt = false) {
     const stored = store.get(m.id);
     // A fresh install over a stale record: asked as an install, the stale record kept only for the reset decision below.
     const rec = fresh ? undefined : stored;
     const provides = (m.contributes.services?.length ?? 0) > 0;
     const revoked = rec?.revoked ?? [];
     // What the user took back is not asked for again by itself (R17): the request is cut by it before the delta.
-    const full = stripKinds(withProviders(requested(m, builtIn), providers), revoked);
+    const full = stripKinds(withProviders(requested(m, builtIn, firstPartyExempt), providers), revoked);
     const bgKept = m.background === true && !revoked.includes('background');
     // What the record ran in the background (a record written before the field: the same version ran what this manifest asks).
     const prevBackground = rec ? rec.background ?? (rec.version === m.version ? bgKept : false) : false;
@@ -650,7 +653,7 @@ async function ensureGrantNow(store, prompter, m, providers, hooks, o) {
     } };
     if (gone())
         return null;
-    const { stored, rec, provides, revoked, bgKept, prevBackground, bgNew, req, narrowed, d, reset, prev, optional, declined, optDelta } = basisOf(store, m, providers, confirm && o?.fresh === true, o?.source === 'bundled', o?.builtIn === true);
+    const { stored, rec, provides, revoked, bgKept, prevBackground, bgNew, req, narrowed, d, reset, prev, optional, declined, optDelta } = basisOf(store, m, providers, confirm && o?.fresh === true, o?.source === 'bundled', o?.builtIn === true, o?.firstPartyExempt === true);
     // A record written before B4a has no `provides`. The rule: it counts as "did not provide", whatever the current manifest says (a directory edited in
     // place must not hide a provider that was added after the grant). The cost is one wipe, with the host notice, for a legacy record of a plugin that
     // sees names and now provides; the record is rewritten with `provides` at once, so it happens once. Records of B4a and later are exact.
@@ -813,8 +816,8 @@ async function ensureGrantNow(store, prompter, m, providers, hooks, o) {
  * asks for more than the plugin's current grant, allowing it would fire the A5 reset, or it would newly keep running in the background with no
  * view (I2). Read exactly as the next ensureGrant reads it.
  */
-function reviewNeeded(store, m, providers, builtIn = false) {
-    const b = basisOf(store, m, providers, false, false, builtIn);
+function reviewNeeded(store, m, providers, builtIn = false, firstPartyExempt = false) {
+    const b = basisOf(store, m, providers, false, false, builtIn, firstPartyExempt);
     return !isEmpty(b.d) || b.reset || b.bgNew;
 }
 // Calls are queued per (store, plugin id): each runs with its own manifest and providers against the record the earlier
@@ -847,7 +850,7 @@ function grantPending(store, id) {
 // be written (read-only since a busy read at start, or a failing write) refuses it `unavailable` (`isNotSaved`) before the teardown and the wipe;
 // a write that fails after the wipe refuses it too, and the record stays as it was.
 async function revokeNow(store, m, kind, hooks, opts) {
-    if (!declaredKinds(m, opts?.builtIn === true).includes(kind))
+    if (!declaredKinds(m, opts?.builtIn === true, opts?.firstPartyExempt === true).includes(kind))
         throw (0, errors_1.coded)('bad_params', 'kind');
     const rec = store.get(m.id);
     if (!rec)
@@ -910,11 +913,11 @@ function watchChatChannels(store, fn) {
 // is not touched, so the part stays revoked and the plugin keeps running as before; a user-started re-ask never takes the turn-off path of a denied
 // escalation (no deniedVersion). A reset (A5) that fails also leaves the record alone and answers 'kept'; the page was stopped for it, so the registry
 // starts the plugin again (N1) and the wipe tells the user. A prompter that fails to ask throws `unavailable`.
-async function allowNow(store, prompter, m, providers, kinds, hooks, builtIn = false) {
+async function allowNow(store, prompter, m, providers, kinds, hooks, builtIn = false, firstPartyExempt = false) {
     const rec = store.get(m.id);
     if (!rec)
         throw (0, errors_1.coded)('not_found', 'no grant');
-    const declared = declaredKinds(m, builtIn);
+    const declared = declaredKinds(m, builtIn, firstPartyExempt);
     const want = ordered(kinds.filter(k => (rec.revoked ?? []).includes(k) && declared.includes(k)));
     if (want.length === 0)
         return 'granted'; // nothing of it is revoked
@@ -922,7 +925,7 @@ async function allowNow(store, prompter, m, providers, kinds, hooks, builtIn = f
     // The grant as it stands plus exactly the parts asked: nothing else (a denied escalation stays denied). R-K: only the required items of those kinds; the
     // optional ones and `declined` stay as they are, `declined` cut to the manifest's optional items (an entry for an item it now requires would drop it again).
     const optional = (0, optional_1.optionalOf)(m);
-    const req = takeKinds(rec.granted, withProviders(requested(m, builtIn), providers), want, optional);
+    const req = takeKinds(rec.granted, withProviders(requested(m, builtIn, firstPartyExempt), providers), want, optional);
     const d = delta(rec.granted, req);
     const bg = want.includes('background');
     const provides = (m.contributes.services?.length ?? 0) > 0;
@@ -985,8 +988,8 @@ async function allowNow(store, prompter, m, providers, kinds, hooks, builtIn = f
         store.set(next);
     return 'granted';
 }
-function allowGrant(store, prompter, m, providers, kinds, hooks, builtIn = false) {
-    return queued(store, m.id, () => allowNow(store, prompter, m, providers, kinds, hooks, builtIn));
+function allowGrant(store, prompter, m, providers, kinds, hooks, builtIn = false, firstPartyExempt = false) {
+    return queued(store, m.id, () => allowNow(store, prompter, m, providers, kinds, hooks, builtIn, firstPartyExempt));
 }
 // Optional permissions (plan 2026-11-09, T1.5): the items a call names. Each must be one of the manifest's optional items, written as the host keeps it
 // (canonical, no duplicate, no other kind, `notifications` only as true), and at least one must be named; anything else is bad_params, before any prompt or write.

@@ -2,7 +2,7 @@
   "schema": 1,
   "generator": "tools/vendor-host.mjs",
   "desktop": {
-    "commit": "a449bffc74344bc36518b1d6d7488dd7cbbd20df"
+    "commit": "b41ef45e53bc05c8bf6a7254d157f8b0ad3aacd9"
   },
   "build": "npm --prefix host run build (product: no test key)",
   "hostApi": "1.29.0",
@@ -46,8 +46,8 @@
       "origin": "tree"
     },
     "host/dist/atomicfile.js": {
-      "sha256": "8bf4be0b223cf1618310e445215e7b9380dd1fe7943edc7f842b809507afe861",
-      "size": 7931,
+      "sha256": "be24f13296f4fd5ecd71fbfb646bd54edba32f240836a29d41ae13ac3595fa2c",
+      "size": 8085,
       "origin": "build"
     },
     "host/dist/blake2b.js": {
@@ -66,8 +66,8 @@
       "origin": "build"
     },
     "host/dist/dataallow.js": {
-      "sha256": "950b207294a83a50976a75012148a8b5f28266999657cd74b0fff39fd0d12bf2",
-      "size": 1291,
+      "sha256": "4a60f8a8816044713ae0cce2324fb91116d7f9969aa5b45e412b79cd35ba6018",
+      "size": 1401,
       "origin": "build"
     },
     "host/dist/errors.js": {
@@ -75,14 +75,19 @@
       "size": 651,
       "origin": "build"
     },
+    "host/dist/firstpartyallow.js": {
+      "sha256": "577c78647cb210facdabc965f57e4d7c0e735fa1ab6e4aa0bccb7652f01ddd48",
+      "size": 3018,
+      "origin": "build"
+    },
     "host/dist/grants.js": {
-      "sha256": "ddf480876e357cfaf167891026979e1dda3f2b732e69cc23f00b1ba18502bdd7",
-      "size": 66964,
+      "sha256": "5cb7e345904fc4fdb81438de3dda4bb2c98fbc0c1463b87c225a0428e1c55e97",
+      "size": 67841,
       "origin": "build"
     },
     "host/dist/loader.js": {
-      "sha256": "9f5b37c81f6dbf5d29cca5b470ef7892ddcf2153ea62486125ba17c63267faa4",
-      "size": 65317,
+      "sha256": "fa6f5b3815d39881f20bfa4141835a6d05b3de3bab60c524a40835ada7373b36",
+      "size": 68232,
       "origin": "build"
     },
     "host/dist/manifest.js": {
