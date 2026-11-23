@@ -15,6 +15,9 @@ previous version, and, when you declare it, the build provenance from your GitHu
 A maintainer reviews every new plugin and every version that asks for more permissions, runs in the background for the first time, or
 changes its author, name or type, its provenance repository or its maintainers. A version that asks for nothing new is merged after
 the checks pass and a maintainer has read the change.
+A maintainer also reviews every version whose plugin.json sets `wasm: true`. Each WebAssembly file must be built from public source
+named in the entry's `source`, with the build command in that source, and the plugin may compile only WebAssembly files inside its
+archive, never bytes it downloads or receives.
 There is no fixed review time.
 
 ## What we do not list
