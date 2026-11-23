@@ -1,7 +1,7 @@
 // DF-*: C10, C11, C14, C17 (tools/lib/diff.mjs). Each failing case is the proof of the line it guards (mutants: see the commit message).
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { checkEntry, enginesReach, firstPartyExempt, permissionsDiff, sameEntry } from '../lib/diff.mjs';
+import { checkEntry, enginesReach, firstPartyExempt, permissionsDiff, sameEntry, wasmReason, wasmWays } from '../lib/diff.mjs';
 
 const ver = (version, permissions = {}, extra = {}) => ({ version, engines: '^1.20.0', permissions, ...extra });
 const entry = (versions, extra = {}) => ({ id: 'dev.example.intel', name: 'Intel Board', author: 'Example Author', maintainers: ['alice'], versions, ...extra });
@@ -274,5 +274,56 @@ describe('engines reach (C17)', () => {
   test('DF-engines-garbage: a range that does not parse admits nothing', () => {
     assert.equal(enginesReach('not a range', '1.27.0'), false);
     assert.equal(enginesReach(undefined, '1.27.0'), false);
+  });
+});
+
+// R1 (plan dp4 W1 3.2, owner answer OQ-3 (a)): every added version whose archive's plugin.json sets `wasm: true` is flagged `wasm`, and
+// the reason names its ways out, read through the vendored host's canSendOut (grants.js wasmReach: the required part, every optional
+// item and a provided service). check.mjs puts the archive's `wasm`, `permissions` (the optional items included) and the services it
+// provides (`provides`) on each version; these tests give them directly.
+describe('WebAssembly (R1)', () => {
+  const W = '^1.30.0';
+  const wv = (version, permissions = {}, extra = {}) => ver(version, permissions, { engines: W, wasm: true, ...extra });
+  const flagsOf = (head, base) => checkEntry(head, base, { prAuthor: 'alice' });
+  test('DF-wasm-sealed: an added wasm version with no way out is flagged wasm, its reason says no way out', () => {
+    const r = flagsOf(entry([wv('1.1.0'), ver('1.0.0')]), entry([ver('1.0.0')]));
+    assert.deepEqual(r.flags, ['wasm']);
+    assert.deepEqual(r.wasm, [{ version: '1.1.0', ways: [] }]);
+    assert.match(wasmReason([]), /no way out/);
+  });
+  test('DF-wasm-ways: each way out is named: required network, optional network, a consumed service, a provided service, ai, account', () => {
+    assert.deepEqual(wasmWays(wv('1.1.0', { network: ['https://a.example'] })), ['required network https://a.example']);
+    assert.deepEqual(wasmWays(wv('1.1.0', { optional: { network: ['https://b.example'] } })), ['optional network https://b.example']);
+    assert.deepEqual(wasmWays(wv('1.1.0', { services: { 'evecyno.map': '^1.0.0' } })), ['consumed service evecyno.map']);
+    assert.deepEqual(wasmWays(wv('1.1.0', {}, { provides: [{ id: 'dev.example.feed', version: '1.0.0' }] })), ['a provided service']);
+    assert.deepEqual(wasmWays(wv('1.1.0', { ai: true })), ['ai']);
+    assert.deepEqual(wasmWays(wv('1.1.0', { account: true })), ['account']);
+    const all = wasmWays(wv('1.1.0', { network: ['https://a.example'], optional: { network: ['https://b.example'] }, services: { 'evecyno.map': '^1.0.0' }, ai: true }));
+    assert.deepEqual(all, ['required network https://a.example', 'optional network https://b.example', 'consumed service evecyno.map', 'ai']);
+    assert.match(wasmReason(all), /ways out: required network https:\/\/a\.example; optional network https:\/\/b\.example; consumed service evecyno\.map; ai$/);
+  });
+  test('DF-wasm-not-a-way: files, clipboard, overlays and esi are no way out (canSendOut), so the reason says no way out', () => {
+    assert.deepEqual(wasmWays(wv('1.1.0', { files: true, clipboard: ['read'], overlays: true, esi: ['esi-skills.read_skills.v1'] })), []);
+  });
+  test('DF-wasm-false: wasm false or absent sets no wasm flag', () => {
+    assert.deepEqual(flagsOf(entry([ver('1.1.0', {}, { wasm: false }), ver('1.0.0')]), entry([ver('1.0.0')])).flags, []);
+    assert.deepEqual(flagsOf(entry([ver('1.1.0'), ver('1.0.0')]), entry([ver('1.0.0')])).wasm, []);
+  });
+  test('DF-wasm-known: a version already on the base is never flagged again (publish mode against the live catalog)', () => {
+    const base = entry([wv('1.1.0'), ver('1.0.0')]);
+    assert.deepEqual(flagsOf(base, base).flags, []);
+    const r = flagsOf(entry([ver('1.2.0'), wv('1.1.0'), ver('1.0.0')]), base);
+    assert.deepEqual(r.wasm, [], 'a later version without wasm');
+  });
+  test('DF-wasm-each: every added wasm version is flagged with its own ways; a new entry is new and wasm; an unlisted one is not added', () => {
+    const r = flagsOf(entry([wv('1.2.0', { ai: true }), wv('1.1.0'), ver('1.0.0')]), entry([ver('1.0.0')]));
+    assert.deepEqual(r.wasm, [{ version: '1.2.0', ways: ['ai'] }, { version: '1.1.0', ways: [] }]);
+    assert.deepEqual(r.flags.sort(), ['escalation', 'wasm']);
+    assert.deepEqual(checkEntry(entry([wv('1.0.0')]), null).flags, ['new', 'wasm']);
+    assert.deepEqual(flagsOf(entry([wv('1.1.0', {}, { unlisted: true }), ver('1.0.0')]), entry([ver('1.0.0')])).flags, []);
+  });
+  test('DF-wasm-no-lower: an added wasm version with nothing to compare with is still flagged wasm', () => {
+    assert.deepEqual(flagsOf(entry([wv('2.0.0'), ver('1.5.0')]), entry([ver('2.0.0')])).flags.sort(), ['escalation']);
+    assert.deepEqual(flagsOf(entry([wv('1.5.0'), ver('2.0.0')]), entry([ver('2.0.0')])).flags.sort(), ['escalation', 'wasm']);
   });
 });

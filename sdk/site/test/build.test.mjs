@@ -203,7 +203,7 @@ test('source of truth: the namespace list, the manifest rows, the check ids', ()
   for (const key of Object.keys(schema.properties.contributes.properties)) assert.match(manifest, new RegExp(`<span class="p-name">contributes\\.${key}</span>`), key);
 
   const { checkIds, classes } = readChecks(REPO_ROOT);
-  assert.equal(checkIds.length, 17);
+  assert.equal(checkIds.length, 18);
   const checks = html(join(tmp, 'off'), 'checks');
   for (const id of checkIds) assert.match(checks, new RegExp(`<code>${id}</code>`));
   for (const c of classes) assert.match(checks, new RegExp(`<code>${c}</code>`));

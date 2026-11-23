@@ -1,7 +1,7 @@
-// Checks C3 (names), C10 (permissions diff), C11 (new plugin), C14 (maintainer), C17 (engines reach) and the review class of a new
-// version of a revoked id (C15) over plain parsed entries.
+// Checks C3 (names), C10 (permissions diff, and the `wasm` class of R1), C11 (new plugin), C14 (maintainer), C17 (engines reach) and the
+// review class of a new version of a revoked id (C15) over plain parsed entries.
 // Every rule that the app also applies comes from the vendored host (requested, delta, isEmpty, isFirstPartyExempt, foldName, listingAdmit,
-// HOST_API); nothing here reimplements them. Pure: no I/O. An escalation is a flag (`NEEDS REVIEW escalation`), never a refusal.
+// HOST_API, wasmReach, canSendOut, withItems, optionalOf); nothing here reimplements them. Pure: no I/O. An escalation is a flag (`NEEDS REVIEW escalation`), never a refusal.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,9 @@ import semver from 'semver';
 
 const require = createRequire(import.meta.url);
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'eve-cyno-host', 'host', 'dist');
-const { requested, delta, isEmpty } = require(path.join(DIST, 'grants.js'));
+const { requested, delta, isEmpty, withItems, wasmReach } = require(path.join(DIST, 'grants.js'));
+const { optionalOf } = require(path.join(DIST, 'optional.js'));
+const { canSendOut } = require(path.join(DIST, 'windowsview.js'));
 const { foldName } = require(path.join(DIST, 'market', 'names.js'));
 const { listingAdmit } = require(path.join(DIST, 'market', 'admit.js'));
 const { HOST_API } = require(path.join(DIST, 'manifest.js'));
@@ -51,6 +53,37 @@ export function permissionsDiff(oldV, newV, exempt = { before: false, after: fal
   const d = delta(requested(asManifest(oldV), false, exempt.before === true), requested(asManifest(newV), false, exempt.after === true));
   return { escalation: !isEmpty(d), delta: d, background: newV.background === true && oldV.background !== true };
 }
+
+/**
+ * The manifest the host's wasm rules read of one version (check.mjs puts the archive's plugin.json `permissions`, the optional items
+ * in `permissions.optional` included, and its `contributes.services` as `provides` in place of the entry's copy).
+ */
+const asWasmManifest = (v) => ({ permissions: v.permissions ?? {}, contributes: { services: Array.isArray(v.provides) ? v.provides : [] } });
+
+/**
+ * R1: the ways out of a version that sets `wasm` (plan dp4 W1 3.2), each named, in a fixed order: required network, optional network,
+ * consumed services, a provided service, `ai`, `account`. The verdict is the vendored host's wasmReach (canSendOut over the required part
+ * with every optional item on, and whether the plugin provides a service); each way is named only when canSendOut counts it alone, so a
+ * way the host stops counting is no longer named. When the host counts a way that none of these names, the list says so. Empty: no way out.
+ */
+export function wasmWays(v) {
+  const m = asWasmManifest(v);
+  const req = requested(m), opt = optionalOf(m), none = requested({ permissions: {} });
+  const ways = [];
+  const out = (g, provides = false) => canSendOut(g, provides);
+  if (out({ ...none, network: req.network })) ways.push(`required network ${req.network.join(', ')}`);
+  const optNet = opt.network ?? []; // optionalOf leaves out an item the required part holds
+  if (out(withItems(none, { network: optNet }))) ways.push(`optional network ${optNet.join(', ')}`);
+  if (out({ ...none, services: req.services })) ways.push(`consumed service ${Object.keys(req.services).join(', ')}`);
+  if (out(none, m.contributes.services.length > 0)) ways.push('a provided service');
+  if (out({ ...none, flags: { ...none.flags, ai: req.flags.ai } })) ways.push('ai');
+  if (out({ ...none, flags: { ...none.flags, account: req.flags.account } })) ways.push('account');
+  if (ways.length === 0 && wasmReach(m)) ways.push('a way out the host counts (canSendOut)');
+  return ways;
+}
+
+/** The reason text of a `wasm` flag for a version with these ways out (wasmWays). */
+export const wasmReason = (ways) => `its plugin.json sets wasm: true (it may compile and run WebAssembly); ${ways.length === 0 ? 'no way out' : `ways out: ${ways.join('; ')}`}`;
 
 /** The version of `all` with the greatest semver strictly lower than `v`'s, or null. */
 function previousOf(v, all) {
@@ -123,7 +156,8 @@ function identityChanged(head, base) {
 /**
  * All of C3, C10, C11, C14, C17 for one entry. `base` is the entry on the base branch or null, `others` every other entry of the head
  * tree, `prAuthor` the PR's login (null when the check runs without one), `revoked` the revocations of the base and the head (C15).
- * Returns { refusals: string[], flags: string[] } with flags from: new, escalation, identity, first-party, engines, revoked.
+ * Returns { refusals: string[], flags: string[], wasm: {version, ways}[] } with flags from: new, escalation, identity, first-party, engines,
+ * revoked, wasm. `wasm` lists every added version that sets `wasm: true` (R1) with its ways out (wasmWays).
  */
 export function checkEntry(head, base, { others = [], prAuthor = null, revoked = [] } = {}) {
   const refusals = checkNames(head, base, others);
@@ -141,16 +175,19 @@ export function checkEntry(head, base, { others = [], prAuthor = null, revoked =
   // A revocation names the id: a new version of it is read by a maintainer, whatever it asks for (C15).
   const revokedId = revoked.some((r) => typeof r === 'object' && r !== null && r.id === head.id);
   const exempt = firstPartyExempt(head, base);
+  const wasm = [];
   for (const v of head.versions) {
     // An unlisted version is never an added one (C8): against a live catalog, which leaves it out, it is not compared again.
     if (known.has(v.version) || v.unlisted === true) continue;
     if (revokedId) flags.add('revoked');
     if (head.type !== 'theme' && !enginesReach(v.engines)) flags.add('engines');
+    // R1 (owner answer OQ-3 (a)): every added version whose archive sets `wasm: true` is read by a maintainer, with or without a way out.
+    if (v.wasm === true) { flags.add('wasm'); wasm.push({ version: v.version, ways: wasmWays(v) }); }
     const prev = versionBefore(v, head, base);
     // Fail closed: a known id with no lower version at all leaves nothing to compare with (C8 refuses such a version anyway).
     if (prev === null) { if (base !== null) flags.add('escalation'); continue; }
     const d = permissionsDiff(prev, v, exempt);
     if (d.escalation || d.background) flags.add('escalation');
   }
-  return { refusals, flags: [...flags] };
+  return { refusals, flags: [...flags], wasm };
 }

@@ -35,11 +35,11 @@ export const HEADERS = `/*
 
 const read = (...p) => readFileSync(join(...p), 'utf8');
 
-/** The check ids (C1 to C17) named in the index repository's check tools, and the review classes of summary.mjs. */
+/** The check ids (C1 to C18) named in the index repository's check tools, and the review classes of summary.mjs. */
 export function readChecks(repoRoot) {
   const files = [join(repoRoot, 'tools', 'check.mjs'), ...readdirSync(join(repoRoot, 'tools', 'lib')).filter((f) => f.endsWith('.mjs')).map((f) => join(repoRoot, 'tools', 'lib', f))];
   const ids = new Set();
-  for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/\bC(1[0-7]|[1-9])\b/g)) ids.add(Number(m[1]));
+  for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/\bC(1[0-8]|[1-9])\b/g)) ids.add(Number(m[1]));
   const classes = /export const CLASSES = \[([^\]]*)\]/.exec(read(repoRoot, 'tools', 'lib', 'summary.mjs'));
   if (!classes) throw new Error('tools/lib/summary.mjs: no CLASSES list');
   return { checkIds: [...ids].sort((a, b) => a - b).map((n) => `C${n}`), classes: [...classes[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) };
