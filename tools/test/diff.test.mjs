@@ -1,6 +1,7 @@
 // DF-*: C10, C11, C14, C17 (tools/lib/diff.mjs). Each failing case is the proof of the line it guards (mutants: see the commit message).
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { createRequire } from 'node:module';
 import { checkEntry, enginesReach, firstPartyExempt, permissionsDiff, sameEntry, wasmReason, wasmWays } from '../lib/diff.mjs';
 
 const ver = (version, permissions = {}, extra = {}) => ({ version, engines: '^1.20.0', permissions, ...extra });
@@ -325,5 +326,29 @@ describe('WebAssembly (R1)', () => {
   test('DF-wasm-no-lower: an added wasm version with nothing to compare with is still flagged wasm', () => {
     assert.deepEqual(flagsOf(entry([wv('2.0.0'), ver('1.5.0')]), entry([ver('2.0.0')])).flags.sort(), ['escalation']);
     assert.deepEqual(flagsOf(entry([wv('1.5.0'), ver('2.0.0')]), entry([ver('2.0.0')])).flags.sort(), ['escalation', 'wasm']);
+  });
+});
+
+// Guard for wasmWays: it names five ways out (network, consumed services, a provided service, ai, account). Every field of a grant is
+// switched on alone and handed to the vendored canSendOut; exactly those five may count. A re-vendored host that counts another field
+// fails here, so wasmWays gets a name for it instead of the catch-all line.
+describe('WebAssembly ways out: the vendored canSendOut (guard)', () => {
+  const req = createRequire(import.meta.url);
+  const DIST = new URL('../../vendor/eve-cyno-host/host/dist/', import.meta.url).pathname;
+  const { canSendOut } = req(`${DIST}windowsview.js`);
+  const { requested } = req(`${DIST}grants.js`);
+  test('DF-wasm-guard: only network, services, a provided service, ai and account are a way out', () => {
+    const none = requested({ permissions: {} });
+    assert.equal(canSendOut(none, false), false);
+    const on = (v) => (Array.isArray(v) ? ['x'] : typeof v === 'boolean' ? true : typeof v === 'number' ? 1 : typeof v === 'string' ? 'all' : { x: { range: '^1', provider: null } });
+    const counted = [];
+    for (const k of Object.keys(none)) {
+      if (k === 'flags') continue;
+      if (canSendOut({ ...none, [k]: on(none[k]) }, false)) counted.push(k);
+    }
+    for (const f of Object.keys(none.flags)) if (canSendOut({ ...none, flags: { ...none.flags, [f]: true } }, false)) counted.push(`flags.${f}`);
+    if (canSendOut(none, true)) counted.push('providesServices');
+    assert.deepEqual(counted.sort(), ['flags.account', 'flags.ai', 'network', 'providesServices', 'services']);
+    assert.deepEqual(Object.keys(none).sort(), ['characters', 'clipboard', 'databaseMB', 'esi', 'flags', 'gameEvents', 'logs', 'network', 'selected', 'services', 'storageMB'], 'a new grant field: decide whether it is a way out');
   });
 });

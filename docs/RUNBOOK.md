@@ -525,15 +525,19 @@ approval holds the `index-sign` group, and how long a pending approval stays ope
         - **R2, the build source.** Every `.wasm` file in the archive is built from public source that the entry's `source`
           names, and that source holds the command that builds it. Build it from there (or read the build of a run that
           published it) and compare the SHA-256 of each built file with the archive's file of that name; a file nobody can
-          rebuild, or a SHA-256 that differs: no merge.
+          rebuild, or a SHA-256 that differs: no merge. R2 covers the `.wasm` files only: a module held any other way (inlined
+          in a script, under another file name) is R3's to find.
         - **R3, the byte source.** The plugin compiles only WebAssembly files inside its archive. Every `WebAssembly.compile`,
           `compileStreaming`, `instantiate`, `instantiateStreaming` and `new WebAssembly.Module` in its pages and Workers reads a
           file of its own archive (a `fetch` of a path of the plugin), never bytes from a network origin, a service, `ai`,
-          `account`, the clipboard, a file the user picks or its storage. Read the code with the ways out the FLAG line names in
+          `account`, the clipboard, a file the user picks, its storage, or text other players can write (ESI answers, mail and
+          contract scopes included, chat logs, game logs). A module inlined in a script (a base64 or array literal handed to
+          `WebAssembly`) is no archive file either: it escapes R2. Read the code with the ways out the FLAG line names in
           mind: once `wasm: true` is set, the host cannot tell fetched bytes from shipped ones. Anything that builds or loads
           WebAssembly from other bytes: no merge.
         - **R4, the dogma module.** C18 (refuse) fails an archive that holds the package `@eve-cyno/dogma-wasm` (its
-          `MANIFEST.json`) when the entry is not first-party. When `PASS C18` shows it in a first-party entry, the archive holds the
+          `MANIFEST.json`) when the entry is not first-party. C18 trusts the entry's `firstParty: true`, so `PASS C18` means
+          nothing until the first-party reading above confirms that the project opened the pull request. Then the archive holds the
           package's `LICENSE` (PolyForm Strict 1.0.0, the desktop's, byte for byte) and `NOTICE` next to the module. A module
           that looks like it under another name (the same SHA-256 as the package's `dogma.wasm`, or its licence text) in an
           entry that is not first-party: no merge; C18 reads only the MANIFEST.json.

@@ -745,6 +745,10 @@ describe('PR fixture suite: WebAssembly (R1, R4)', () => {
     // A repeated key (the last wins, as JSON.parse reads it) and another letter case of the file name are no way past it.
     const twice = { name: 'lib/manifest.JSON', data: '{"package": "@eve-cyno/dogma-wasm", "package": "x"}' };
     await refused(wasmHead(SEALED, {}, [twice]), /^FAIL C18 dev\.example\.intel 1\.1\.0: it holds the @eve-cyno\/dogma-wasm package \(lib\/manifest\.JSON\)/m);
+    // The name spelled with a JSON escape: the text holds no literal match, JSON.parse reads the package name.
+    const escaped = { name: 'MANIFEST.json', data: '{"package": "\\u0040eve-cyno/dogma-wasm"}' };
+    assert.ok(!escaped.data.includes('@eve-cyno/dogma-wasm'));
+    await refused(wasmHead(SEALED, {}, [escaped]), /^FAIL C18 dev\.example\.intel 1\.1\.0: it holds the @eve-cyno\/dogma-wasm package \(MANIFEST\.json\)/m);
     // Another package's MANIFEST.json is no refusal.
     const other = await check('refuse', baseTree(), wasmHead(SEALED, {}, [{ name: 'vendor/x/MANIFEST.json', data: '{"package":"@example/other"}' }]));
     assert.equal(other.code, 0, other.stdout + other.stderr);

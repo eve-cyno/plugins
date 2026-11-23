@@ -41,7 +41,7 @@ The same answers give the same bytes: nothing in the output depends on the clock
 `static/style.css`, `test/manifest.test.mjs`, `entry/<id>.json`, a README for the new project, `.gitignore`, and
 `types/eve-cyno-plugin-api/` (the API's declarations and licence, copied from `sdk/vendor/plugin-api`).
 
-The project carries the API's declarations in `types/` and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`, so it builds without the npm package. The same declarations are published as `@eve-cyno/plugin-api@1.30.0`; to use that package instead, add it as a dev dependency, remove the `paths` entry and delete `types/`.
+The project carries the API's declarations in `types/` and maps `@eve-cyno/plugin-api` to them in `tsconfig.json`, so it builds without the npm package. The same declarations go to npm as `@eve-cyno/plugin-api@1.30.0` with the first app release that carries API 1.30.0; it is not published yet (npm has 1.29.0, whose declarations are the same). To use the package instead, add it as a dev dependency, remove the `paths` entry and delete `types/`.
 
 ## Licences
 
